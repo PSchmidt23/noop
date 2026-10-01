@@ -20,15 +20,19 @@ struct WelcomeScreen: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            TabView(selection: $step) {
-                WelcomeIntroStep(onContinue: { advance(to: 1) }).tag(0)
-                WelcomePairStep(onContinue: { advance(to: 2) }).tag(1)
-                WelcomeHealthStep(onFinished: onFinished).tag(2)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
+        TabView(selection: $step) {
+            WelcomeIntroStep(onContinue: { advance(to: 1) }).tag(0)
+            WelcomePairStep(onContinue: { advance(to: 2) }).tag(1)
+            WelcomeHealthStep(onFinished: onFinished).tag(2)
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        // The dots are a bottom inset rather than a sibling below the pager: a page that scrolls (large
+        // type, short phones) then ends above the dots instead of sliding its last button under them.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             WelcomeDots(count: 3, index: step)
+                .padding(.top, 8)
                 .padding(.bottom, 24)
+                .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(BaselineBackground())

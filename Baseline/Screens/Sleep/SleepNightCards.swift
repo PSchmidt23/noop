@@ -24,15 +24,22 @@ struct SleepHeroCard: View {
                     .font(BaselineTheme.headline)
                     .foregroundStyle(BaselineTheme.textSecondary)
             }
-            HStack(spacing: 12) {
-                if let onset = night.onset, let wake = night.wake {
-                    StatCell(label: "Bedtime", value: SleepFormat.clock(onset))
-                    StatCell(label: "Wake", value: SleepFormat.clock(wake))
-                }
-                if let eff = SleepFormat.percent(night.efficiency) {
-                    StatCell(label: "Efficiency", value: eff)
-                }
+            // Three-up at default sizes; at accessibility Dynamic Type sizes a clock like "11:21 PM" no
+            // longer fits a third of the card and would break mid-value, so the cells stack instead.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { vitalsCells }
+                VStack(alignment: .leading, spacing: 12) { vitalsCells }
             }
+        }
+    }
+
+    @ViewBuilder private var vitalsCells: some View {
+        if let onset = night.onset, let wake = night.wake {
+            StatCell(label: "Bedtime", value: SleepFormat.clock(onset))
+            StatCell(label: "Wake", value: SleepFormat.clock(wake))
+        }
+        if let eff = SleepFormat.percent(night.efficiency) {
+            StatCell(label: "Efficiency", value: eff)
         }
     }
 

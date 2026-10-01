@@ -532,7 +532,37 @@ targets:
       - package: StrandDesign
       - package: MarkdownUI
       - package: ZIPFoundation
+      # Declared directly (as the macOS Strand target does), not only transitively through WhoopStore:
+      # under `xcodebuild test` Xcode builds the package products the app and BaselineTests share as
+      # dynamic frameworks, and then OuraLiveSource.o's OuraProtocol symbols no longer arrive folded
+      # into WhoopStore's static product, so the app fails to link.
+      - package: OuraProtocol
       - package: PolarProtocol
+
+  # Unit tests for Baseline's pure builders (TodaySnapshot, TrendsSeries, SleepNightBuilder, the
+  # Journal helpers). Hosted in the app so `@testable import Baseline` links against the real module;
+  # no UI, no BLE, no store. Run with `xcodebuild -scheme Baseline test` (simulator destination).
+  BaselineTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - BaselineTests
+    dependencies:
+      # XcodeGen derives TEST_HOST ($(BUILT_PRODUCTS_DIR)/Baseline.app/Baseline) and BUNDLE_LOADER from
+      # this application dependency; the app's PRODUCT_NAME has no spaces, so the default is exact and
+      # nothing is pinned by hand (unlike StrandTests, whose host is "NOOP Staging").
+      - target: Baseline
+      # The tests build engine inputs (DailyMetric, CachedSleepSession, StageSegment, DoseResponse)
+      # and read engine outputs (BaselineState, ReadinessTier) directly.
+      - package: WhoopStore
+      - package: StrandAnalytics
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.patrickschmidt.baseline.tests
+        DEVELOPMENT_TEAM: 25RC553RGP
+        TARGETED_DEVICE_FAMILY: "1,2"
 
   # WidgetKit + Live Activity extension — the iOS analogue of the macOS menu-bar
   # extra. Reads a tiny snapshot the app publishes into the shared App Group.
@@ -709,6 +739,10 @@ schemes:
         Baseline: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - BaselineTests
   # `xcodebuild -scheme NOOPWatch …` compile-verifies the watchOS app + its embedded complication
   # extension (M3). Name matches the app-build CI matrix entry the verify script adds.
   NOOPWatch:
