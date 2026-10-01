@@ -25,8 +25,12 @@ struct ProgressScreen: View {
                 if s.totalNights == 0 {
                     emptyState
                 } else {
-                    BaselineRangePicker<ProgressHorizon>(
-                        selection: Binding(get: { horizon }, set: { horizonRaw = $0.rawValue }))
+                    // The horizon only changes something once a metric has settled (settling / paused /
+                    // ready) or a sleep window can be compared; until then the HRV card leads.
+                    if s.hasHorizonContent {
+                        BaselineRangePicker<ProgressHorizon>(
+                            selection: Binding(get: { horizon }, set: { horizonRaw = $0.rawValue }))
+                    }
                     cards(s)
                     Text(ProgressCopy.closingCaption(recalibratedOn: s.recalibratedOn))
                         .font(BaselineTheme.caption)

@@ -148,6 +148,8 @@ struct ProgressComparison: Equatable {
 
 enum ProgressMetricStatus: Equatable {
     case empty
+    /// `nights` is the engine's own count, `nValid` of the state folded over every night so far (14 on
+    /// the morning the baseline settles; the first trusted point lands the night after).
     case calibrating(nights: Int)
     /// Trusted, but no anchor at the horizon's far end yet. `compareFromDay` is the day the comparison
     /// arrives (nil for `.all`).
@@ -179,7 +181,6 @@ enum ProgressMetric {
     static func build(upToToday: [DailyMetric], cfg: MetricCfg, todayKey: String, horizon: ProgressHorizon,
                       value: (DailyMetric) -> Double?) -> ProgressMetricStatus {
         let walk = BaselineReadouts.nightlyStates(upToToday: upToToday, cfg: cfg, value: value)
-        let validCount = walk.reduce(into: 0) { if $1.validValue != nil { $0 += 1 } }
         guard let newestValidDay = walk.last(where: { $0.validValue != nil })?.day else { return .empty }
         let trusted = ProgressTrajectory.build(walk: walk).filter(\.trusted)
 
@@ -188,7 +189,12 @@ enum ProgressMetric {
             return .paused(lastDay: newestValidDay, points: trusted)
         }
         guard let first = trusted.first else {
-            return .calibrating(nights: min(validCount, Baselines.minNightsTrust))
+            // The state folded over every night so far: the last night's going-in state stepped once
+            // more by that night, exactly the engine's walk (`validValue` is nil for the nights the
+            // engine skips, and an in-range night it rejects as an outlier leaves nValid unchanged).
+            // Its nValid is the count the Today hero and the Trends "Baseline" cell print.
+            let folded = walk.last.map { Baselines.update($0.stateGoingIn, value: $0.validValue, cfg: cfg) }
+            return .calibrating(nights: folded?.nValid ?? 0)
         }
         guard let comparison = ProgressComparison.resolve(trusted: trusted, todayKey: todayKey,
                                                           horizon: horizon, cfg: cfg) else {
@@ -428,6 +434,27 @@ struct ProgressSnapshot {
     /// The recalibration day when it dropped at least one night, for the closing caption.
     let recalibratedOn: String?
 
+    /// Whether the horizon changes anything on screen: a metric that has settled (settling, paused or
+    /// ready) or a sleep reading that compares, or will compare, two windows. While every card is still
+    /// calibrating or building, the picker would switch between four identical screens, so it is hidden
+    /// and the HRV card leads.
+    var hasHorizonContent: Bool {
+        for status in [hrv, restingHr] {
+            switch status {
+            case .settling, .paused, .ready: return true
+            case .empty, .calibrating: break
+            }
+        }
+        switch sleep.duration {
+        case .nowOnly, .ready: return true
+        case .none, .building: break
+        }
+        switch sleep.regularity {
+        case .nowOnly, .ready: return true
+        case .noTimedNights, .building: return false
+        }
+    }
+
     /// `days` is `repo.days` (oldest → newest); `nights` is `SleepNightBuilder.nights(…)` (newest first).
     static func build(days: [DailyMetric], nights: [SleepNight], horizon: ProgressHorizon, todayKey: String) -> ProgressSnapshot {
         let upToToday = days.filter { $0.day <= todayKey }
@@ -489,7 +516,7 @@ enum ProgressCopy {
         case .empty:
             return "No nights with \(noun) yet."
         case .calibrating(let n):
-            return "Your \(noun) baseline settles after \(Baselines.minNightsTrust) nights · \(n) so far. Progress compares it with itself from then on."
+            return "Your \(noun) baseline settles after \(Baselines.minNightsTrust) nights; Progress starts the night after · \(n) so far."
         case .settling(let firstDay, let compareFrom, _):
             if let compareFrom, let phrase = horizon.agoPhrase {
                 return "Your \(noun) baseline settled on \(date(firstDay)). Compare it with \(phrase) from \(date(compareFrom))."
@@ -519,8 +546,9 @@ enum ProgressCopy {
     static func footnote(unit: String, status: ProgressMetricStatus) -> String? {
         switch status {
         case .ready(let c, _, _):
+            // What the line IS is said once, in the screen's closing caption.
             let n = Int(c.noise.rounded(.up))
-            return "The line is your baseline going into each night, the same dashed line Trends draws under your nights. Changes under about \(n) \(unit) are within the baseline's own noise."
+            return "Changes under about \(n) \(unit) are within the baseline's own noise."
         case .settling, .paused:
             return "Only the settled part of your baseline is drawn (\(Baselines.minNightsTrust) nights or more)."
         case .calibrating, .empty:
@@ -585,9 +613,20 @@ enum ProgressCopy {
 
     // MARK: Sleep timing
 
-    /// "11:24 PM" for seconds of local day, on today's date (the device zone).
+    /// "11:24 PM" for seconds of local day. Built from hour and minute components, never by adding an
+    /// interval to a midnight: on a DST transition day `startOfDay + sec` lands an hour off the clock
+    /// the components name. The components are placed on a fixed reference day (1 Jan 2001, a day no
+    /// zone transitions on) so every hour exists and the string never depends on today's date.
+    /// `calendar` must share the device zone `SleepFormat.clock` formats in (its default, `.current`).
     static func clock(sec: Int, calendar: Calendar = .current) -> String {
-        SleepFormat.clock(calendar.startOfDay(for: Date()).addingTimeInterval(TimeInterval(sec)))
+        let wrapped = ((sec % 86_400) + 86_400) % 86_400
+        var c = DateComponents()
+        c.year = 2001; c.month = 1; c.day = 1
+        c.hour = wrapped / 3_600
+        c.minute = (wrapped % 3_600) / 60
+        c.second = wrapped % 60
+        guard let date = calendar.date(from: c) else { return "" }
+        return SleepFormat.clock(date)
     }
 
     static func timingSentence(_ r: ProgressSleep.Regularity, horizon: ProgressHorizon) -> String {
@@ -645,8 +684,10 @@ enum ProgressCopy {
 
     // MARK: Screen
 
+    /// Said once for the whole screen: what the drawn line is (the HRV and resting HR card footnotes
+    /// only state their noise figure).
     static func closingCaption(recalibratedOn: String?) -> String {
-        let body = "Baselines are the recency-weighted averages Today and Trends judge each night against (half-life \(Int(Baselines.hrvCfg.halfLifeB)) nights). Noise figures assume nights vary independently; they are a model statement, not a measurement. Estimates from published methods, not medical advice."
+        let body = "The HRV and resting HR lines are your baseline going into each night, the same dashed line Trends draws under your nights: a recency-weighted average (half-life \(Int(Baselines.hrvCfg.halfLifeB)) nights) that Today and Trends judge each night against. Noise figures assume nights vary independently; they are a model statement, not a measurement. Estimates from published methods, not medical advice."
         if let recalibratedOn { return "Counting from your recalibration on \(date(recalibratedOn)). " + body }
         return body
     }

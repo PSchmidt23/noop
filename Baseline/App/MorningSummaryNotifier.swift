@@ -1,6 +1,7 @@
 #if os(iOS)
 import Foundation
 import Combine
+import UIKit
 import UserNotifications
 import WhoopStore
 import StrandAnalytics
@@ -14,7 +15,7 @@ struct MorningSummary: Equatable {
     /// The newest morning any of the three facts is dated to (`TodaySnapshot`'s own day keys). The
     /// notifier only posts when this is today's key.
     let day: String
-    /// The readiness tier label from `BaselineReadiness`, nil while calibrating or stale.
+    /// `ReadinessTier.baselineNotificationSubtitle` ("Readiness · On baseline"), nil while calibrating or stale.
     let subtitle: String?
     /// e.g. "HRV 89 ms · inside your band · Resting HR 57 bpm · inside your band · Slept 6h 42m · +18 min vs average"
     let body: String
@@ -47,7 +48,7 @@ enum MorningSummaryText {
         guard let day = days.max(), !parts.isEmpty else { return nil }
 
         var subtitle: String?
-        if case .tier(let tier) = s.readiness { subtitle = tier.baselineLabel }
+        if case .tier(let tier) = s.readiness { subtitle = tier.baselineNotificationSubtitle }
         return MorningSummary(day: day, subtitle: subtitle, body: parts.joined(separator: separator))
     }
 
@@ -82,14 +83,18 @@ final class MorningSummaryNotifier: ObservableObject {
     private let repo: Repository
     private let defaults: UserDefaults
     private let now: () -> Date
+    private let isAppActive: @MainActor () -> Bool
     private var subscription: AnyCancellable?
     private var checking = false
     private var checkAgain = false
 
-    init(repo: Repository, defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
+    /// `isAppActive` defaults to the real application state; injectable so the foreground rule is testable.
+    init(repo: Repository, defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init,
+         isAppActive: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active }) {
         self.repo = repo
         self.defaults = defaults
         self.now = now
+        self.isAppActive = isAppActive
     }
 
     /// Start observing. `combineLatest` also replays the current pair, so a store that is already
@@ -138,6 +143,10 @@ final class MorningSummaryNotifier: ObservableObject {
         guard defaults.string(forKey: Self.lastDayKey) != todayKey else { return }
         // Mark before adding (IllnessNotifier's discipline) so a slow or deferred delivery cannot re-post.
         defaults.set(todayKey, forKey: Self.lastDayKey)
+
+        // The night that lands while the person is already looking at Today needs no banner and no sound
+        // over the screen that shows it: the morning is marked as summarised, nothing is posted.
+        guard !isAppActive() else { return }
 
         let content = UNMutableNotificationContent()
         content.title = "Your morning"

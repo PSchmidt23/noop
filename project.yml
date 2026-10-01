@@ -398,6 +398,14 @@ targets:
           - "Resources/NOOP.entitlements"
           # NOOP's @main — Baseline ships its own entry point in Baseline/App/BaselineApp.swift.
           - "App/StrandiOSApp.swift"
+          # NOOP's catalog (AppIcon, AppIcon-Navy, scene1…10, sleepNightHero) and the loose alternate
+          # icon PNGs. No screen Baseline hosts reads them: `scene*` is loaded only by StrandDesign's
+          # SceneHeroBackground, which no compiled-in NOOP screen references; `sleepNightHero` is read only
+          # by SleepView's private SleepPerformanceNightScene (Baseline's Sleep tab calls SleepView's static
+          # night-grouping helpers, never the view); AppIcon-Navy is switched only from NOOP's SettingsView.
+          # Baseline/Resources/Assets.xcassets (BaselineIcon, LaunchBackground) is the only catalog compiled.
+          - "Resources/Assets.xcassets"
+          - "Resources/AltIcons"
       - path: StrandiOSShared
       # Everything under Baseline/ is swept: Swift into Sources, the rest (Assets.xcassets, the privacy
       # manifest Resources/PrivacyInfo.xcprivacy) into Copy Bundle Resources, which is where XcodeGen
@@ -416,10 +424,10 @@ targets:
         buildPhase: resources
       - path: ATTRIBUTION.md
         buildPhase: resources
-    # Same tracked wrapper as the macOS target (Strand/Oura/ is shared, not per-platform).
-    configFiles:
-      Debug: Strand/Oura/OuraConfig.xcconfig
-      Release: Strand/Oura/OuraConfig.xcconfig
+    # No configFiles: NOOP's Strand/Oura/OuraConfig.xcconfig exists only to pull in the untracked
+    # OuraSecrets.xcconfig (OURA_* OAuth keys + the OURA_CLOUD_IMPORT compilation condition). Every
+    # reader of those keys sits under #if OURA_CLOUD_IMPORT, and `OuraCredentials.fromBundle` returns
+    # nil on absent keys, so without the wrapper the Oura cloud lane is simply never compiled in.
     info:
       path: Baseline/Resources/Info.plist
       properties:
@@ -431,7 +439,11 @@ targets:
         # hard-coded in Swift; stays in sync with the application-groups entitlement (both $(APP_GROUP_ID)).
         AppGroupIdentifier: "$(APP_GROUP_ID)"
         LSApplicationCategoryType: public.app-category.healthcare-fitness
-        UILaunchScreen: {}
+        # Launch screen: a flat fill in BaselineTheme.background (the LaunchBackground colorset in
+        # Baseline/Resources/Assets.xcassets), so the first frame matches the navy every screen fades
+        # in over instead of flashing white.
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         # Export compliance, answered once here so App Store Connect never parks a build on "Missing
         # Compliance". Baseline ships no non-exempt encryption: the only cipher in the binary is the
         # AES-128 challenge/response in Packages/OuraProtocol/Auth.swift, which goes through Apple's
@@ -440,22 +452,21 @@ targets:
         # or in transit.
         ITSAppUsesNonExemptEncryption: false
         # Not carried over from NOOP's block: CFBundleIcons (the alternate "AppIcon-Navy" set is switched
-        # only from NOOP's Settings screen, which Baseline does not host), NSSupportsLiveActivities
-        # (deferred; LiveActivityController gates on areActivitiesEnabled, false without the key),
-        # NSAppTransportSecurity's local-networking exemption (the AI coach is deferred and Baseline
-        # makes no network connections), UIFileSharingEnabled / LSSupportsOpeningDocumentsInPlace (the
-        # Siri Shortcut drop file and folder backups are deferred, so Documents stays private), the
-        # OURA_* OAuth keys and the URL scheme (every reader is under #if OURA_CLOUD_IMPORT, which no
-        # tracked build sets, and OuraCredentials.fromBundle returns nil on absent keys, disabling the
-        # lane cleanly). Every NS*UsageDescription for a framework the binary links stays: a missing
-        # one is a hard crash the moment that NOOP code path runs.
+        # only from NOOP's Settings screen, which Baseline does not host, and its catalog is excluded
+        # above), NSSupportsLiveActivities (deferred; LiveActivityController gates on
+        # areActivitiesEnabled, false without the key), NSAppTransportSecurity's local-networking
+        # exemption (the AI coach is deferred and Baseline makes no network connections),
+        # UIFileSharingEnabled / LSSupportsOpeningDocumentsInPlace (the Siri Shortcut drop file and
+        # folder backups are deferred, so Documents stays private), the OURA_* OAuth keys and the URL
+        # schemes (every Oura reader is under #if OURA_CLOUD_IMPORT, which no tracked build sets, and
+        # OuraCredentials.fromBundle returns nil on absent keys; the `noop://import-health` Shortcut
+        # import is wired by `.onOpenURL` in StrandiOSApp.swift, which Baseline excludes, so
+        # ShortcutHealthImport is never reached). Every NS*UsageDescription for a framework the binary
+        # links stays: a missing one is a hard crash the moment that NOOP code path runs.
+        # Baseline is an iPhone app (TARGETED_DEVICE_FAMILY 1 below): portrait only, and no
+        # ~ipad orientation list, because it runs on iPad in iPhone-compatibility mode.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        UISupportedInterfaceOrientations~ipad:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationPortraitUpsideDown
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
         UIBackgroundModes:
           - bluetooth-central
           # #524: keep recording an outdoor workout's GPS route while the app is backgrounded (screen off),
@@ -516,13 +527,13 @@ targets:
         # settings win, so the first store build is 1.0 (1); Settings → About reads these two keys.
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
+        # BaselineIcon is the only app-icon set in the only catalog Baseline compiles
+        # (Baseline/Resources/Assets.xcassets); NOOP's catalog is excluded in the StrandiOS source above.
         ASSETCATALOG_COMPILER_APPICON_NAME: BaselineIcon
-        # Only the primary BaselineIcon set is compiled in. StrandiOS/Resources/Assets.xcassets (swept
-        # above) also carries NOOP's AppIcon and AppIcon-Navy sets, which Baseline never shows; with
-        # INCLUDE_ALL off they stay out of the bundle.
-        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: NO
         GENERATE_INFOPLIST_FILE: NO
-        TARGETED_DEVICE_FAMILY: "1,2"
+        # iPhone only. Baseline's screens are laid out for one column; on iPad it installs and runs in
+        # iPhone-compatibility mode rather than claiming a native iPad layout it does not have.
+        TARGETED_DEVICE_FAMILY: "1"
         SWIFT_EMIT_LOC_STRINGS: YES
     dependencies:
       - package: WhoopProtocol
@@ -562,7 +573,9 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.patrickschmidt.baseline.tests
         DEVELOPMENT_TEAM: 25RC553RGP
-        TARGETED_DEVICE_FAMILY: "1,2"
+        # Matches the host app: an iPhone-only test bundle cannot load into an iPhone-only app on an
+        # iPad destination otherwise.
+        TARGETED_DEVICE_FAMILY: "1"
 
   # Screenshot harness for Baseline's screens (BaselineUITests/ScreenshotTests.swift). Launches the app
   # with its DEBUG launch arguments (--demo-seed, --skip-onboarding / --reset-onboarding, --tab,
@@ -582,7 +595,8 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.patrickschmidt.baseline.uitests
         DEVELOPMENT_TEAM: 25RC553RGP
-        TARGETED_DEVICE_FAMILY: "1,2"
+        # Matches the host app (iPhone only).
+        TARGETED_DEVICE_FAMILY: "1"
 
   # WidgetKit + Live Activity extension — the iOS analogue of the macOS menu-bar
   # extra. Reads a tiny snapshot the app publishes into the shared App Group.

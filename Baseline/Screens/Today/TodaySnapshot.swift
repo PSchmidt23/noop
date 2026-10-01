@@ -55,7 +55,7 @@ struct TodaySleepReading {
     /// False when the night carries no per-stage minutes (an imported total only); the card then skips
     /// the stage bar rather than painting the whole night as one stage.
     let hasStages: Bool
-    /// `BaselineReadouts.sleepAverage30` over the same nights; nil until three nights exist.
+    /// `BaselineReadouts.sleepAverage30(before:in:)`: the 30 nights before this one; nil until three exist.
     let avg30Min: Double?
 
     init(night: SleepNight, avg30Min: Double?) {
@@ -113,16 +113,22 @@ struct TodaySnapshot {
     let effort: Double?
 
     /// `nights` is `SleepNightBuilder.nights(…)` (newest first), the same list the Sleep tab draws.
-    static func build(days: [DailyMetric], nights: [SleepNight], todayKey: String) -> TodaySnapshot {
+    /// `todayKey` is the local calendar day (the journal's key and the morning every night is dated to);
+    /// `logicalKey` is NOOP's 04:00-rollover day (`Repository.logicalDayKey`), the row today's effort is
+    /// read from through `Repository.resolveToday`, so the small hours after midnight still show the day
+    /// that is being lived rather than an empty new row. Defaults to `todayKey` (the daytime case).
+    static func build(days: [DailyMetric], nights: [SleepNight], todayKey: String,
+                      logicalKey: String? = nil) -> TodaySnapshot {
         let scoped = days.filter { $0.day <= todayKey }
         let hrv = reading(scoped, todayKey: todayKey, cfg: Baselines.hrvCfg) { $0.avgHrv }
+        let effortRow = Repository.resolveToday(days: scoped, logicalKey: logicalKey ?? todayKey, localKey: todayKey)
         return TodaySnapshot(
             todayKey: todayKey,
             hrv: hrv,
             restingHr: reading(scoped, todayKey: todayKey, cfg: Baselines.restingHRCfg) { $0.restingHr.map(Double.init) },
             readiness: readiness(scoped, hrv: hrv),
             sleep: sleep(nights, todayKey: todayKey),
-            effort: scoped.last(where: { $0.day == todayKey })?.strain)
+            effort: effortRow?.strain)
     }
 
     private static func reading(_ scoped: [DailyMetric], todayKey: String, cfg: MetricCfg,
@@ -157,7 +163,7 @@ struct TodaySnapshot {
     private static func sleep(_ nights: [SleepNight], todayKey: String) -> TodaySleepReading? {
         let scoped = nights.filter { $0.dayKey <= todayKey }
         guard let night = scoped.first else { return nil }
-        return TodaySleepReading(night: night, avg30Min: BaselineReadouts.sleepAverage30(scoped))
+        return TodaySleepReading(night: night, avg30Min: BaselineReadouts.sleepAverage30(before: night.dayKey, in: scoped))
     }
 }
 

@@ -47,8 +47,8 @@ support that story. Nothing clutters it.
   Effects: `EffectRanker.rank(behaviors:controls:outcomeByDay:outcome:)`.
 - Workouts: `repo.workoutRows(days:)`, zones via `WorkoutZones.percents`.
 - Status: `live.connected / batteryPct / lastSyncedAt / backfilling`; sync via `model.ble.syncNow()`.
-- Reused NOOP screens (sheets from Settings): `AddDeviceWizard`, `DevicesView`, `DataSourcesView`,
-  `AppleHealthView`.
+- Reused NOOP screen: `AddDeviceWizard` (pairing sheet from Welcome and Settings → Devices). Devices,
+  Apple Health and Import are Baseline's own screens (`Baseline/Screens/Devices`, `Baseline/Screens/Data`).
 
 ## v1 scope (build this, nothing more)
 

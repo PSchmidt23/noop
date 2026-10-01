@@ -2,10 +2,11 @@
 import SwiftUI
 import Charts
 
-/// Trends' twin of `BaselineBandChart`, identical in look, with two additions the shared component has no
-/// hooks for: an explicit y-domain (so a 50–70 bpm resting-HR line is not flattened against a wide axis)
-/// and edge-safe x labels (three ticks; the last label is anchored to its trailing edge so it never
-/// truncates against the y-axis column).
+/// Line of nightly values over a soft baseline band (baseline ± sigma), with an explicit y-domain (so a
+/// 50–70 bpm resting-HR line is not flattened against a wide axis) and edge-safe x labels (three ticks;
+/// the last label is anchored to its trailing edge so it never truncates against the y-axis column).
+/// Dragging across the plot selects the nearest night; the selection clears the moment the finger lifts,
+/// so the header's pill never lingers over a chart nobody is touching.
 struct TrendsBandChart: View {
     let points: [BandPoint]
     let color: Color
@@ -41,7 +42,7 @@ struct TrendsBandChart: View {
             if let s = selected {
                 RuleMark(x: .value("Day", s.date)).foregroundStyle(BaselineTheme.hairline)
                 PointMark(x: .value("Day", s.date), y: .value("Value", s.value))
-                    .foregroundStyle(.white).symbolSize(70)
+                    .foregroundStyle(BaselineTheme.marker).symbolSize(70)
             }
         }
         .chartYScale(domain: yDomain)
@@ -64,14 +65,16 @@ struct TrendsBandChart: View {
                                 selected = points.min(by: { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) })
                             }
                         }
-                        .onEnded { _ in })
+                        .onEnded { _ in
+                            withAnimation(.easeOut(duration: 0.2)) { selected = nil }
+                        })
             }
         }
         .frame(height: height)
     }
 }
 
-/// Trends' twin of `BaselineBarChart` (same bars and average rule) with the edge-safe x labels.
+/// `BaselineBarChart` (same bars and average rule) with the edge-safe x labels.
 struct TrendsBarChart: View {
     let bars: [BaselineBarChart.Bar]
     let color: Color

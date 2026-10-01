@@ -122,8 +122,13 @@ final class ProgressModelTests: BaselineEngineTestCase {
         let days = priorNights(30, hrv: 60, rhr: 50)
         let epochDay = key(21)
         let epoch = try XCTUnwrap(TrendsDayKey.utc.date(from: epochDay)).timeIntervalSince1970
-        UserDefaults.standard.set(epoch, forKey: Baselines.hrvBaselineEpochKey)
-        defer { UserDefaults.standard.removeObject(forKey: Baselines.hrvBaselineEpochKey) }
+        // NOOP's "Recalibrate" writes both keys: HRV re-anchors on the HRV epoch, resting HR on the
+        // recovery epoch (`BaselineReadouts.baselineEpoch(for:)`).
+        Baselines.recalibrateRecoveryBaselines(now: epoch)
+        defer {
+            UserDefaults.standard.removeObject(forKey: Baselines.hrvBaselineEpochKey)
+            UserDefaults.standard.removeObject(forKey: Baselines.recoveryBaselineEpochKey)
+        }
 
         XCTAssertTrue(TrendsDayKey.isBeforeEpoch(key(22), epoch: epoch))
         XCTAssertFalse(TrendsDayKey.isBeforeEpoch(epochDay, epoch: epoch))
@@ -136,10 +141,19 @@ final class ProgressModelTests: BaselineEngineTestCase {
         XCTAssertEqual(try XCTUnwrap(points.first).nValid, 4)
         XCTAssertEqual(points.first?.id, key(17))
 
-        // Resting HR shares the HRV epoch on purpose (as `BaselineReadouts.latestNight` does).
+        // Resting HR re-anchors on the recovery epoch, which "Recalibrate" set to the same instant.
         let rhrWalk = BaselineReadouts.nightlyStates(upToToday: days, cfg: Baselines.restingHRCfg) { $0.restingHr.map(Double.init) }
         XCTAssertEqual(rhrWalk.map(\.day), walk.map(\.day))
         XCTAssertEqual(ProgressTrajectory.build(walk: rhrWalk).first?.id, key(17))
+
+        // The two epochs are separate keys: clearing the recovery epoch alone keeps every resting HR
+        // night while HRV still drops the nine before its own epoch.
+        UserDefaults.standard.removeObject(forKey: Baselines.recoveryBaselineEpochKey)
+        XCTAssertEqual(BaselineReadouts.baselineEpoch(for: Baselines.restingHRCfg), 0, accuracy: 1e-9)
+        XCTAssertEqual(BaselineReadouts.baselineEpoch(for: Baselines.hrvCfg), epoch, accuracy: 1e-9)
+        let rhrAll = BaselineReadouts.nightlyStates(upToToday: days, cfg: Baselines.restingHRCfg) { $0.restingHr.map(Double.init) }
+        XCTAssertEqual(rhrAll.count, 30)
+        XCTAssertEqual(hrvWalk(days).count, 21)
     }
 
     // MARK: - Noise and comparison
@@ -341,7 +355,9 @@ final class ProgressModelTests: BaselineEngineTestCase {
         check(ProgressCopy.sentence(noun: "HRV", unit: "ms", status: ready(58, 64, cfg: Baselines.hrvCfg, sigma: hrvSigmaFloor, thenDay: "2026-03-03", namesDate: true), horizon: .all),
               "Your HRV baseline is 6 ms higher than when it settled on \(mar3).")
         check(ProgressCopy.sentence(noun: "HRV", unit: "ms", status: .calibrating(nights: 9), horizon: .quarter),
-              "Your HRV baseline settles after 14 nights · 9 so far. Progress compares it with itself from then on.")
+              "Your HRV baseline settles after 14 nights; Progress starts the night after · 9 so far.")
+        check(ProgressCopy.sentence(noun: "HRV", unit: "ms", status: .calibrating(nights: 14), horizon: .quarter),
+              "Your HRV baseline settles after 14 nights; Progress starts the night after · 14 so far.")
         let settled = "2025-09-18"
         let compareFrom = Baselines.cutoffKey(todayKey: settled, carryDays: -90)
         check(ProgressCopy.sentence(noun: "HRV", unit: "ms", status: .settling(firstTrustedDay: settled, compareFromDay: compareFrom, points: []), horizon: .quarter),
@@ -356,9 +372,10 @@ final class ProgressModelTests: BaselineEngineTestCase {
         check(ProgressCopy.sentence(noun: "resting HR", unit: "bpm", status: .empty, horizon: .quarter), "No nights with resting HR yet.")
 
         let hrvFoot = try XCTUnwrap(ProgressCopy.footnote(unit: "ms", status: ready(58, 64, cfg: Baselines.hrvCfg, sigma: hrvSigmaFloor)))
-        XCTAssertTrue(hrvFoot.contains("about 3 ms"), hrvFoot)
+        XCTAssertEqual(hrvFoot, "Changes under about 3 ms are within the baseline's own noise.")
         let rhrFoot = try XCTUnwrap(ProgressCopy.footnote(unit: "bpm", status: ready(53, 50, cfg: Baselines.restingHRCfg, sigma: rhrSigmaFloor)))
-        XCTAssertTrue(rhrFoot.contains("about 2 bpm"), rhrFoot)
+        XCTAssertEqual(rhrFoot, "Changes under about 2 bpm are within the baseline's own noise.")
+        XCTAssertFalse(hrvFoot.contains("Trends"), "what the line is belongs to the closing caption, said once")
         XCTAssertNotNil(ProgressCopy.footnote(unit: "ms", status: .paused(lastDay: "2025-09-12", points: [])))
         XCTAssertNil(ProgressCopy.footnote(unit: "ms", status: .calibrating(nights: 2)))
         XCTAssertNil(ProgressCopy.footnote(unit: "ms", status: .empty))
@@ -373,7 +390,72 @@ final class ProgressModelTests: BaselineEngineTestCase {
         XCTAssertEqual(ProgressCopy.nowLabel(c, asOfDay: nil), "Now · \(ProgressCopy.date("2026-02-17"))")
         XCTAssertEqual(ProgressCopy.nowLabel(c, asOfDay: "2026-02-10"), "Now · as of \(ProgressCopy.date("2026-02-10"))")
         XCTAssertTrue(ProgressCopy.closingCaption(recalibratedOn: "2025-06-02").hasPrefix("Counting from your recalibration on \(ProgressCopy.date("2025-06-02")). "))
-        XCTAssertTrue(ProgressCopy.closingCaption(recalibratedOn: nil).hasPrefix("Baselines are the recency-weighted averages"))
+        let closing = ProgressCopy.closingCaption(recalibratedOn: nil)
+        XCTAssertTrue(closing.hasPrefix("The HRV and resting HR lines are your baseline going into each night, the same dashed line Trends draws"), closing)
+        XCTAssertEqual(closing.components(separatedBy: "dashed line").count, 2, "the baseline explanation appears exactly once")
+    }
+
+    func testCalibratingReportsTheEnginesCount() throws {
+        // Exactly 14 valid prior nights: the fold is trusted (nValid 14) but no night has been judged
+        // against it yet, so there is no trusted point. The copy must say 14, the engine's own count,
+        // and not claim the baseline is still short of 14.
+        let fourteen = priorNights(14, hrv: 60)
+        XCTAssertEqual(hrvStatus(fourteen, .quarter), .calibrating(nights: 14))
+        let latest = BaselineReadouts.latestNight(upToToday: fourteen, cfg: Baselines.hrvCfg) { $0.avgHrv }
+        XCTAssertEqual(latest.state.nValid, 13, "the Today hero counts the fold BEFORE the newest night")
+        let folded = Baselines.foldHistory(fourteen.map(\.avgHrv), dayKeys: fourteen.map(\.day), cfg: Baselines.hrvCfg)
+        XCTAssertEqual(folded.nValid, 14, "the engine's fold over every night so far")
+        XCTAssertTrue(folded.trusted)
+
+        // Out-of-range and missing nights are skipped by the engine and so by the count.
+        let withGaps = priorNights(10, hrv: 60) + [Fixtures.metric(key(0), hrv: 300)]
+        XCTAssertEqual(hrvStatus(withGaps, .quarter), .calibrating(nights: 10))
+        XCTAssertEqual(hrvStatus(priorNights(3, hrv: 60), .quarter), .calibrating(nights: 3))
+
+        // The 15th valid night is the first trusted point: settling, not calibrating.
+        guard case .settling(let firstDay, _, let points) = hrvStatus(priorNights(15, hrv: 60), .quarter) else {
+            return XCTFail("expected .settling")
+        }
+        XCTAssertEqual(firstDay, key(1))
+        XCTAssertEqual(points.count, 1)
+    }
+
+    func testClockFromComponents() {
+        // Built from hour/minute on a fixed reference day, so it equals the formatter's own rendering of
+        // those components and never depends on today's date (or on a DST edge falling today).
+        func expected(_ hour: Int, _ minute: Int) -> String {
+            SleepFormat.clock(Fixtures.local(2001, 1, 1, hour: hour, minute: minute))
+        }
+        XCTAssertEqual(ProgressCopy.clock(sec: 23 * 3600 + 24 * 60), expected(23, 24))
+        XCTAssertEqual(ProgressCopy.clock(sec: 0), expected(0, 0))
+        XCTAssertEqual(ProgressCopy.clock(sec: 7 * 3600 + 5 * 60 + 59), expected(7, 5), "seconds are not shown")
+        XCTAssertEqual(ProgressCopy.clock(sec: 86_400), expected(0, 0), "wraps at midnight")
+        XCTAssertEqual(ProgressCopy.clock(sec: 2 * 3600 + 30 * 60), expected(2, 30), "the DST gap hour still names its components")
+        XCTAssertFalse(ProgressCopy.clock(sec: 12 * 3600).isEmpty)
+    }
+
+    func testHorizonPickerGate() {
+        // Calibrating metrics and a building sleep average: nothing on screen depends on the horizon.
+        let early = ProgressSnapshot.build(days: priorNights(5, hrv: 60, rhr: 50), nights: [], horizon: .quarter, todayKey: today)
+        XCTAssertEqual(early.hrv, .calibrating(nights: 5))
+        XCTAssertFalse(early.hasHorizonContent)
+
+        // One settled metric is enough.
+        XCTAssertTrue(ProgressSnapshot.build(days: priorNights(20, hrv: 60), nights: [], horizon: .quarter, todayKey: today).hasHorizonContent)
+        XCTAssertTrue(ProgressSnapshot.build(days: priorNights(120, hrv: 60), nights: [], horizon: .all, todayKey: today).hasHorizonContent)
+        let paused = (15..<115).reversed().map { Fixtures.metric(key($0), hrv: 60) }
+        XCTAssertTrue(ProgressSnapshot.build(days: paused, nights: [], horizon: .quarter, todayKey: today).hasHorizonContent)
+
+        // So is a sleep average that names the day its comparison arrives.
+        let sleepOnly = dailyNights(20) { _ in 420 }
+        let sleepSnap = ProgressSnapshot.build(days: [], nights: sleepOnly, horizon: .quarter, todayKey: today)
+        XCTAssertEqual(sleepSnap.hrv, .empty)
+        guard case .nowOnly = sleepSnap.sleep.duration else { return XCTFail("expected .nowOnly") }
+        XCTAssertTrue(sleepSnap.hasHorizonContent)
+
+        // Two nights of sleep and no metrics: the average is still building.
+        XCTAssertFalse(ProgressSnapshot.build(days: [], nights: dailyNights(2) { _ in 420 }, horizon: .quarter, todayKey: today).hasHorizonContent)
+        XCTAssertFalse(ProgressSnapshot.build(days: [], nights: [], horizon: .quarter, todayKey: today).hasHorizonContent)
     }
 
     func testTodayRowEqualsProgressCard() {

@@ -42,22 +42,30 @@ enum Fixtures {
     }
 }
 
-/// Base class for tests that fold baselines. `BaselineReadouts.latestNight` and `TrendsSeries.build`
-/// honour the HRV recalibration epoch in `UserDefaults.standard`; the test host is the app, so a
-/// recalibration left behind on the simulator would silently drop every fixture night. Clear it for
-/// the test and put it back afterwards.
+/// Base class for tests that fold baselines. `BaselineReadouts.latestNight` / `nightlyStates` and
+/// `TrendsSeries.build` honour the recalibration epochs in `UserDefaults.standard` (the HRV epoch for HRV,
+/// the recovery epoch for resting HR); the test host is the app, so a recalibration left behind on the
+/// simulator would silently drop every fixture night. Clear both for the test and put them back afterwards.
 class BaselineEngineTestCase: XCTestCase {
-    private var savedEpoch: Double = 0
+    private var savedHrvEpoch: Double = 0
+    private var savedRecoveryEpoch: Double = 0
 
     override func setUp() {
         super.setUp()
-        savedEpoch = Baselines.hrvBaselineEpoch()
+        savedHrvEpoch = Baselines.hrvBaselineEpoch()
+        savedRecoveryEpoch = Baselines.recoveryBaselineEpoch()
         UserDefaults.standard.removeObject(forKey: Baselines.hrvBaselineEpochKey)
+        UserDefaults.standard.removeObject(forKey: Baselines.recoveryBaselineEpochKey)
     }
 
     override func tearDown() {
-        if savedEpoch > 0 {
-            UserDefaults.standard.set(savedEpoch, forKey: Baselines.hrvBaselineEpochKey)
+        UserDefaults.standard.removeObject(forKey: Baselines.hrvBaselineEpochKey)
+        UserDefaults.standard.removeObject(forKey: Baselines.recoveryBaselineEpochKey)
+        if savedHrvEpoch > 0 {
+            UserDefaults.standard.set(savedHrvEpoch, forKey: Baselines.hrvBaselineEpochKey)
+        }
+        if savedRecoveryEpoch > 0 {
+            UserDefaults.standard.set(savedRecoveryEpoch, forKey: Baselines.recoveryBaselineEpochKey)
         }
         super.tearDown()
     }

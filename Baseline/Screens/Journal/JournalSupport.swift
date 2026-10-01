@@ -10,21 +10,23 @@ enum JournalDay {
     /// Oldest → newest, today at the trailing end.
     static let offsets: [Int] = Array((0...6).reversed())
 
-    static func date(offset: Int) -> Date {
-        Calendar.current.date(byAdding: .day, value: -offset, to: Date()) ?? Date()
+    /// `now` is the screen's held "today" (`JournalScreen.today`, rolled on `.NSCalendarDayChanged`), so
+    /// every chip, key and caption on one render agrees about which day is offset 0.
+    static func date(offset: Int, now: Date = Date()) -> Date {
+        Calendar.current.date(byAdding: .day, value: -offset, to: now) ?? now
     }
 
-    static func key(offset: Int) -> String { Repository.localDayKey(date(offset: offset)) }
+    static func key(offset: Int, now: Date = Date()) -> String { Repository.localDayKey(date(offset: offset, now: now)) }
 
     /// Chip headline: the weekday ("Tue"). The chips are equal-width, so the longer "Last night" /
     /// "Yesterday" words live in `caption(offset:)` under the strip instead.
-    static func title(offset: Int) -> String { weekday.string(from: date(offset: offset)) }
+    static func title(offset: Int, now: Date = Date()) -> String { weekday.string(from: date(offset: offset, now: now)) }
 
-    static func dayNumber(offset: Int) -> String { dayOfMonth.string(from: date(offset: offset)) }
+    static func dayNumber(offset: Int, now: Date = Date()) -> String { dayOfMonth.string(from: date(offset: offset, now: now)) }
 
     /// One line under the picker naming the selected night and the morning its answers lead into.
-    static func caption(offset: Int) -> String {
-        let morning = long.string(from: date(offset: offset))
+    static func caption(offset: Int, now: Date = Date()) -> String {
+        let morning = long.string(from: date(offset: offset, now: now))
         switch offset {
         case 0: return "Last night \u{00B7} the evening and night leading into \(morning)."
         case 1: return "Yesterday \u{00B7} the evening and night leading into \(morning)."

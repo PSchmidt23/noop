@@ -14,10 +14,12 @@ struct SleepScreen: View {
         let loaded: Bool
     }
 
-    /// ONE average for the app: `BaselineReadouts.sleepAverage30`, which the Today tab's sleep card reads
-    /// too, so the hero pill, the bar chart's rule and Today's delta can never disagree. nil until three
-    /// nights exist.
-    private var average30: Double? { BaselineReadouts.sleepAverage30(nights) }
+    /// ONE comparison average for the app: `BaselineReadouts.sleepAverage30(before:in:)`, the 30 nights
+    /// before the latest, which the Today tab's sleep card reads too, so the hero pill, the bar chart's
+    /// rule and Today's delta can never disagree. nil until three earlier nights exist.
+    private var average30: Double? {
+        nights.first.flatMap { BaselineReadouts.sleepAverage30(before: $0.dayKey, in: nights) }
+    }
 
     private var listed: [SleepNight] { Array(nights.prefix(30)) }
 
@@ -73,7 +75,8 @@ struct SleepScreen: View {
             VStack(spacing: 0) {
                 ForEach(listed) { n in
                     NavigationLink {
-                        NightDetailScreen(night: n, average: average30)
+                        // Each night against the 30 nights before IT, as the hero compares the latest.
+                        NightDetailScreen(night: n, average: BaselineReadouts.sleepAverage30(before: n.dayKey, in: nights))
                     } label: {
                         SleepNightRow(night: n)
                     }

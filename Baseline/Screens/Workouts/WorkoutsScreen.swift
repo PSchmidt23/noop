@@ -50,11 +50,11 @@ struct WorkoutsScreen: View {
                     }
                 }
             } else {
-                BaselineCard {
-                    BaselineEmptyState(icon: "hourglass",
-                                       title: "Reading your workouts",
-                                       message: "Workouts appear here once the store has loaded.")
-                }
+                // Until the store's first refresh lands, the same spinner Trends and Progress show.
+                ProgressView()
+                    .tint(BaselineTheme.accent)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 48)
             }
         }
         .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, allTime: window == .all)) { await reload() }

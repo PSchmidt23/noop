@@ -12,12 +12,15 @@ import WhoopStore
 /// with the profile's zones (`repo.workoutZoneMinutes`), as NOOP's `WorkoutDetailView` does, because
 /// only a CSV import writes `zonesJSON`; the card is hidden only when neither exists.
 ///
-/// Today only knows a workout by its start (`TodayWorkout.id`), so `init(startTs:)` resolves the row
-/// from the same `repo.workoutRows` query Today runs; the list already holds the row and passes it.
+/// Today does not hold the `WorkoutRow`, so `init(startTs:sport:)` resolves it from the same
+/// `repo.workoutRows` query Today runs, keyed on start AND sport: a start alone is not unique in the
+/// merged list (an import can carry two sports from one instant). The list already holds the row and
+/// passes it with `init(row:)`.
 struct WorkoutDetailScreen: View {
     private enum Source {
         case row(WorkoutRow)
-        case startTs(Int)
+        /// `sport` nil only for a caller that has no sport to pass; then the first row at that start wins.
+        case lookup(startTs: Int, sport: String?)
     }
 
     private let source: Source
@@ -42,12 +45,16 @@ struct WorkoutDetailScreen: View {
         _row = State(initialValue: row)
     }
 
-    init(startTs: Int) {
-        source = .startTs(startTs)
+    /// Today's entry: the row's start and its stored sport key (`WorkoutRow.sport`, not the display
+    /// name). `sport` defaults to nil so an older call site still compiles, but every caller that has
+    /// the sport should pass it; without it two sessions sharing a start resolve to the same detail.
+    init(startTs: Int, sport: String? = nil) {
+        source = .lookup(startTs: startTs, sport: sport)
     }
 
     var body: some View {
-        BaselineScreen(title: row.map { WorkoutSource.displaySport($0.sport) } ?? "Workout") {
+        // The sport is named once, in the header card; the title stays "Workout" so it is not said twice.
+        BaselineScreen(title: "Workout") {
             if let row {
                 let item = WorkoutItem(row: row)
                 WorkoutHeaderCard(item: item)
@@ -63,10 +70,11 @@ struct WorkoutDetailScreen: View {
                                        message: "This session is no longer in the store. Pull down on Today to refresh.")
                 }
             } else {
+                // Until the row is resolved, the same spinner Trends and Progress show.
                 ProgressView()
-                    .tint(BaselineTheme.textTertiary)
+                    .tint(BaselineTheme.accent)
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 40)
+                    .padding(.top, 48)
             }
         }
         .task(id: LoadKey(seq: repo.refreshSeq, hrMax: profile.hrMax, zoneThresholds: profile.hrZoneThresholds)) {
@@ -76,10 +84,10 @@ struct WorkoutDetailScreen: View {
 
     @MainActor
     private func load() async {
-        if case .startTs(let ts) = source {
+        if case .lookup(let ts, let sport) = source {
             // Today lists workouts started today from `workoutRows(days: 2)`; a day wider still finds
             // the row after midnight has passed while the detail was open.
-            row = await repo.workoutRows(days: 3).first { $0.startTs == ts }
+            row = await repo.workoutRows(days: 3).first { $0.startTs == ts && (sport == nil || $0.sport == sport) }
         }
         resolved = true
         guard let row else { return }
@@ -161,8 +169,8 @@ struct WorkoutSessionCard: View {
                 Spacer().frame(maxWidth: .infinity)
             }
             Text(item.row.strain == nil
-                 ? "Effort is this session's share of the day's 0–100 effort. Not every source records one."
-                 : "Effort is this session's share of the day's 0–100 effort.")
+                 ? "This session's contribution to the day's effort (0–100), as the strap recorded it. Not every source records one."
+                 : "This session's contribution to the day's effort (0–100), as the strap recorded it.")
                 .font(BaselineTheme.caption)
                 .foregroundStyle(BaselineTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -244,7 +252,7 @@ struct WorkoutTraceCard: View {
                     .foregroundStyle(BaselineTheme.textSecondary)
             } else {
                 ProgressView()
-                    .tint(BaselineTheme.textTertiary)
+                    .tint(BaselineTheme.accent)
                     .frame(maxWidth: .infinity)
                     .frame(height: 120)
             }

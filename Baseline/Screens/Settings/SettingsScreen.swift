@@ -2,10 +2,10 @@
 import SwiftUI
 import UserNotifications
 
-/// Settings: grouped cards, one idea each. Strap, Apple Health and Import push NOOP's own screens;
-/// Profile is Baseline's small form over `ProfileStore`; About carries attribution, the privacy policy,
-/// license and the disclaimer. Each card observes only what it needs, so the root never re-renders on
-/// strap ticks.
+/// Settings: grouped cards, one idea each. Strap, Apple Health and Import push Baseline's own screens
+/// over NOOP's engine (`DevicesScreen`, `AppleHealthScreen`, `ImportScreen`); Profile is Baseline's small
+/// form over `ProfileStore`; About carries attribution, the privacy policy, license and the disclaimer.
+/// Each card observes only what it needs, so the root never re-renders on strap ticks.
 struct SettingsScreen: View {
     var body: some View {
         BaselineScreen(title: "Settings") {
@@ -49,8 +49,8 @@ private struct SettingsStrapCard: View {
                 .foregroundStyle(BaselineTheme.textSecondary)
             SettingsDivider()
             SettingsLinkRow(icon: "dot.radiowaves.left.and.right", title: "Devices",
-                            subtitle: "Pair, rename or remove a strap") {
-                SettingsHostedScreen { DevicesView() }
+                            subtitle: "Pair, rename or forget a strap") {
+                DevicesScreen()
             }
             SettingsDivider()
             Button(action: { ble.syncNow() }) {
@@ -99,19 +99,9 @@ private struct SettingsHealthCard: View {
         BaselineCard {
             SettingsLinkRow(icon: "heart.text.square", title: "Apple Health",
                             subtitle: "Reads sleep and workouts, writes back what Baseline computes",
-                            badge: status) {
-                SettingsHostedScreen { AppleHealthView() }
+                            badge: AppleHealthStatus.pill(for: health.auth)) {
+                AppleHealthScreen()
             }
-        }
-    }
-
-    private var status: (text: String, color: Color) {
-        switch health.auth {
-        case .authorized:         return ("Allowed", BaselineTheme.good)
-        case .denied:             return ("Not allowed", BaselineTheme.watch)
-        case .unavailable:        return ("Unavailable", BaselineTheme.textTertiary)
-        case .entitlementMissing: return ("Not in this build", BaselineTheme.textTertiary)
-        case .unknown:            return ("Not set up", BaselineTheme.textTertiary)
         }
     }
 }
@@ -122,8 +112,8 @@ private struct SettingsImportCard: View {
     var body: some View {
         BaselineCard {
             SettingsLinkRow(icon: "square.and.arrow.down", title: "Import data",
-                            subtitle: "WHOOP CSV export or Apple Health export") {
-                SettingsHostedScreen { DataSourcesView() }
+                            subtitle: "WHOOP export or Apple Health export") {
+                ImportScreen()
             }
         }
     }
@@ -299,17 +289,6 @@ struct SettingsLinkRow<Destination: View>: View {
             }
         }
         .buttonStyle(.plain)
-    }
-}
-
-/// Hosts one of NOOP's screens inside Baseline's navigation stack. They draw their own in-content
-/// title, so the bar is kept compact and dark.
-struct SettingsHostedScreen<Content: View>: View {
-    @ViewBuilder var content: () -> Content
-    var body: some View {
-        content()
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
     }
 }
 #endif

@@ -78,6 +78,14 @@ final class JournalModelTests: XCTestCase {
         XCTAssertEqual(dose.perUnitStat?.label, "Per later step")
         XCTAssertTrue(dose.sentence.contains("about 2.5 ms lower HRV"))
         XCTAssertTrue(dose.sentence.hasSuffix("for you (9 nights)."))
+        // The stat cell prints the same tenth the sentence states, never a whole-number rounding of it.
+        XCTAssertEqual(dose.perUnitText, "\u{2212}2.5")
+        let up = JournalDose(behavior: .caffeine, response: response(.caffeine, perUnit: 2.04, priorSlope: -2, nUser: 9,
+                                                                      priorDominated: false, contradictsPrior: false))
+        XCTAssertEqual(up.perUnitText, "+2")
+        let flat = JournalDose(behavior: .caffeine, response: response(.caffeine, perUnit: -0.04, priorSlope: -2, nUser: 9,
+                                                                        priorDominated: false, contradictsPrior: false))
+        XCTAssertEqual(flat.perUnitText, "0")
 
         let one = JournalDose(behavior: .caffeine, response: response(.caffeine, perUnit: 1, priorSlope: -2, nUser: 1,
                                                                        priorDominated: false, contradictsPrior: true))

@@ -6,12 +6,13 @@ import WhoopStore
 // `repo.workoutRows(days:)`; nothing touches the store or SwiftUI.
 
 /// One session as the list and the detail show it. `WorkoutRow` is neither `Identifiable` nor `Hashable`,
-/// so this wrapper gives it a stable list identity (the merged list is deduped per source, so start +
-/// source + sport is unique).
+/// so this wrapper gives it a stable list identity. The merged list is deduped per source on the
+/// (start, end, sport) window, so start + end + source + sport is the key the store itself treats as
+/// one session; start alone is not (an import can carry two sports from one instant).
 struct WorkoutItem: Identifiable {
     let row: WorkoutRow
 
-    var id: String { "\(row.startTs)|\(row.source)|\(row.sport)" }
+    var id: String { "\(row.startTs)|\(row.endTs)|\(row.source)|\(row.sport)" }
     var start: Date { Date(timeIntervalSince1970: TimeInterval(row.startTs)) }
     var end: Date { Date(timeIntervalSince1970: TimeInterval(row.endTs)) }
     /// Seconds of activity: the stored duration, else the window.

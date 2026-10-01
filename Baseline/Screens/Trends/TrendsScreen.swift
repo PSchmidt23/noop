@@ -8,11 +8,15 @@ struct TrendsScreen: View {
     @EnvironmentObject private var repo: Repository
     @AppStorage("baseline.trendsRange") private var rangeRaw: Int = TrendsRange.month.rawValue
     @State private var series: TrendsSeries?
+    /// Held in state and rolled on `.NSCalendarDayChanged`, so the window's "today" end moves at midnight
+    /// instead of waiting for the next store refresh.
+    @State private var todayKey = Repository.localDayKey(Date())
 
     private struct LoadKey: Equatable {
         let seq: Int
         let range: Int
         let loaded: Bool
+        let day: String
     }
 
     private var range: TrendsRange { TrendsRange.resolve(rangeRaw) }
@@ -34,9 +38,12 @@ struct TrendsScreen: View {
                     .padding(.top, 48)
             }
         }
-        .task(id: LoadKey(seq: repo.refreshSeq, range: rangeRaw, loaded: repo.loaded)) {
+        .task(id: LoadKey(seq: repo.refreshSeq, range: rangeRaw, loaded: repo.loaded, day: todayKey)) {
             guard repo.loaded else { series = nil; return }
             series = TrendsSeries.build(days: repo.days, range: range)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            todayKey = Repository.localDayKey(Date())
         }
         // A text label, not an icon, so the destination is named. Present in every state, including
         // the empty one: Progress explains what it needs. The tab's NavigationStack pushes it.

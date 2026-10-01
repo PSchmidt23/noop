@@ -19,6 +19,12 @@ struct TodayScreen: View {
     @State private var workouts: [TodayWorkout] = []
     @State private var answers: [String: Bool] = [:]
     @State private var todayKey = Repository.localDayKey(Date())
+    /// NOOP's 04:00-rollover day, the row today's effort is read from (`TodaySnapshot.build(logicalKey:)`).
+    @State private var logicalKey = Repository.logicalDayKey(Date())
+    /// Bumped by every journal chip tap, so a `load()` that was mid-await when the person tapped never
+    /// lands its older `answers` on top of the optimistic update (`JournalScreenModel.readDay`'s guard).
+    @State private var writeSeq = 0
+    @Environment(\.scenePhase) private var scenePhase
     /// "Pair strap" first asks which WHOOP model, then opens the wizard on that model's prep step
     /// (`pairing`), past NOOP's device-type chooser and its Experimental tier.
     @State private var showPair = false
@@ -32,6 +38,7 @@ struct TodayScreen: View {
         let seq: Int
         let loaded: Bool
         let day: String
+        let logicalDay: String
         let horizon: Int
     }
 
@@ -64,10 +71,11 @@ struct TodayScreen: View {
             model.ble.syncNow()
             await repo.refresh()
         }
-        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, day: todayKey, horizon: progressHorizonRaw)) { await load() }
-        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
-            todayKey = Repository.localDayKey(Date())
-        }
+        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, day: todayKey, logicalDay: logicalKey,
+                          horizon: progressHorizonRaw)) { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in rollDayKeys() }
+        // The logical day rolls at 04:00 with no system notice; re-read both keys whenever the app returns.
+        .onChange(of: scenePhase) { _, phase in if phase == .active { rollDayKeys() } }
         .confirmationDialog("Which strap do you have?", isPresented: $showPair, titleVisibility: .visible) {
             Button("WHOOP 4.0") { pairing = .whoop4 }
             Button("WHOOP 5.0 / MG") { pairing = .whoop5mg }
@@ -87,19 +95,19 @@ struct TodayScreen: View {
         }
     }
 
+    /// Date, the readiness pill, then its sentence on its own line (never beside the pill), so the
+    /// sentence can run to its full length at any type size.
     private func headline(_ s: TodaySnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(Date().formatted(.dateTime.weekday(.wide).day().month(.wide)))
                 .font(BaselineTheme.title)
                 .foregroundStyle(BaselineTheme.text)
-            HStack(alignment: .center, spacing: 10) {
-                BaselinePill(text: readinessPill(s.readiness), color: readinessColor(s.readiness))
-                if let line = readinessLine(s.readiness) {
-                    Text(line)
-                        .font(BaselineTheme.caption)
-                        .foregroundStyle(BaselineTheme.textSecondary)
-                        .lineLimit(2)
-                }
+            BaselinePill(text: readinessPill(s.readiness), color: readinessColor(s.readiness))
+            if let line = readinessLine(s.readiness) {
+                Text(line)
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.top, 4)
@@ -134,14 +142,14 @@ struct TodayScreen: View {
         }
     }
 
-    /// nil while calibrating: the pill already says when readiness arrives.
+    /// nil while calibrating: the pill already says when readiness arrives. A tier's sentence is
+    /// `ReadinessTier.baselineWeekSentence` (shared vocabulary): it speaks of the week, so the seven-night
+    /// tier and the one-night delta on the HRV tile are two facts, never a contradiction.
     private func readinessLine(_ r: TodayReadiness) -> String? {
         switch r {
         case .calibrating: return nil
         case .stale(let day): return "No HRV since \(TodayFormat.dayLabel(day)). Readiness returns with the next synced night."
-        case .tier(.primed): return "HRV is running above its usual range. A good day to push."
-        case .tier(.normal): return "HRV is where it usually is."
-        case .tier(.suppressed): return "HRV is lower than usual. Go gently today."
+        case .tier(let tier): return tier.baselineWeekSentence
         }
     }
 
@@ -168,6 +176,7 @@ struct TodayScreen: View {
         case .some(true): next = false
         case .some(false): next = nil
         }
+        writeSeq += 1
         answers[question] = next
         let day = todayKey
         Task {
@@ -181,13 +190,20 @@ struct TodayScreen: View {
 
     // MARK: Load
 
+    private func rollDayKeys() {
+        let now = Date()
+        todayKey = Repository.localDayKey(now)
+        logicalKey = Repository.logicalDayKey(now)
+    }
+
     private func load() async {
         let key = todayKey
+        let seq = writeSeq
         // The same night list the Sleep tab builds, so last night's total and its 30-night average
         // are one number on both tabs.
         let habitual = await repo.habitualMidsleepSec()
         let nights = SleepNightBuilder.nights(sessions: repo.sleeps, days: repo.days, habitualMidsleepSec: habitual)
-        snapshot = TodaySnapshot.build(days: repo.days, nights: nights, todayKey: key)
+        snapshot = TodaySnapshot.build(days: repo.days, nights: nights, todayKey: key, logicalKey: logicalKey)
         progressHeadline = ProgressSnapshot.hrvHeadline(days: repo.days, horizon: ProgressHorizon.resolve(progressHorizonRaw),
                                                         todayKey: key)
         let rows = await repo.workoutRows(days: 2)
@@ -195,7 +211,10 @@ struct TodayScreen: View {
             .filter { Repository.localDayKey(Date(timeIntervalSince1970: TimeInterval($0.startTs))) == key }
             .sorted { $0.startTs < $1.startTs }
             .map(TodayWorkout.init)
-        answers = await repo.nativeJournalAnswers(day: key)
+        let stored = await repo.nativeJournalAnswers(day: key)
+        // A chip tapped while the store answered already holds the newer state; keep it.
+        guard seq == writeSeq else { return }
+        answers = stored
     }
 }
 #endif

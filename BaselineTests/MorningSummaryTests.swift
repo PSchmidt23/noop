@@ -22,17 +22,18 @@ final class MorningSummaryTests: BaselineEngineTestCase {
     // MARK: Body
 
     func testFullMorning_insideBand() throws {
-        // Ten flat nights: HRV band 60 ± 1.253·5, resting HR band 50 ± 1.253·2. Three nights of sleep
-        // (402 / 420 / 450) average 424 min, so last night reads −22 min against it.
+        // Ten flat nights: HRV band 60 ± 1.253·5, resting HR band 50 ± 1.253·2. The three nights BEFORE
+        // last night (420 / 450 / 420) average 430 min, so last night (402) reads −28 min against it.
         let days = priorNights(10, hrv: 60, rhr: 50) + [Fixtures.metric(today, hrv: 61, rhr: 52)]
         let nights = [night(today, sleepMin: 402),
                       night(Fixtures.key(today, minus: 1), sleepMin: 420),
-                      night(Fixtures.key(today, minus: 2), sleepMin: 450)]
+                      night(Fixtures.key(today, minus: 2), sleepMin: 450),
+                      night(Fixtures.key(today, minus: 3), sleepMin: 420)]
         let summary = try XCTUnwrap(MorningSummaryText.build(TodaySnapshot.build(days: days, nights: nights, todayKey: today)))
 
         XCTAssertEqual(summary.day, today)
         XCTAssertEqual(summary.body,
-                       "HRV 61 ms · inside your band · Resting HR 52 bpm · inside your band · Slept 6h 42m · \u{2212}22 min vs average")
+                       "HRV 61 ms · inside your band · Resting HR 52 bpm · inside your band · Slept 6h 42m · \u{2212}28 min vs average")
         XCTAssertNil(summary.subtitle, "readiness needs 14 nights; ten must not fabricate a tier")
     }
 
@@ -57,11 +58,29 @@ final class MorningSummaryTests: BaselineEngineTestCase {
         XCTAssertNil(summary.subtitle)
     }
 
+    /// The tier never appears without its noun: "Readiness · On baseline", the pill's label after the one
+    /// word Today, Trends and the banner share.
     func testReadinessTier_becomesSubtitle() throws {
         let days = priorNights(14, hrv: 60) + [Fixtures.metric(today, hrv: 60)]
         let summary = try XCTUnwrap(MorningSummaryText.build(TodaySnapshot.build(days: days, nights: [], todayKey: today)))
-        XCTAssertEqual(summary.subtitle, ReadinessTier.normal.baselineLabel)
-        XCTAssertEqual(summary.subtitle, "On baseline")
+        XCTAssertEqual(summary.subtitle, ReadinessTier.normal.baselineNotificationSubtitle)
+        XCTAssertEqual(summary.subtitle, "Readiness · " + ReadinessTier.normal.baselineLabel)
+        XCTAssertEqual(summary.subtitle, "Readiness · On baseline")
+    }
+
+    /// Today's sentence under the pill speaks of the week (the seven-night tier), so it cannot read as
+    /// contradicting a one-night "+35 ms · above your band" on the HRV tile beneath it.
+    func testWeekSentences_nameTheWeekAndNeverWhoopVocabulary() {
+        for tier in [ReadinessTier.primed, .normal, .suppressed] {
+            let sentence = tier.baselineWeekSentence
+            XCTAssertTrue(sentence.hasPrefix("Your week is "), sentence)
+            for word in ["Strain", "Recovery", "Coach", "WHOOP"] {
+                XCTAssertFalse(sentence.contains(word), "\(word) leaked into the readiness sentence")
+            }
+        }
+        XCTAssertTrue(ReadinessTier.normal.baselineWeekSentence.hasPrefix("Your week is on baseline."))
+        XCTAssertTrue(ReadinessTier.primed.baselineWeekSentence.hasPrefix("Your week is primed."))
+        XCTAssertTrue(ReadinessTier.suppressed.baselineWeekSentence.hasPrefix("Your week is below your normal range."))
     }
 
     func testSleepWithoutAverage_hasNoDelta() throws {

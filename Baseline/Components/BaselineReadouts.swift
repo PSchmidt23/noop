@@ -5,7 +5,7 @@ import StrandAnalytics
 
 /// Resolvers for facts that more than one tab prints. Two readouts of one fact must not be able to
 /// disagree, so each fact here has exactly one funnel: the Today hero tiles and the Trends "Baseline"
-/// cell both read `latestNight(…)`; the Today sleep card and the Sleep tab both read `sleepAverage30(…)`;
+/// cell both read `latestNight(…)`; the Today sleep card and the Sleep tab both read `sleepAverage30(before:in:)`;
 /// every span of minutes, asleep or in a workout, is spelled by `durationText(…)`.
 /// Pure and synchronous; nothing here touches the store or SwiftUI.
 enum BaselineReadouts {
@@ -22,9 +22,18 @@ enum BaselineReadouts {
         let state: BaselineState
     }
 
+    /// The recalibration epoch (seconds; 0 = none) a metric's fold honours, the split NOOP's engine makes:
+    /// HRV re-anchors on `noop.hrvBaselineEpoch`, every other vital (resting HR, respiration, skin temp)
+    /// on `noop.recoveryBaselineEpoch`. `IntelligenceEngine` folds resting HR with the recovery epoch, so
+    /// the fold here must too or the two readouts could disagree after a "Recalibrate".
+    static func baselineEpoch(for cfg: MetricCfg) -> Double {
+        cfg == Baselines.hrvCfg ? Baselines.hrvBaselineEpoch() : Baselines.recoveryBaselineEpoch()
+    }
+
     /// `upToToday` is `repo.days` (oldest → newest) already cut to `day <= todayKey`. The fold honours the
-    /// recalibration epoch exactly as `Baselines.foldHistory(_:dayKeys:cfg:baselineEpoch:)` does.
-    static func latestNight(upToToday: [DailyMetric], cfg: MetricCfg,
+    /// metric's recalibration `epoch` (`baselineEpoch(for:)` by default) exactly as
+    /// `Baselines.foldHistory(_:dayKeys:cfg:baselineEpoch:)` does.
+    static func latestNight(upToToday: [DailyMetric], cfg: MetricCfg, epoch: Double? = nil,
                             value: (DailyMetric) -> Double?) -> NightReadout {
         let latestRow = upToToday.last { d in
             guard let v = value(d) else { return false }
@@ -32,7 +41,7 @@ enum BaselineReadouts {
         }
         let history = latestRow.map { l in upToToday.filter { $0.day < l.day } } ?? upToToday
         let state = Baselines.foldHistory(history.map(value), dayKeys: history.map(\.day), cfg: cfg,
-                                          baselineEpoch: Baselines.hrvBaselineEpoch())
+                                          baselineEpoch: epoch ?? baselineEpoch(for: cfg))
         let latest = latestRow.flatMap { row in value(row).map { (day: row.day, value: $0) } }
         return NightReadout(latest: latest, state: state)
     }
@@ -48,14 +57,15 @@ enum BaselineReadouts {
         let stateGoingIn: BaselineState?
     }
 
-    /// Walks `upToToday` (oldest → newest) night by night. Nights dated before the recalibration epoch
+    /// Walks `upToToday` (oldest → newest) night by night. Nights dated before the metric's recalibration
+    /// `epoch` (`baselineEpoch(for:)` by default: the HRV epoch for HRV, the recovery epoch for resting HR)
     /// are dropped (not held), exactly as `Baselines.foldHistory(_:dayKeys:cfg:baselineEpoch:)` drops
-    /// them; a nil or out-of-range night is skip-and-hold, as the engine defines. Both metrics use the
-    /// HRV epoch, the same choice `latestNight` makes. For the newest valid night `stateGoingIn` equals
-    /// `latestNight(...).state`, the number the Today hero and the Trends "Baseline" cell print.
-    static func nightlyStates(upToToday: [DailyMetric], cfg: MetricCfg,
+    /// them; a nil or out-of-range night is skip-and-hold, as the engine defines. For the newest valid
+    /// night `stateGoingIn` equals `latestNight(...).state`, the number the Today hero and the Trends
+    /// "Baseline" cell print.
+    static func nightlyStates(upToToday: [DailyMetric], cfg: MetricCfg, epoch: Double? = nil,
                               value: (DailyMetric) -> Double?) -> [NightState] {
-        let epoch = Baselines.hrvBaselineEpoch()
+        let epoch = epoch ?? baselineEpoch(for: cfg)
         var state: BaselineState? = nil
         var out: [NightState] = []
         out.reserveCapacity(upToToday.count)
@@ -72,12 +82,25 @@ enum BaselineReadouts {
     /// Minimum nights before a 30-night sleep average is shown.
     static let sleepAverageMinNights = 3
 
-    /// ONE sleep average for the app: minutes asleep over the latest 30 nights (including the latest), nil
-    /// until `sleepAverageMinNights` exist. `nights` is `SleepNightBuilder.nights(…)`, newest first.
+    /// Minutes asleep over the latest 30 nights INCLUDING the newest: the descriptive "you're averaging …"
+    /// figure (Progress). nil until `sleepAverageMinNights` exist. `nights` is `SleepNightBuilder.nights(…)`,
+    /// newest first. A night compared against an average goes through `sleepAverage30(before:in:)`.
     static func sleepAverage30(_ nights: [SleepNight]) -> Double? {
-        let recent = nights.prefix(30)
-        guard recent.count >= sleepAverageMinNights else { return nil }
-        return recent.reduce(0) { $0 + $1.asleepMin } / Double(recent.count)
+        mean(of: nights.prefix(30))
+    }
+
+    /// ONE comparison average for a night, wherever a screen says "vs your 30-night average" (Today's
+    /// sleep card, the Sleep hero pill and its bar rule, a night's detail, the morning summary): the mean
+    /// of the (up to) 30 recorded nights strictly BEFORE `day`, so a night is never measured against an
+    /// average it is part of (the rule the HRV and resting-HR baselines follow). nil until
+    /// `sleepAverageMinNights` earlier nights exist. `nights` is newest first.
+    static func sleepAverage30(before day: String, in nights: [SleepNight]) -> Double? {
+        mean(of: nights.filter { $0.dayKey < day }.prefix(30))
+    }
+
+    private static func mean(of nights: ArraySlice<SleepNight>) -> Double? {
+        guard nights.count >= sleepAverageMinNights else { return nil }
+        return nights.reduce(0) { $0 + $1.asleepMin } / Double(nights.count)
     }
 
     // MARK: Effort

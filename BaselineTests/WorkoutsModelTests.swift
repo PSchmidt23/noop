@@ -66,6 +66,11 @@ final class WorkoutsModelTests: XCTestCase {
         XCTAssertEqual(window.durationS, 2_400, "no stored duration: the window")
         let apple = WorkoutItem(row: row(start, minutes: 40, source: "apple"))
         XCTAssertNotEqual(stored.id, apple.id, "the same start from two sources stays two rows")
+        let cycling = WorkoutItem(row: row(start, minutes: 40, sport: "Cycling"))
+        XCTAssertNotEqual(window.id, cycling.id, "two sports from one instant stay two rows")
+        let longer = WorkoutItem(row: row(start, minutes: 55))
+        XCTAssertNotEqual(window.id, longer.id, "the same start, source and sport with another end is another session")
+        XCTAssertEqual(window.id, WorkoutItem(row: row(start, minutes: 40)).id, "identity is a pure function of the row")
     }
 
     // MARK: Week label

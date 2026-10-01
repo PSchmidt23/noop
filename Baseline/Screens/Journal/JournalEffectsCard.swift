@@ -11,10 +11,10 @@ struct JournalEffectsCard: View {
     var body: some View {
         BaselineCard(title: "What moves your \(model.outcome.label)",
                      subtitle: "Nights with a habit versus nights without. Patterns, not causes.") {
-            Picker("Outcome", selection: $model.outcome) {
-                ForEach(JournalOutcome.allCases) { o in Text(o.label).tag(o) }
-            }
-            .pickerStyle(.segmented)
+            // The app's one segmented control, so this toggle matches the Trends and Progress range pills.
+            BaselineSegmentedPicker(options: JournalOutcome.allCases, selection: $model.outcome,
+                                    label: { $0.label },
+                                    accessibilityLabel: { "What moves your \($0.label)" })
 
             if !model.loaded {
                 BaselineEmptyState(icon: "hourglass", title: "Reading your journal", message: " ")
@@ -105,7 +105,7 @@ struct JournalDoseCard: View {
     var body: some View {
         BaselineCard(title: dose.title, subtitle: dose.subtitle,
                      accessory: AnyView(Image(systemName: dose.icon)
-                        .font(.system(size: 15, weight: .light))
+                        .font(BaselineTheme.symbolAccessory)
                         .foregroundStyle(BaselineTheme.textTertiary))) {
             Text(dose.sentence)
                 .font(BaselineTheme.body)
@@ -114,7 +114,7 @@ struct JournalDoseCard: View {
             HStack(alignment: .bottom, spacing: 12) {
                 if let stat = dose.perUnitStat {
                     StatCell(label: stat.label,
-                             value: JournalLabels.signedDelta(dose.response.perUnit, unit: ""),
+                             value: dose.perUnitText,
                              unit: stat.unit,
                              color: stat.color)
                 }

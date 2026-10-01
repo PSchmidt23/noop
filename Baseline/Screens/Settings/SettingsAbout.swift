@@ -11,6 +11,8 @@ struct SettingsAboutCard: View {
     @State private var showDisclaimer = false
 
     private static let sourceURL = URL(string: "https://github.com/ryanbr/noop")!
+    /// The fork itself: Baseline's screens, this file included, next to NOOP's engine.
+    private static let baselineSourceURL = URL(string: "https://github.com/PSchmidt23/noop")!
     /// The privacy policy as a hosted page (Baseline/PRIVACY.md in the fork, rendered by GitHub). App
     /// Review wants a link to it in the app, and App Store Connect wants the same URL in its
     /// privacy-policy field; `SettingsLegalText.privacy` carries the same text for reading offline.
@@ -30,6 +32,15 @@ struct SettingsAboutCard: View {
             Link(destination: Self.sourceURL) {
                 SettingsRowLabel(icon: "chevron.left.forwardslash.chevron.right", title: "NOOP on GitHub",
                                  subtitle: "github.com/ryanbr/noop") {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(BaselineTheme.textTertiary)
+                }
+            }
+            SettingsDivider()
+            Link(destination: Self.baselineSourceURL) {
+                SettingsRowLabel(icon: "chevron.left.forwardslash.chevron.right", title: "Baseline source",
+                                 subtitle: "github.com/PSchmidt23/noop") {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(BaselineTheme.textTertiary)
@@ -154,7 +165,8 @@ enum SettingsLegalText {
 
     Full terms: https://polyformproject.org/licenses/noncommercial/1.0.0
 
-    Source: https://github.com/ryanbr/noop
+    NOOP source: https://github.com/ryanbr/noop
+    Baseline source: https://github.com/PSchmidt23/noop
     """
 
     /// NOOP's NOTICE and ATTRIBUTION.md as shipped in the bundle, followed by the notices for the

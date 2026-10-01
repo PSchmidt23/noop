@@ -12,8 +12,18 @@ struct JournalScreen: View {
     /// 0 = today's key (last night), 1 = yesterday's key, … 6.
     @State private var dayOffset = 0
     @State private var showAddHabit = false
+    /// The screen's "today", held in state and rolled on `.NSCalendarDayChanged`: `dayKey` derives from it
+    /// rather than from `Date()` at every render, so the chips, the caption and the loaded answers can never
+    /// straddle midnight, and the reload key below sees the day change.
+    @State private var today = Date()
 
-    private var dayKey: String { JournalDay.key(offset: dayOffset) }
+    private struct LoadKey: Hashable {
+        let seq: Int
+        let day: String
+    }
+
+    private var todayKey: String { Repository.localDayKey(today) }
+    private var dayKey: String { JournalDay.key(offset: dayOffset, now: today) }
 
     /// The merged catalog (imported ∪ starter ∪ custom), hidden items dropped, grouped then ordered.
     private var items: [JournalCatalogItem] {
@@ -28,8 +38,8 @@ struct JournalScreen: View {
 
     var body: some View {
         BaselineScreen(title: "Journal") {
-            JournalDayStrip(selected: $dayOffset, loggedDays: model.loggedDayKeys)
-            Text(JournalDay.caption(offset: dayOffset))
+            JournalDayStrip(selected: $dayOffset, loggedDays: model.loggedDayKeys, today: today)
+            Text(JournalDay.caption(offset: dayOffset, now: today))
                 .font(BaselineTheme.caption)
                 .foregroundStyle(BaselineTheme.textTertiary)
                 .padding(.top, -6)
@@ -43,10 +53,11 @@ struct JournalScreen: View {
             JournalEffectsCard(model: model, label: label(for:))
             ForEach(model.doses) { JournalDoseCard(dose: $0) }
         }
-        .task(id: repo.refreshSeq) { await model.load(repo: repo, day: dayKey) }
+        .task(id: LoadKey(seq: repo.refreshSeq, day: todayKey)) { await model.load(repo: repo, day: dayKey) }
         .onChange(of: dayOffset) { _, _ in
             Task { await model.reloadDay(repo: repo, day: dayKey) }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in today = Date() }
         .sheet(isPresented: $showAddHabit) {
             JournalAddHabitSheet(catalog: catalog, imported: model.importedQuestions)
         }
@@ -65,6 +76,8 @@ struct JournalScreen: View {
 struct JournalDayStrip: View {
     @Binding var selected: Int
     let loggedDays: Set<String>
+    /// Offset 0, as the screen holds it.
+    var today: Date = Date()
 
     var body: some View {
         HStack(spacing: 6) {
@@ -75,18 +88,18 @@ struct JournalDayStrip: View {
 
     private func chip(_ offset: Int) -> some View {
         let isSelected = offset == selected
-        let logged = loggedDays.contains(JournalDay.key(offset: offset))
+        let logged = loggedDays.contains(JournalDay.key(offset: offset, now: today))
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         return Button {
             withAnimation(.easeOut(duration: 0.15)) { selected = offset }
         } label: {
             VStack(spacing: 3) {
-                Text(JournalDay.title(offset: offset))
+                Text(JournalDay.title(offset: offset, now: today))
                     .font(BaselineTheme.caption.weight(.semibold))
                     .foregroundStyle(isSelected ? BaselineTheme.text : BaselineTheme.textTertiary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                Text(JournalDay.dayNumber(offset: offset))
+                Text(JournalDay.dayNumber(offset: offset, now: today))
                     .font(.system(.title3, design: .rounded).weight(.semibold))
                     .foregroundStyle(isSelected ? BaselineTheme.text : BaselineTheme.textSecondary)
                     .lineLimit(1)
@@ -103,7 +116,7 @@ struct JournalDayStrip: View {
             .contentShape(shape)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(JournalDay.caption(offset: offset))
+        .accessibilityLabel(JournalDay.caption(offset: offset, now: today))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

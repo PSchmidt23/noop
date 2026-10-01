@@ -101,9 +101,11 @@ If you host `TodayView`/`TrendsView` add `.tabRouteDestinations()` (Strand/App/T
 - `SceneHeroBackground` loads `scene1…scene10` from the main bundle (StrandiOS assets are compiled into Baseline).
 
 ## Reusable NOOP screens
-`OnboardingWizard(onFinished:)`, `AddDeviceWizard(live:onClose:startAt:)`, `DevicesView()`, `DataSourcesView()`
-(WHOOP CSV → `model.importWhoop(url:)`, Apple Health → `model.importAppleHealth(url:)`), `AppleHealthView()`
-(`health.requestAuthorization()`), `SettingsView()`, `BackupSyncView()`. They say "NOOP" in their copy.
+`OnboardingWizard(onFinished:)`, `AddDeviceWizard(live:onClose:startAt:)` (the only one Baseline uses),
+`SettingsView()`, `BackupSyncView()`. They say "NOOP" in their copy. Baseline replaced `DevicesView`,
+`DataSourcesView` and `AppleHealthView` with its own screens in `Baseline/Screens/Devices` and
+`Baseline/Screens/Data`, which call the same engine entry points: `model.importWhoop(url:)`,
+`model.importAppleHealth(url:)`, `health.requestAuthorization()`.
 
 ## Identity / wiring notes
 - UserDefaults keys are `noop.*` in `.standard` (own domain per app, no collision).

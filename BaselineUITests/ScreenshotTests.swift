@@ -1,6 +1,7 @@
 import XCTest
 
-/// Screenshot harness: one test per Baseline screen plus the three welcome steps. Each test launches the
+/// Screenshot harness: one test per Baseline screen (tabs, pushed screens, Settings' Devices / Apple Health /
+/// Import) plus the three welcome steps and the launch frame. Each test launches the
 /// app with its DEBUG launch arguments, waits for the screen's first card, captures the top of the screen,
 /// then swipes up until the content stops moving (at most 8 swipes), capturing after each swipe. Every PNG
 /// is written as `<screen>-<n>.png` to `$BASELINE_SHOTS_DIR` (default `/private/tmp/baseline-shots`) and
@@ -69,6 +70,62 @@ final class ScreenshotTests: XCTestCase {
         row.tap()
         try capturePushed(app, screen: "workout-detail", title: nil,
                           firstCard: NSPredicate(format: "label == %@", "Session"))
+    }
+
+    // MARK: - Settings pushes (seeded, onboarding skipped)
+
+    /// Settings → Devices: with no strap bonded the empty state, the "Add strap" button and the pairing
+    /// help; then the "Add strap" chooser sheet, captured once as `devices-add-0`.
+    func testDevices() throws {
+        let app = launchTab("settings")
+        try openSettingsRow(app, "Devices")
+        try capturePushed(app, screen: "devices", title: "Devices",
+                          firstCard: NSPredicate(format: "label == %@", "No strap yet"))
+
+        let add = app.buttons["Add strap"].firstMatch
+        XCTAssertTrue(scrollUntilHittable(app, add), "devices: Add strap button did not appear")
+        add.tap()
+        let chooser = app.staticTexts["Which strap are you adding?"].firstMatch
+        let shown = chooser.waitForExistence(timeout: 10)
+        try save(XCUIScreen.main.screenshot(), as: "devices-add-0")
+        XCTAssertTrue(shown, "devices: Add strap sheet did not appear (screenshot still written)")
+    }
+
+    /// Settings → Apple Health: the access card, what Baseline reads and writes back.
+    func testAppleHealth() throws {
+        let app = launchTab("settings")
+        try openSettingsRow(app, "Apple Health")
+        try capturePushed(app, screen: "apple-health", title: "Apple Health",
+                          firstCard: NSPredicate(format: "label == %@", "Baseline reads"))
+    }
+
+    /// Settings → Import data: the WHOOP export and Apple Health export cards.
+    func testImport() throws {
+        let app = launchTab("settings")
+        try openSettingsRow(app, "Import data")
+        try capturePushed(app, screen: "import", title: "Import",
+                          firstCard: NSPredicate(format: "label == %@", "WHOOP export"))
+    }
+
+    /// Taps the Settings row whose folded label (title + subtitle) starts with `title`.
+    private func openSettingsRow(_ app: XCUIApplication, _ title: String) throws {
+        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+        XCTAssertTrue(scrollUntilHittable(app, row), "settings: \(title) row did not appear")
+        row.tap()
+    }
+
+    // MARK: - Launch
+
+    /// The earliest frame XCUITest can grab after launch, before waiting for any card, so the launch
+    /// background (navy, never white) and the first paint can be checked as `launch-0` / `launch-1`.
+    func testLaunch() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-seed", "--skip-onboarding"]
+        app.launch()
+        try save(XCUIScreen.main.screenshot(), as: "launch-0")
+        let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "today")).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 10), "launch: Today title did not appear")
+        try save(XCUIScreen.main.screenshot(), as: "launch-1")
     }
 
     // MARK: - Welcome (onboarding reset; a page TabView, so no scroll)

@@ -78,10 +78,13 @@ struct StrapStatusStrip: View {
             }
         }
         .buttonStyle(.plain)
-        .foregroundStyle(live.connected ? BaselineTheme.accent : BaselineTheme.inactive)
-        .disabled(live.backfilling || !live.connected)
+        .foregroundStyle(canSync ? BaselineTheme.accent : BaselineTheme.inactive)
+        .disabled(!canSync)
         .accessibilityLabel(live.backfilling ? "Syncing" : "Sync strap")
     }
+
+    /// The same gate Settings' "Sync now" applies: a connected AND bonded strap that is not mid-offload.
+    private var canSync: Bool { live.connected && live.bonded && !live.backfilling }
 
     private var statusText: String {
         var parts: [String] = [live.connected ? "Connected" : "Not connected"]
@@ -307,7 +310,7 @@ struct LastNightCard: View {
         }
     }
 
-    /// The Sleep tab's average and wording: `BaselineReadouts.sleepAverage30`, "30-night average".
+    /// The Sleep tab's average and wording: `BaselineReadouts.sleepAverage30(before:in:)`, "30-night average".
     private func averageLine(_ s: TodaySleepReading) -> String {
         guard let avg = s.avg30Min else {
             return "Your 30-night average appears after \(BaselineReadouts.sleepAverageMinNights) nights"
@@ -354,9 +357,12 @@ struct EffortCard: View {
     var body: some View {
         BaselineCard(title: "Today's effort") {
             HStack(alignment: .top, spacing: 12) {
-                StatCell(label: "Effort", value: BaselineReadouts.effortText(effort),
+                StatCell(label: "Effort so far", value: BaselineReadouts.effortText(effort),
                          unit: BaselineReadouts.effortUnit, color: BaselineTheme.effort)
-                StatCell(label: "Workouts", value: "\(workouts.count)")
+                // The sentence below already says when there are none; a "Workouts 0" cell would say it twice.
+                if !workouts.isEmpty {
+                    StatCell(label: "Workouts", value: "\(workouts.count)")
+                }
             }
             if workouts.isEmpty {
                 Text(effort == nil ? "Builds through the day as the strap records."
@@ -367,7 +373,7 @@ struct EffortCard: View {
                 VStack(spacing: 10) {
                     ForEach(workouts) { w in
                         NavigationLink {
-                            WorkoutDetailScreen(startTs: w.id)
+                            WorkoutDetailScreen(startTs: w.id, sport: w.sport)
                         } label: {
                             TodayWorkoutRow(workout: w)
                         }
@@ -381,7 +387,7 @@ struct EffortCard: View {
                 HStack(spacing: 4) {
                     Text("All workouts")
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(BaselineTheme.symbolSmall)
                 }
                 .font(.system(.caption, design: .rounded).weight(.semibold))
                 .foregroundStyle(BaselineTheme.accent)
@@ -398,7 +404,7 @@ struct TodayWorkoutRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: sportSymbol(workout.sport))
-                .font(.system(size: 13, weight: .medium))
+                .font(BaselineTheme.symbol)
                 .foregroundStyle(BaselineTheme.effort)
                 .frame(width: 18)
                 .accessibilityHidden(true)
@@ -416,7 +422,7 @@ struct TodayWorkoutRow: View {
                     .foregroundStyle(BaselineTheme.rhr)
             }
             Image(systemName: "chevron.right")
-                .font(.system(size: 11, weight: .semibold))
+                .font(BaselineTheme.symbolSmall)
                 .foregroundStyle(BaselineTheme.textTertiary)
                 .accessibilityHidden(true)
         }

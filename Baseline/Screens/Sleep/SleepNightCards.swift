@@ -10,7 +10,7 @@ import StrandAnalytics
 struct SleepHeroCard: View {
     let title: String
     let night: SleepNight
-    /// Average asleep minutes over the latest 30 nights; nil while there are too few nights.
+    /// `BaselineReadouts.sleepAverage30(before:in:)`: the 30 nights before this one; nil while too few.
     let average: Double?
 
     var body: some View {

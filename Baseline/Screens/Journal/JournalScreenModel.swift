@@ -39,6 +39,14 @@ struct JournalDose: Identifiable {
         return (label: "Per later step", unit: "ms", color: color)
     }
 
+    /// The per-step shift as the stat cell prints it, signed, to the same tenth the sentence states
+    /// ("−3.5", "+2", "0"), so the two can never disagree by a rounding.
+    var perUnitText: String {
+        let mag = JournalLabels.magnitude(abs(response.perUnit))
+        if mag == "0" { return "0" }
+        return (response.perUnit < 0 ? "\u{2212}" : "+") + mag
+    }
+
     /// One honest sentence in Baseline's voice. Says when it is still mostly the population prior.
     var sentence: String {
         let r = response

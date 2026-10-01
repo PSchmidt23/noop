@@ -8,7 +8,8 @@ extension TrendsRange: BaselineRangeOption {}
 typealias TrendRangePicker = BaselineRangePicker<TrendsRange>
 
 /// HRV / Resting HR: baseline and average, the nightly line over its band, and a one-line footnote.
-/// Dragging the chart shows that night in the header; tapping the numbers clears it.
+/// Dragging the chart shows that night in the header while the finger is down; lifting it (or tapping
+/// the numbers) returns the header to the trend.
 struct TrendBandCard: View {
     let title: String
     /// How the metric reads mid-sentence ("HRV", "resting HR").
@@ -148,7 +149,7 @@ struct TrendBarCard: View {
                         Text(link.label)
                             .font(.system(.caption, design: .rounded).weight(.semibold))
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(BaselineTheme.symbolSmall)
                     }
                     .foregroundStyle(BaselineTheme.accent)
                     .contentShape(Rectangle())

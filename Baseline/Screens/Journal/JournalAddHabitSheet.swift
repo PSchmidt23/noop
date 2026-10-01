@@ -30,12 +30,13 @@ struct JournalAddHabitSheet: View {
                             .submitLabel(.done)
                             .onSubmit(add)
                     }
-                    field("Type") {
-                        Picker("Type", selection: $isNumeric) {
-                            Text("Yes / No").tag(false)
-                            Text("Count").tag(true)
-                        }
-                        .pickerStyle(.segmented)
+                    // The shared segmented pill carries its own capsule, so it sits under the caption
+                    // without `field`'s card around it.
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Type").font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textTertiary)
+                        BaselineSegmentedPicker(options: [false, true], selection: $isNumeric,
+                                                label: { $0 ? "Count" : "Yes / No" },
+                                                accessibilityLabel: { $0 ? "A count, like drinks or minutes" : "A yes or no" })
                     }
                     if isNumeric {
                         field("Unit (optional)") {

@@ -66,7 +66,7 @@ struct JournalHabitsCard: View {
     private func addChip(wide: Bool) -> some View {
         Button(action: onAdd) {
             HStack(spacing: 5) {
-                Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
+                Image(systemName: "plus").font(BaselineTheme.symbolSmall)
                 Text(wide ? "Add a habit" : "Add")
             }
             .font(BaselineTheme.caption.weight(.semibold))
@@ -133,7 +133,7 @@ struct JournalHabitChip: View {
             HStack(spacing: 5) {
                 if let state {
                     Image(systemName: state ? "checkmark" : "xmark")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(BaselineTheme.symbolSmall.weight(.bold))
                         .foregroundStyle(state ? BaselineTheme.accent : BaselineTheme.textTertiary)
                 }
                 Text(label)
@@ -204,7 +204,7 @@ struct JournalNumericChip: View {
             } label: {
                 HStack(spacing: 5) {
                     if state == .no {
-                        Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
+                        Image(systemName: "xmark").font(BaselineTheme.symbolSmall.weight(.bold))
                             .foregroundStyle(BaselineTheme.textTertiary)
                     }
                     Text(label).lineLimit(1)
@@ -244,7 +244,7 @@ struct JournalNumericChip: View {
     private func stepButton(_ symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
+                .font(BaselineTheme.symbolSmall)
                 .foregroundStyle(BaselineTheme.textSecondary)
                 .frame(width: 28, height: 32)
                 .contentShape(Rectangle())
