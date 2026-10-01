@@ -416,6 +416,8 @@ targets:
           - "ENGINE_MAP.md"
           - "PRIVACY.md"
           - "scripts"
+          # App Store copy, review notes and the submission checklist: repo documents, never bundled.
+          - "Store"
       # Legal texts for Settings → About. PolyForm Noncommercial requires passing the terms along;
       # the MIT/BSD notices in NOTICE and the credits in ATTRIBUTION.md must accompany the binary too.
       - path: LICENSE
@@ -469,9 +471,11 @@ targets:
           - UIInterfaceOrientationPortrait
         UIBackgroundModes:
           - bluetooth-central
-          # #524: keep recording an outdoor workout's GPS route while the app is backgrounded (screen off),
-          # matching Android's foreground-service capture. Required by GpsWorkoutRecorder's
-          # allowsBackgroundLocationUpdates; without this mode iOS crashes when background updates start.
+          # `location` stays although no Baseline screen records a GPS route: NOOP's GpsWorkoutRecorder
+          # (#524) sets allowsBackgroundLocationUpdates = true in its init, and AppModel constructs it at
+          # launch, so without the mode CoreLocation throws NSInternalInconsistencyException on every start
+          # (seen when the mode was dropped; the unit-test host crashed before the first test). Removing it
+          # needs an upstream change that defers that assignment to the moment a route is actually recorded.
           - location
           # BGAppRefresh tasks (healthwriteback, stalebattery) need the "fetch" background mode.
           - fetch

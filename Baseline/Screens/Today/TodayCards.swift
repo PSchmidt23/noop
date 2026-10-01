@@ -241,6 +241,50 @@ struct TodaySparkline: View {
     }
 }
 
+// MARK: - Signals
+
+/// The early-warning card, directly under the hero tiles and only when `TodaySignals.build` found
+/// something to say: one calm sentence per signal under a watch-coloured pill, and a single "How this
+/// is computed" disclosure listing each signal's method. The screen omits the card entirely when the
+/// list is empty, so a quiet morning shows no "all clear" either.
+struct SignalsCard: View {
+    let signals: TodaySignals
+    @State private var showMethod = false
+
+    var body: some View {
+        BaselineCard(title: "Signals") {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(signals.signals) { s in
+                    VStack(alignment: .leading, spacing: 8) {
+                        BaselinePill(text: s.pill, color: BaselineTheme.watch)
+                        Text(s.sentence)
+                            .font(BaselineTheme.body)
+                            .foregroundStyle(BaselineTheme.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                DisclosureGroup(isExpanded: $showMethod) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(signals.signals) { s in
+                            Text(s.method)
+                                .font(BaselineTheme.caption)
+                                .foregroundStyle(BaselineTheme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.top, 6)
+                } label: {
+                    Text("How this is computed")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(BaselineTheme.accent)
+                }
+                .tint(BaselineTheme.textTertiary)
+            }
+        }
+    }
+}
+
 // MARK: - Last night
 
 struct LastNightCard: View {

@@ -26,6 +26,10 @@ If you host `TodayView`/`TrendsView` add `.tabRouteDestinations()` (Strand/App/T
 ## Daily data (Strand/Data/Repository.swift)
 - `@Published var days: [DailyMetric]` — merged (imported ∪ computed ∪ steps), oldest→newest. Filter by day key.
   Do NOT use `dailyMetrics(fromDay:toDay:)` (imported rows only).
+- `@Published var vitalRows: [SourcedDailyMetric { metric: DailyMetric, source: DailyMetricSource }]` — the same
+  nights BEFORE the merge, one row per source (`.whoopImport`, `.noopComputed` = the strap's own, `.appleHealth`,
+  `.localCache`), published on every refresh. This is what Compare pairs night by night; `days` has already
+  let the higher-priority source win (`DailyMetricSource.vitalPriority`).
 - `@Published var sleeps: [CachedSleepSession]`, `loaded`, `freshness`. `var today: DailyMetric?`, `var week`.
 - Day keys: `Repository.localDayKey(_:)`, `logicalDayKey(_:)`, `dayString(_:)`. `lastHrvDay`, `lastRestingHrDay`.
 - `func refresh(days: Int = 4000) async`.
@@ -48,6 +52,9 @@ If you host `TodayView`/`TrendsView` add `.tabRouteDestinations()` (Strand/App/T
 - `HRVReadiness.evaluate(avgHrv: [Double?]) -> HRVReadinessResult?` → `tier` (primed/normal/suppressed),
   `baseline7Ms`, `normalLowMs`, `normalHighMs`, `overreachingWatch`. Needs ≥14 nights.
 - `ReadinessEngine.evaluate(days: [DailyMetric], today: String?) -> Readiness { level, signals, acwr, monotony, confidence }`.
+- `IllnessSignalEngine.evaluate(_ inputs: Inputs, context: Context, …)` (Packages/StrandAnalytics): the composite
+  "watch" read over the last two nights (RHR up, HRV down, skin temp / resp rate up) with confounder
+  suppression from the journal. Baseline's Today Signals card feeds it (`Baseline/Screens/Today/TodaySignals.swift`).
 - Recipe:
   ```swift
   let hist = repo.days.filter { $0.day < todayKey }
@@ -100,6 +107,15 @@ If you host `TodayView`/`TrendsView` add `.tabRouteDestinations()` (Strand/App/T
   For a baseline band write a Swift Charts view with `AreaMark(x:yStart:yEnd:)` + `LineMark`.
 - `SceneHeroBackground` loads `scene1…scene10` from the main bundle (StrandiOS assets are compiled into Baseline).
 
+## Export + notifications (Strand/Data/CsvExport.swift, Strand/System)
+- `CsvExport.run(repo:) async -> ExportResult { .exported(URL) | .cancelled | .failure(String) }` builds the CSV
+  zip off the main actor (`WhoopCsvExporter`, Packages/StrandImport) and ends in `DocumentPicker.export(_:) async
+  -> URL?` (the system picker). Baseline's Export screen wraps it; the files it describes mirror the exporter.
+- `NotificationPresenter.shared` (`UNUserNotificationCenterDelegate`) is NOOP's one delegate with no chaining
+  hook; `BaselineNotificationDelegate` is registered instead and forwards both callbacks to it, adding only the
+  evening check-in category → `baseline.pendingTab`. `MorningSummaryNotifier.requestAuthorization` is the single
+  authorization ask both Settings toggles go through.
+
 ## Reusable NOOP screens
 `OnboardingWizard(onFinished:)`, `AddDeviceWizard(live:onClose:startAt:)` (the only one Baseline uses),
 `SettingsView()`, `BackupSyncView()`. They say "NOOP" in their copy. Baseline replaced `DevicesView`,
@@ -108,7 +124,9 @@ If you host `TodayView`/`TrendsView` add `.tabRouteDestinations()` (Strand/App/T
 `model.importAppleHealth(url:)`, `health.requestAuthorization()`.
 
 ## Identity / wiring notes
-- UserDefaults keys are `noop.*` in `.standard` (own domain per app, no collision).
+- UserDefaults keys are `noop.*` in `.standard` (own domain per app, no collision). Baseline's own are
+  `baseline.*` (table in BASELINE.md). Baseline type names must not collide with NOOP's module-level ones
+  (same module): e.g. `CompareRange` is NOOP's (`Strand/Screens/CompareView.swift`), ours is `BaselineCompareRange`.
 - Store lives in the app sandbox (`<AppSupport>/OpenWhoop/whoop.sqlite`); Baseline starts empty.
 - A strap bonds to ONE central: never run NOOP and Baseline against the same strap.
 - BG task ids derive from `Bundle.main.bundleIdentifier` (listed in project.yml).

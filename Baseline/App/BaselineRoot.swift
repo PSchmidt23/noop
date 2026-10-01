@@ -6,7 +6,10 @@ import StrandDesign
 /// person has paired a strap (or chosen to skip).
 struct BaselineRoot: View {
     @AppStorage(BaselineRoot.onboardedKey) private var onboarded = false
+    /// Raised by `BaselineNotificationDelegate` when the evening check-in is tapped; consumed below.
+    @AppStorage(BaselineNotificationDelegate.pendingTabKey) private var pendingTab: String?
     @State private var tab: Tab = BaselineRoot.launchTab ?? .today
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Touching the static runs the launch-argument override exactly once per process, before the
@@ -93,6 +96,18 @@ struct BaselineRoot: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: onboarded)
+        // `initial: true` covers a cold start whose tap landed before this view existed; the scene-phase
+        // check covers a flag written while the app was suspended and never observed.
+        .onChange(of: pendingTab, initial: true) { _, _ in consumePendingTab() }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { consumePendingTab() } }
+    }
+
+    /// Switch to the tab a notification asked for, once, then clear the request so the same tap cannot
+    /// re-fire on the next activation. Unknown values are cleared without effect.
+    private func consumePendingTab() {
+        guard let value = pendingTab else { return }
+        if value == BaselineNotificationDelegate.pendingTabJournal { tab = .journal }
+        pendingTab = nil
     }
 }
 

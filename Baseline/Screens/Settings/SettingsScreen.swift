@@ -2,8 +2,9 @@
 import SwiftUI
 import UserNotifications
 
-/// Settings: grouped cards, one idea each. Strap, Apple Health and Import push Baseline's own screens
-/// over NOOP's engine (`DevicesScreen`, `AppleHealthScreen`, `ImportScreen`); Profile is Baseline's small
+/// Settings: grouped cards, one idea each. Strap, Apple Health and Data push Baseline's own screens
+/// over NOOP's engine (`DevicesScreen`, `AppleHealthScreen`, `ImportScreen`, `CompareScreen`,
+/// `ExportScreen`); Profile is Baseline's small
 /// form over `ProfileStore`; About carries attribution, the privacy policy, license and the disclaimer.
 /// Each card observes only what it needs, so the root never re-renders on strap ticks.
 struct SettingsScreen: View {
@@ -115,6 +116,16 @@ private struct SettingsImportCard: View {
                             subtitle: "WHOOP export or Apple Health export") {
                 ImportScreen()
             }
+            SettingsDivider()
+            SettingsLinkRow(icon: "arrow.left.arrow.right", title: "Compare sources",
+                            subtitle: "Baseline vs your WHOOP export, night by night") {
+                CompareScreen()
+            }
+            SettingsDivider()
+            SettingsLinkRow(icon: "tablecells", title: "Export CSV",
+                            subtitle: "Your daily table as a file") {
+                ExportScreen()
+            }
         }
     }
 }
@@ -152,14 +163,24 @@ private struct SettingsProfileCard: View {
 
 // MARK: - Notifications
 
-/// The opt-in morning summary (`MorningSummaryNotifier`). Turning it on asks for notification permission
-/// right here, at a predictable moment; a refusal leaves the toggle on (that is still what the person
-/// wants) and points at iOS Settings, re-checking whenever the app comes back to the foreground.
+/// The opt-in morning summary (`MorningSummaryNotifier`) and evening check-in (`EveningCheckInScheduler`).
+/// Turning either on asks for notification permission right here, at a predictable moment, through the
+/// one authorization flow; a refusal leaves the toggle on (that is still what the person wants) and
+/// points at iOS Settings, re-checking whenever the app comes back to the foreground.
 private struct SettingsNotificationsCard: View {
     @AppStorage(MorningSummaryNotifier.enabledKey) private var enabled = false
+    @AppStorage(EveningCheckInScheduler.enabledKey) private var eveningEnabled = false
+    /// Minutes since midnight; the picker edits it through `eveningTime`.
+    @AppStorage(EveningCheckInScheduler.minutesKey) private var eveningMinutes = EveningCheckInScheduler.defaultMinutes
     @State private var status: UNAuthorizationStatus?
 
-    private var denied: Bool { enabled && status == .denied }
+    private var denied: Bool { (enabled || eveningEnabled) && status == .denied }
+
+    /// The `DatePicker` edits a `Date`; only its hour and minute are kept.
+    private var eveningTime: Binding<Date> {
+        Binding(get: { EveningCheckInScheduler.date(minutesSinceMidnight: eveningMinutes) },
+                set: { eveningMinutes = EveningCheckInScheduler.minutes(from: $0) })
+    }
 
     var body: some View {
         BaselineCard {
@@ -170,10 +191,31 @@ private struct SettingsNotificationsCard: View {
                 }
             }
             .tint(BaselineTheme.accent)
+            SettingsDivider()
+            Toggle(isOn: $eveningEnabled) {
+                SettingsRowLabel(icon: "moon", title: "Evening check-in",
+                                 subtitle: "One reminder each evening to log tonight's habits, so the Journal can learn what moves your HRV. Opens the Journal tab.") {
+                    EmptyView()
+                }
+            }
+            .tint(BaselineTheme.accent)
+            if eveningEnabled {
+                HStack {
+                    Text("Time")
+                        .font(BaselineTheme.label)
+                        .foregroundStyle(BaselineTheme.textSecondary)
+                    Spacer()
+                    DatePicker("Evening check-in time", selection: eveningTime, displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                        .tint(BaselineTheme.accent)
+                }
+                .padding(.leading, 44)   // under the row's text, past the 30pt icon and its 14pt gap
+            }
             if denied {
                 SettingsDivider()
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Notifications are turned off for Baseline in iOS Settings, so the summary cannot arrive.")
+                    Text("Notifications are turned off for Baseline in iOS Settings, so nothing can arrive.")
                         .font(BaselineTheme.caption)
                         .foregroundStyle(BaselineTheme.watch)
                         .fixedSize(horizontal: false, vertical: true)
@@ -197,6 +239,21 @@ private struct SettingsNotificationsCard: View {
             } else {
                 MorningSummaryNotifier.removeDelivered()
             }
+        }
+        .onChange(of: eveningEnabled) { _, on in
+            if on {
+                // The same ask as the morning toggle, then schedule once we know where it left us.
+                Task {
+                    status = await MorningSummaryNotifier.requestAuthorization()
+                    await EveningCheckInScheduler.sync()
+                }
+            } else {
+                EveningCheckInScheduler.cancel()
+            }
+        }
+        .onChange(of: eveningMinutes) { _, _ in
+            // A new time replaces the pending request (same identifier); a no-op while the toggle is off.
+            Task { await EveningCheckInScheduler.sync() }
         }
     }
 }

@@ -6,7 +6,8 @@ import UserNotifications
 /// Baseline's entry point. Mirrors the required parts of NOOP's `StrandiOSApp` (which is excluded from
 /// this target) so the engine behaves identically: strap pairing, overnight offload, re-scoring and
 /// Apple Health write-back. Deliberately left out: widgets, watch, Live Activities, the Lift Log banner,
-/// Coach briefs, debug export and the update checker.
+/// Coach briefs, debug export and the update checker. Baseline's own notifications: the morning summary
+/// (`MorningSummaryNotifier`) and the evening check-in (`EveningCheckInScheduler`).
 @main
 struct BaselineApp: App {
     @StateObject private var model: AppModel
@@ -28,7 +29,8 @@ struct BaselineApp: App {
 
     init() {
         PuffinExperiment.migrateContinuousHrvOvernightDefault()
-        UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
+        // Baseline's shim forwards to NOOP's `NotificationPresenter` and adds the evening check-in's tap route.
+        UNUserNotificationCenter.current().delegate = BaselineNotificationDelegate.shared
         let router = NavRouter()
         _router = StateObject(wrappedValue: router)
         let model = AppModel()
@@ -93,6 +95,8 @@ struct BaselineApp: App {
                 model.applySmartAlarm()
                 model.ble.requestSync(.foreground)
                 Task { await model.runDeferredRescoreIfOwed() }
+                // Idempotent: keeps the one daily check-in pending while the toggle is on, cancels it when off.
+                Task { await EveningCheckInScheduler.sync() }
                 Task {
                     health.refreshAuthIfPreviouslyGranted()
                     HealthWritebackBackgroundScheduler.updateSchedule(isAuthorized: health.auth == .authorized)

@@ -4,8 +4,9 @@ import StrandAnalytics
 import WhoopStore
 
 /// Today: strap status, the date with a readiness line, HRV and resting HR against the person's own
-/// baseline, last night, today's effort, and a four-chip journal prompt. Reads `repo.days`, `repo.sleeps`,
-/// `repo.workoutRows(days:)` and the native journal; reloads on `repo.refreshSeq`.
+/// baseline, the Signals card when there is something to say, last night, today's effort, and a
+/// four-chip journal prompt. Reads `repo.days`, `repo.sleeps`, `repo.workoutRows(days:)` and the native
+/// journal; reloads on `repo.refreshSeq`.
 @MainActor
 struct TodayScreen: View {
     @EnvironmentObject private var model: AppModel
@@ -16,6 +17,8 @@ struct TodayScreen: View {
     @EnvironmentObject private var catalog: JournalCatalogStore
 
     @State private var snapshot: TodaySnapshot?
+    /// The Signals card under the hero tiles (`TodaySignals.build`); nil or empty hides the card.
+    @State private var signals: TodaySignals?
     @State private var workouts: [TodayWorkout] = []
     @State private var answers: [String: Bool] = [:]
     @State private var todayKey = Repository.localDayKey(Date())
@@ -59,6 +62,9 @@ struct TodayScreen: View {
             } else if let s = snapshot {
                 headline(s)
                 heroes(s)
+                if let signals, !signals.isEmpty {
+                    SignalsCard(signals: signals)
+                }
                 if let progressHeadline {
                     TodayProgressRow(sentence: progressHeadline)
                 }
@@ -203,7 +209,11 @@ struct TodayScreen: View {
         // are one number on both tabs.
         let habitual = await repo.habitualMidsleepSec()
         let nights = SleepNightBuilder.nights(sessions: repo.sleeps, days: repo.days, habitualMidsleepSec: habitual)
-        snapshot = TodaySnapshot.build(days: repo.days, nights: nights, todayKey: key, logicalKey: logicalKey)
+        let snap = TodaySnapshot.build(days: repo.days, nights: nights, todayKey: key, logicalKey: logicalKey)
+        snapshot = snap
+        // The recent journal only feeds the illness watch's confounders (alcohol, a hard workout, …).
+        let journal = await repo.journalEntries(days: 7)
+        signals = TodaySignals.build(days: repo.days, nights: nights, snapshot: snap, journal: journal)
         progressHeadline = ProgressSnapshot.hrvHeadline(days: repo.days, horizon: ProgressHorizon.resolve(progressHorizonRaw),
                                                         todayKey: key)
         let rows = await repo.workoutRows(days: 2)

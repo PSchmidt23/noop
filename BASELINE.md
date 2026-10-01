@@ -50,6 +50,46 @@ support that story. Nothing clutters it.
 - Reused NOOP screen: `AddDeviceWizard` (pairing sheet from Welcome and Settings → Devices). Devices,
   Apple Health and Import are Baseline's own screens (`Baseline/Screens/Devices`, `Baseline/Screens/Data`).
 
+## Smaller pieces (what they are, where they live)
+
+- **Signals card** (Today, `Baseline/Screens/Today/TodaySignals.swift`, `SignalsCard` in `TodayCards.swift`):
+  shown only when a signal fires, below the hero tiles. Three kinds, each one calm sentence plus a "How
+  this is computed" entry: *illness watch* (resting HR up, HRV down, skin temperature or breathing rate
+  up together over the last two nights, NOOP's `IllnessSignalEngine` with its confounder suppression),
+  *overreaching* (7-day effort against 28, `ReadinessEngine`'s acute:chronic ratio and Foster monotony),
+  *short nights* (three or more consecutive nights an hour under the 30-night average). Pure, built from
+  `repo.days`, the Sleep tab's nights, the `TodaySnapshot` and the last week of journal; `TodaySignalsTests`.
+  Hidden under the demo seed, whose data never trips a signal.
+- **Compare sources** (Settings → Data, `Baseline/Screens/Data/CompareScreen.swift` + `CompareModel.swift`):
+  the strap's own nights (`.noopComputed`) against an imported source (WHOOP export or Apple Health) from
+  `repo.vitalRows`, one metric at a time (HRV, resting HR, sleep, efficiency): a summary over every shared
+  night (mean difference, mean gap, r), both lines over 30 / 90 / all days, and the last 30 shared nights with
+  the difference (always Baseline − other). Empty state until an import overlaps the strap's nights, which is
+  what the demo seed shows (it writes only "my-whoop" rows). Picks persist as `baseline.compare*`;
+  `CompareModelTests`. Our range enum is `BaselineCompareRange`, because NOOP's `CompareView` owns `CompareRange`.
+- **Export CSV** (Settings → Data, `Baseline/Screens/Data/ExportScreen.swift`): describes the zip NOOP's
+  `CsvExport.run(repo:)` writes (the same files as `WhoopCsvExporter`), the stored-history line
+  ("412 days · Jan 2025 – Sep 2026 · 398 nights" from the published caches), one button that ends in the
+  system document picker, and the outcome line.
+- **Evening check-in** (`Baseline/App/EveningCheckInScheduler.swift`, Settings → Notifications): opt-in,
+  one repeating `UNCalendarNotificationTrigger` a day at the picked time (default 21:30), fixed request id so
+  the center holds at most one; `sync()` is idempotent and runs on every activation, `cancel()` on toggle-off.
+  The morning summary stays event-driven (never scheduled). The time row appears only while the toggle is on.
+  A tap opens the Journal tab: `BaselineNotificationDelegate` (registered in `BaselineApp.init`, forwarding both
+  delegate callbacks to NOOP's `NotificationPresenter.shared`) writes `baseline.pendingTab = "journal"`, which
+  `BaselineRoot` consumes through `@AppStorage` (cold starts included). `EveningCheckInTests`.
+
+### `baseline.*` UserDefaults keys (`.standard`; NOOP's own keys are `noop.*`)
+
+| Key | Set by | Meaning |
+|---|---|---|
+| `baseline.onboarded` | Welcome flow, `--skip-onboarding` / `--reset-onboarding` | welcome gate passed |
+| `baseline.trendsRange`, `baseline.progressHorizon` | Trends / Progress (and Today's Progress row) | last picked range |
+| `baseline.compareMetric`, `baseline.compareRange`, `baseline.compareSource` | Compare | last picked metric / window (days, 0 = all) / source |
+| `baseline.morningSummary.enabled`, `baseline.morningSummary.lastDay` | Settings → Notifications, `MorningSummaryNotifier` | morning summary opt-in; the last day one was sent |
+| `baseline.eveningCheckIn.enabled`, `baseline.eveningCheckIn.minutes` | Settings → Notifications | evening check-in opt-in; its time as minutes since midnight |
+| `baseline.pendingTab` | `BaselineNotificationDelegate` | tab to open on the next root read (`"journal"`), cleared once consumed |
+
 ## v1 scope (build this, nothing more)
 
 1. Welcome → pair strap (NOOP's `AddDeviceWizard`) → Apple Health permission → done. Three steps.
@@ -60,8 +100,9 @@ support that story. Nothing clutters it.
 4. **Sleep**: last night hypnogram, stages, efficiency, duration vs 30-day average; list of nights.
 5. **Journal**: today's habit chips (from the catalog, plus custom); "What moves your HRV" ranked
    effects with sample size and confidence; dose cards for alcohol and caffeine.
-6. **Settings**: Devices, Apple Health, Import (WHOOP CSV / Apple Health export), Profile
-   (age, max HR), Appearance (accent), About + licenses + disclaimer.
+6. **Settings**: Devices, Apple Health, Data (Import WHOOP CSV / Apple Health export, Compare sources,
+   Export CSV), Notifications (morning summary, evening check-in), Profile (age, max HR), Appearance
+   (accent), About + licenses + disclaimer.
 
 ### Deferred
 AI coach, widgets, Apple Watch, Live Activities, lift log, hydration, caffeine, cycle tracking,
@@ -83,6 +124,15 @@ Baseline/scripts/build.sh            # xcodegen generate + simulator build (prin
 Open `Strand.xcodeproj`, scheme **Baseline**, run on a device for real strap testing (automatic signing,
 team 25RC553RGP; Xcode registers the HealthKit and App Group capabilities on first device run).
 
+`UIBackgroundModes` carries `bluetooth-central`, `location`, `fetch`, `processing`. `location` is there
+only because NOOP's `GpsWorkoutRecorder.init` sets `allowsBackgroundLocationUpdates = true` and `AppModel`
+builds it at launch: without the mode CoreLocation throws on every start (tried; the app never reaches its
+first screen). No Baseline screen records a route, so the honest fix is an upstream PR that defers that
+assignment until a route is actually recorded, after which the mode can go. Review notes in
+`Baseline/Store/ReviewNotes.md` should say the mode is unused.
+`Baseline/Store/` (App Store copy, review notes, privacy answers, checklist) is excluded from the bundle
+alongside `ENGINE_MAP.md`, `PRIVACY.md` and `scripts`.
+
 DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch <udid> com.patrickschmidt.baseline …`):
 - `--demo-seed` — NOOP's seeder fills 120 days of synthetic, internally consistent data when the store is empty.
 - `--tab trends|sleep|journal|settings` — open on that tab (screenshots, quick checks).
@@ -96,14 +146,41 @@ DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch
 `BaselineUITests/ScreenshotTests.swift` captures every screen headlessly so a scrolled screen can be
 checked without a person at the simulator. One test per tab (`today`, `trends`, `sleep`, `journal`,
 `settings`, seeded with `--demo-seed --skip-onboarding`), the pushed screens (`progress` via the Trends
-toolbar button; `workouts` and `workout-detail` via Today's "All workouts" link and the newest row) plus
-`welcome-0/1/2` (`--reset-onboarding --welcome-step n`). Each test waits for the screen's first card,
-captures the top, then scrolls until the content stops moving (at most 12 steps), capturing after each.
+toolbar button; `workouts` and `workout-detail` via Today's "All workouts" link and the newest row),
+Settings' `devices` / `apple-health` / `import` / `compare` (the empty state under the demo seed) /
+`export`, `launch` and `welcome-0/1/2` (`--reset-onboarding --welcome-step n`). `testSettings` adds
+`-baseline.eveningCheckIn.enabled YES` to the launch arguments (UserDefaults' argument domain, read by
+`@AppStorage`) so the Notifications card shows the evening toggle on with its time row, without the tap
+that would raise the notification-permission alert over the capture. Each test waits for the screen's first card, captures the top, then scrolls until
+the content stops moving (at most 12 steps), capturing after each.
 A scroll step is a held drag in the 20pt left gutter (about 45% of the screen, no fling): a centre swipe
 would land on a chart (Trends scrubs instead of scrolling) and decelerate by an unpredictable distance.
 PNGs land as `<screen>-<n>.png`
 in `$BASELINE_SHOTS_DIR` (default `/private/tmp/baseline-shots`; the `TEST_RUNNER_` prefix passes the
 variable through to the test runner) and are attached to the `.xcresult` as well.
+
+**Run it through the script** for a clean, fixed status bar (9:41, charged, full bars):
+
+```bash
+Baseline/scripts/ui-shots.sh [shots dir]                      # whole suite on the Baseline iPhone
+ONLY=ScreenshotTests/testTrends Baseline/scripts/ui-shots.sh  # one test
+```
+
+The script (1) boots the simulator, (2) applies `xcrun simctl status_bar <udid> override --time 9:41
+--batteryState charged --batteryLevel 100 --wifiBars 3 --cellularBars 4`, (3) runs `xcodebuild test` with
+`TEST_RUNNER_BASELINE_SHOTS_DIR`, (4) clears the override and (5) shuts the simulator down, the last two
+on any exit. XCUITest runs inside the simulator and cannot call `simctl`, which is why the override is
+not in the tests' `setUp` (that only says so). The script only ever touches `$SIM_UDID` (default
+`149DD9EE-8D7D-4CC2-B5E8-07DBA768C046`) and, with `MARKETING_SIM`, the "Baseline Marketing" device it
+creates; it never boots, erases or deletes any other simulator, and it does not run `xcodegen` (do that
+first, via `build.sh`, when `project.yml` changed).
+
+Scroll-stop detection compares consecutive frames **below the status bar** (the top 62pt are cropped
+before the PNG bytes are compared, `contentBelowStatusBar`), so a minute ticking over between two
+captures never masquerades as moving content. With the override the status bar is static anyway; the
+crop keeps the run honest when the suite is started by hand from Xcode without it.
+
+The raw `xcodebuild` form, when the script is not wanted:
 
 ```bash
 TEST_RUNNER_BASELINE_SHOTS_DIR=/private/tmp/baseline-shots xcodebuild -project Strand.xcodeproj -scheme Baseline \
@@ -115,6 +192,39 @@ TEST_RUNNER_BASELINE_SHOTS_DIR=/private/tmp/baseline-shots xcodebuild -project S
 Add `-only-testing:BaselineUITests/ScreenshotTests/testTrends` for one screen. The demo seed only fills an
 empty store, so erase the simulator's app (or the simulator) when the shots should show seeded data after a
 real import. Welcome steps are a page view, so they are captured once, not scrolled.
+
+## Marketing screenshots (App Store)
+
+`BaselineUITests/MarketingShots.swift` has one test, `testMarketingSet`, that writes six frames to
+`<shots dir>/marketing/`: `01-today` (scrolled until the HRV / resting HR tiles sit 12pt under the bar, so the
+seeded "Pair your strap" card is fully above the frame: a feedback loop that measures the HRV tile against the
+bar after every step and drags at an explicit 300pt/s, because on the 6.9-inch device the `.fast` held gutter
+drag either moves nothing or flings ~470pt regardless of its length; the Progress and All-workouts taps retry
+when the push does not appear, which happens under load),
+`02-progress`, `03-trends`, `04-sleep`, `05-journal`, `06-workouts`, each the top of the seeded screen.
+Apple's required size for the 6.9-inch class is **1320 × 2868 px** (iPhone 17 Pro Max class). `XCUIScreen`
+captures at the simulator's native size and never rescales, so the test must run on a 6.9-inch device;
+on any other it still writes the frames and attaches a size warning to the result instead of failing.
+
+```bash
+MARKETING_SIM=1 Baseline/scripts/ui-shots.sh [shots dir]
+swift Baseline/scripts/frame-shots.swift /private/tmp/baseline-shots/marketing /private/tmp/baseline-shots/marketing/framed
+```
+
+With `MARKETING_SIM` set the script creates (or reuses) a simulator named **"Baseline Marketing"**, type
+iPhone 17 Pro Max on the newest installed iOS runtime (`xcrun simctl create`), runs only
+`MarketingShots/testMarketingSet` there with the status-bar override, then shuts it down. The device is
+kept for the next run; the script prints the `simctl delete` line to remove it.
+
+`frame-shots.swift` (CoreGraphics / CoreText / ImageIO; AppKit only to find SF Rounded) renders each
+`NN-*.png` into an App Store frame in `<out dir>`: a 1320 × 2868 canvas with BaselineTheme's navy
+gradient, the screenshot at 86% width with a 44pt corner radius placed lower-centre (its bottom runs off
+the canvas), and a two-line caption at the top in SF Rounded, white 72pt headline over a 44pt secondary
+line, from the captions table at the top of the script (01 "Your morning, against your own baseline" …
+06 "Effort and workouts, kept simple"). Sizes are points at @2x (the canvas is 660 × 1434pt); a headline
+that would overrun the gutters shrinks to fit. A PNG whose two-digit prefix has no caption still gets a
+frame. `FRAME_SCALE=3` renders the same layout at 1980 × 4302 for a proof print. Store copy, review
+notes, the privacy questionnaire and the submission checklist live in `Baseline/Store/`.
 
 Upstream sync: `git fetch upstream && git merge upstream/main`, then `xcodegen generate` and build. Conflicts
 should only ever touch `project.yml`'s Baseline block.
