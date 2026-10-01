@@ -1,13 +1,18 @@
 #if os(iOS)
 import SwiftUI
 
-/// Version, attribution, license and the disclaimer. The LICENSE file is read from the bundle when it
-/// ships as a resource; otherwise the short notice with links stands in.
+/// Version, attribution, privacy policy, license and the disclaimer. The LICENSE file is read from the
+/// bundle when it ships as a resource; otherwise the short notice with links stands in.
 struct SettingsAboutCard: View {
+    @State private var showPrivacy = false
     @State private var showLicense = false
     @State private var showDisclaimer = false
 
     private static let sourceURL = URL(string: "https://github.com/ryanbr/noop")!
+    /// The privacy policy as a hosted page (Baseline/PRIVACY.md in the fork, rendered by GitHub). App
+    /// Review wants a link to it in the app, and App Store Connect wants the same URL in its
+    /// privacy-policy field; `SettingsLegalText.privacy` carries the same text for reading offline.
+    static let privacyURL = URL(string: "https://github.com/PSchmidt23/noop/blob/main/Baseline/PRIVACY.md")!
 
     var body: some View {
         BaselineCard {
@@ -29,6 +34,12 @@ struct SettingsAboutCard: View {
                 }
             }
             SettingsDivider()
+            Button(action: { showPrivacy = true }) {
+                SettingsRowLabel(icon: "lock.shield", title: "Privacy policy",
+                                 subtitle: "Local only, no accounts, no telemetry") { chevron }
+            }
+            .buttonStyle(.plain)
+            SettingsDivider()
             Button(action: { showLicense = true }) {
                 SettingsRowLabel(icon: "doc.text", title: "License",
                                  subtitle: "PolyForm Noncommercial 1.0.0") { chevron }
@@ -45,6 +56,9 @@ struct SettingsAboutCard: View {
                 .font(BaselineTheme.caption)
                 .foregroundStyle(BaselineTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        .sheet(isPresented: $showPrivacy) {
+            SettingsTextSheet(title: "Privacy policy", text: SettingsLegalText.privacy, link: Self.privacyURL)
         }
         .sheet(isPresented: $showLicense) {
             SettingsTextSheet(title: "License", text: SettingsLegalText.license)
@@ -68,22 +82,36 @@ struct SettingsAboutCard: View {
     }
 }
 
-/// A scrollable sheet of plain text with a Done button.
+/// A scrollable sheet of plain text with a Done button. `link` is the same text hosted online, offered
+/// under it; nil for texts that only live in the app.
 struct SettingsTextSheet: View {
     let title: String
     let text: String
+    var link: URL? = nil
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                Text(text)
-                    .font(BaselineTheme.body)
-                    .foregroundStyle(BaselineTheme.textSecondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(BaselineTheme.gutter)
-                    .padding(.bottom, 24)
+                VStack(alignment: .leading, spacing: 20) {
+                    Text(text)
+                        .font(BaselineTheme.body)
+                        .foregroundStyle(BaselineTheme.textSecondary)
+                        .textSelection(.enabled)
+                    if let link {
+                        Link(destination: link) {
+                            HStack(spacing: 6) {
+                                Text("Read online at \(link.host(percentEncoded: false) ?? link.absoluteString)")
+                                Image(systemName: "arrow.up.right")
+                            }
+                            .font(BaselineTheme.label)
+                            .foregroundStyle(BaselineTheme.accent)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(BaselineTheme.gutter)
+                .padding(.bottom, 24)
             }
             .background(BaselineBackground())
             .navigationTitle(title)
@@ -121,6 +149,30 @@ enum SettingsLegalText {
     Full terms: https://polyformproject.org/licenses/noncommercial/1.0.0
 
     Source: https://github.com/ryanbr/noop
+    """
+
+    /// Mirrors Baseline/PRIVACY.md (the hosted page behind `SettingsAboutCard.privacyURL`); keep the two
+    /// in step when either changes.
+    static let privacy = """
+    Effective 30 September 2026.
+
+    Baseline is a free, local-only iPhone app for WHOOP 4.0, 5.0 and MG straps, developed by Patrick Schmidt as a personal, non-commercial project on top of NOOP's open-source engine. It has no account, no sign-in, no server, no analytics, no crash reporting, no advertising and no telemetry. Baseline makes no network connections. The developer cannot see your data and never receives it.
+
+    What Baseline stores, and where. Baseline keeps the data it reads from your strap over Bluetooth (heart rate, R-R intervals, battery and sensor records), the metrics it computes from that data (HRV, resting heart rate, readiness, sleep and effort), your journal entries, your profile (age, sex, height, weight and maximum heart rate) and anything you choose to import from a WHOOP or Apple Health export. All of it lives in a database inside the app's own storage on your iPhone, encrypted at rest by iOS. It is part of your iPhone backups like any other app data, and of nothing else. Nothing is sent to the developer, to WHOOP, or to anyone.
+
+    Apple Health. Only when you allow it, Baseline reads sleep, workouts and heart data from Apple Health and writes back the metrics it computes. This happens on your iPhone only. Baseline never sends Apple Health data anywhere, never shares it with third parties and never uses it for advertising or marketing. You can change or withdraw access at any time in the Health app under your profile › Apps › Baseline.
+
+    Bluetooth. Baseline connects to a strap you own and reads data from it. It does not talk to WHOOP's servers or to your WHOOP account.
+
+    Imports. Files you choose to import (a WHOOP data export or an Apple Health export) are read on your iPhone and never uploaded.
+
+    Permissions. Baseline asks only for Bluetooth, to reach your strap, and, if you choose, Apple Health. It does not use your location, motion data, microphone or camera.
+
+    Deleting your data. Delete the app and everything it stored on your iPhone is gone. Metrics Baseline wrote to Apple Health stay there until you delete them in the Health app. A paired strap can be removed under Settings › Devices.
+
+    Changes. When Baseline changes what it stores, this policy changes with it. The current version is always in the app under Settings › About and at the page linked below.
+
+    Contact. Questions go to the project's issue tracker: github.com/PSchmidt23/noop/issues
     """
 
     static let disclaimer = """

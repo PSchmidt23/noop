@@ -2,8 +2,9 @@
 import SwiftUI
 
 /// Settings: grouped cards, one idea each. Strap, Apple Health and Import push NOOP's own screens;
-/// Profile is Baseline's small form over `ProfileStore`; About carries attribution, license and the
-/// disclaimer. Each card observes only what it needs, so the root never re-renders on strap ticks.
+/// Profile is Baseline's small form over `ProfileStore`; About carries attribution, the privacy policy,
+/// license and the disclaimer. Each card observes only what it needs, so the root never re-renders on
+/// strap ticks.
 struct SettingsScreen: View {
     var body: some View {
         BaselineScreen(title: "Settings") {
