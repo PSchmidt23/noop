@@ -16,20 +16,20 @@ enum JournalDay {
 
     static func key(offset: Int) -> String { Repository.localDayKey(date(offset: offset)) }
 
-    /// Chip headline: "Last night" / "Yesterday" / weekday.
-    static func title(offset: Int) -> String {
-        switch offset {
-        case 0: return "Last night"
-        case 1: return "Yesterday"
-        default: return weekday.string(from: date(offset: offset))
-        }
-    }
+    /// Chip headline: the weekday ("Tue"). The chips are equal-width, so the longer "Last night" /
+    /// "Yesterday" words live in `caption(offset:)` under the strip instead.
+    static func title(offset: Int) -> String { weekday.string(from: date(offset: offset)) }
 
     static func dayNumber(offset: Int) -> String { dayOfMonth.string(from: date(offset: offset)) }
 
-    /// One line under the picker that spells out which morning the answers lead into.
+    /// One line under the picker naming the selected night and the morning its answers lead into.
     static func caption(offset: Int) -> String {
-        "Answers describe the evening and night leading into \(long.string(from: date(offset: offset)))."
+        let morning = long.string(from: date(offset: offset))
+        switch offset {
+        case 0: return "Last night \u{00B7} the evening and night leading into \(morning)."
+        case 1: return "Yesterday \u{00B7} the evening and night leading into \(morning)."
+        default: return "The evening and night leading into \(morning)."
+        }
     }
 
     private static let weekday: DateFormatter = {

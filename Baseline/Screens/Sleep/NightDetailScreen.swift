@@ -8,7 +8,7 @@ struct NightDetailScreen: View {
     let average: Double?
 
     var body: some View {
-        BaselineScreen(title: SleepFormat.dayLabel(night.wake)) {
+        BaselineScreen(title: SleepFormat.dayLabel(night.dayDate)) {
             SleepHeroCard(title: "Night", night: night, average: average)
             SleepHypnogramCard(night: night)
             if night.hasVitals {

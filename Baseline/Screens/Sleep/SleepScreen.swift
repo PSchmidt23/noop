@@ -7,6 +7,13 @@ struct SleepScreen: View {
     @EnvironmentObject private var repo: Repository
     @State private var nights: [SleepNight] = []
 
+    /// Reload key: `refreshSeq` for every changed refresh, plus `loaded` so the first publish is never
+    /// missed if the store finishes loading between two sequence values.
+    private struct LoadKey: Hashable {
+        let seq: Int
+        let loaded: Bool
+    }
+
     /// ONE average for the whole screen: asleep minutes over the latest 30 nights. Both the hero pill
     /// and the bar chart's rule read this, so they can never disagree. nil until three nights exist.
     private var average30: Double? {
@@ -43,19 +50,18 @@ struct SleepScreen: View {
                 }
             }
         }
-        .task(id: repo.refreshSeq) { await reload() }
+        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded)) { await reload() }
     }
 
     private func heroTitle(for night: SleepNight) -> String {
         let cal = Calendar.current
-        return (cal.isDateInToday(night.wake) || cal.isDateInYesterday(night.wake)) ? "Last night" : "Latest night"
+        return (cal.isDateInToday(night.dayDate) || cal.isDateInYesterday(night.dayDate)) ? "Last night" : "Latest night"
     }
 
     private var recentCard: some View {
-        let cal = Calendar.current
         let bars = nights.prefix(14).reversed().map { n in
             BaselineBarChart.Bar(id: n.dayKey,
-                                 date: cal.startOfDay(for: n.wake),
+                                 date: n.dayDate,
                                  value: (n.hoursAsleep * 10).rounded() / 10)
         }
         return BaselineCard(title: "Last 14 nights",

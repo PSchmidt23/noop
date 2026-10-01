@@ -58,32 +58,24 @@ struct JournalScreen: View {
     }
 }
 
-/// The last seven days, oldest → newest, today ("Last night") at the trailing edge. A dot marks
-/// days that already carry an answer.
+/// The last seven days as equal-width chips, oldest → newest, today at the trailing edge. Fits every
+/// iPhone width without scrolling, so no chip is ever cut off. A dot marks days that already carry
+/// an answer; the caption under the strip names the selected night ("Last night", "Yesterday").
 struct JournalDayStrip: View {
     @Binding var selected: Int
     let loggedDays: Set<String>
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    ForEach(JournalDay.offsets, id: \.self) { offset in
-                        chip(offset).id(offset)
-                    }
-                }
-                .padding(.horizontal, BaselineTheme.gutter)
-                .padding(.vertical, 2)
-            }
-            .scrollIndicators(.hidden)
-            .padding(.horizontal, -BaselineTheme.gutter)
-            .onAppear { DispatchQueue.main.async { proxy.scrollTo(selected, anchor: .trailing) } }
+        HStack(spacing: 6) {
+            ForEach(JournalDay.offsets, id: \.self) { offset in chip(offset) }
         }
+        .frame(maxWidth: .infinity)
     }
 
     private func chip(_ offset: Int) -> some View {
         let isSelected = offset == selected
         let logged = loggedDays.contains(JournalDay.key(offset: offset))
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         return Button {
             withAnimation(.easeOut(duration: 0.15)) { selected = offset }
         } label: {
@@ -92,19 +84,22 @@ struct JournalDayStrip: View {
                     .font(BaselineTheme.caption.weight(.semibold))
                     .foregroundStyle(isSelected ? BaselineTheme.text : BaselineTheme.textTertiary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Text(JournalDay.dayNumber(offset: offset))
                     .font(.system(.title3, design: .rounded).weight(.semibold))
                     .foregroundStyle(isSelected ? BaselineTheme.text : BaselineTheme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Circle()
                     .fill(logged ? BaselineTheme.accent : Color.clear)
                     .frame(width: 5, height: 5)
             }
-            .padding(.horizontal, 12).padding(.vertical, 9)
-            .frame(minWidth: 56)
-            .background(isSelected ? BaselineTheme.accent.opacity(0.18) : BaselineTheme.card,
-                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(isSelected ? BaselineTheme.accent.opacity(0.55) : BaselineTheme.cardStroke, lineWidth: 1))
+            .padding(.vertical, 9)
+            .padding(.horizontal, 2)
+            .frame(maxWidth: .infinity)
+            .background(isSelected ? BaselineTheme.accent.opacity(0.18) : BaselineTheme.card, in: shape)
+            .overlay(shape.strokeBorder(isSelected ? BaselineTheme.accent.opacity(0.55) : BaselineTheme.cardStroke, lineWidth: 1))
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(JournalDay.caption(offset: offset))

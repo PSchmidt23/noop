@@ -66,7 +66,7 @@ struct TrendBandCard: View {
                 .onTapGesture {
                     if selected != nil { withAnimation(.easeOut(duration: 0.2)) { selected = nil } }
                 }
-                BaselineBandChart(points: metric.points, color: color, unit: unit, selected: $selected)
+                TrendsBandChart(points: metric.points, color: color, yDomain: metric.yDomain, selected: $selected)
                 Text(footnote)
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textTertiary)
@@ -151,7 +151,7 @@ struct TrendBarCard: View {
                         StatCell(label: stat.label, value: stat.value, unit: stat.unit)
                     }
                 }
-                BaselineBarChart(bars: bars, color: color, average: average)
+                TrendsBarChart(bars: bars, color: color, average: average)
             }
         }
     }

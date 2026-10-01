@@ -14,7 +14,7 @@ struct SleepHeroCard: View {
     let average: Double?
 
     var body: some View {
-        BaselineCard(title: title, subtitle: SleepFormat.dayLabel(night.wake), accessory: pill) {
+        BaselineCard(title: title, subtitle: SleepFormat.dayLabel(night.dayDate), accessory: pill) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(SleepFormat.hhmm(night.asleepMin))
                     .font(BaselineTheme.hero())
@@ -25,8 +25,10 @@ struct SleepHeroCard: View {
                     .foregroundStyle(BaselineTheme.textSecondary)
             }
             HStack(spacing: 12) {
-                StatCell(label: "Bedtime", value: SleepFormat.clock(night.onset))
-                StatCell(label: "Wake", value: SleepFormat.clock(night.wake))
+                if let onset = night.onset, let wake = night.wake {
+                    StatCell(label: "Bedtime", value: SleepFormat.clock(onset))
+                    StatCell(label: "Wake", value: SleepFormat.clock(wake))
+                }
                 if let eff = SleepFormat.percent(night.efficiency) {
                     StatCell(label: "Efficiency", value: eff)
                 }
@@ -46,20 +48,23 @@ struct SleepHeroCard: View {
 
 // MARK: - Hypnogram
 
-/// Stage timeline plus minutes per stage. Shows a quiet note instead of a chart when the night has no
-/// stage timeline, and beneath the chart when the strap's staging ran on sparse motion.
+/// Stage timeline plus minutes per stage. The chart's slot carries a quiet note instead when the night has
+/// no timeline (daily-row or imported nights), and beneath the chart when the strap's staging ran on
+/// sparse motion. The stage cells and the proportional bar stay whenever totals exist.
 struct SleepHypnogramCard: View {
     let night: SleepNight
 
     var body: some View {
         BaselineCard(title: "Stages") {
-            if night.segments.isEmpty {
-                approximateNote
+            if let onset = night.onset, let wake = night.wake, night.hasTimeline {
+                BaselineHypnogram(segments: night.segments, onset: onset, wake: wake)
+                if night.stagingSparse { note("Stages are approximate on this strap") }
             } else {
-                BaselineHypnogram(segments: night.segments, onset: night.onset, wake: night.wake)
-                if night.stagingSparse { approximateNote }
+                note("Stage timeline not available for this night")
             }
             if night.hasStageTotals {
+                SleepStageBar(night: night)
+                    .frame(height: 6)
                 HStack(spacing: 12) {
                     StatCell(label: "Deep", value: SleepFormat.hhmm(night.deepMin), color: BaselineTheme.stageColor("deep"))
                     StatCell(label: "REM", value: SleepFormat.hhmm(night.remMin), color: BaselineTheme.stageColor("rem"))
@@ -70,10 +75,10 @@ struct SleepHypnogramCard: View {
         }
     }
 
-    private var approximateNote: some View {
+    private func note(_ text: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle").font(BaselineTheme.caption)
-            Text("Stages are approximate on this strap").font(BaselineTheme.caption)
+            Text(text).font(BaselineTheme.caption)
         }
         .foregroundStyle(BaselineTheme.textTertiary)
         .padding(.vertical, 4)
@@ -185,7 +190,7 @@ struct SleepNightRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 7) {
-                Text(SleepFormat.dayLabel(night.wake))
+                Text(SleepFormat.dayLabel(night.dayDate))
                     .font(BaselineTheme.label)
                     .foregroundStyle(BaselineTheme.text)
                 SleepStageBar(night: night)

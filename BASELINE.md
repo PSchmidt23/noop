@@ -90,3 +90,7 @@ DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch
 
 Upstream sync: `git fetch upstream && git merge upstream/main`, then `xcodegen generate` and build. Conflicts
 should only ever touch `project.yml`'s Baseline block.
+
+Known caveat: `build.sh` serializes only the `xcodegen generate` step. Two builds started at the same time
+can still collide when one regenerates `Strand.xcodeproj` under the other's running `xcodebuild`; run builds
+one at a time or re-run the one that failed with a missing-project error.

@@ -78,6 +78,8 @@ struct TrendsSeries {
         let average: Double?
         /// Last-window mean minus first-window mean (nil until both ends have ≥2 nights).
         let trend: Double?
+        /// Y-axis span: values and band edges with ~12% padding, snapped to a sensible step (5 ms / 2 bpm).
+        let yDomain: ClosedRange<Double>
     }
 
     struct BarMetric {
@@ -130,9 +132,9 @@ struct TrendsSeries {
         }
 
         let hrv = bandMetric(history: history, inRange: inRange, beforeToday: beforeToday,
-                             cfg: Baselines.hrvCfg, epoch: epoch, window: range.trendWindow) { $0.avgHrv }
+                             cfg: Baselines.hrvCfg, epoch: epoch, window: range.trendWindow, step: 5) { $0.avgHrv }
         let rhr = bandMetric(history: history, inRange: inRange, beforeToday: beforeToday,
-                             cfg: Baselines.restingHRCfg, epoch: epoch, window: range.trendWindow) {
+                             cfg: Baselines.restingHRCfg, epoch: epoch, window: range.trendWindow, step: 2) {
             $0.restingHr.map { Double($0) }
         }
 
@@ -169,7 +171,7 @@ struct TrendsSeries {
     /// Today screen said that morning. Nights dated before the recalibration epoch are dropped exactly as
     /// `Baselines.foldHistory(_:dayKeys:cfg:)` drops them.
     private static func bandMetric(history: [DailyMetric], inRange: [DailyMetric], beforeToday: [DailyMetric],
-                                   cfg: MetricCfg, epoch: Double, window: Int,
+                                   cfg: MetricCfg, epoch: Double, window: Int, step: Double,
                                    value: (DailyMetric) -> Double?) -> BandMetric {
         var state: BaselineState? = history.isEmpty ? nil
             : Baselines.foldHistory(history.map(value), dayKeys: history.map(\.day), cfg: cfg, baselineEpoch: epoch)
@@ -198,7 +200,23 @@ struct TrendsSeries {
         let current = Baselines.foldHistory(beforeToday.map(value), dayKeys: beforeToday.map(\.day),
                                             cfg: cfg, baselineEpoch: epoch)
         return BandMetric(points: points, current: current, average: mean(values),
-                          trend: trend(values, window: window))
+                          trend: trend(values, window: window), yDomain: yDomain(points: points, step: step))
+    }
+
+    /// min(values, band lows) … max(values, band highs), padded ~12% and snapped outward to `step`,
+    /// never below zero. Keeps a 50–70 bpm line from being flattened against a wide automatic axis.
+    static func yDomain(points: [BandPoint], step: Double) -> ClosedRange<Double> {
+        var lo = Double.greatestFiniteMagnitude
+        var hi = -Double.greatestFiniteMagnitude
+        for p in points {
+            lo = min(lo, p.value, p.low ?? p.value)
+            hi = max(hi, p.value, p.high ?? p.value)
+        }
+        guard lo <= hi else { return 0...step }
+        let pad = max(hi - lo, step) * 0.12
+        let floorLo = max(0, (lo - pad) / step).rounded(.down) * step
+        let ceilHi = ((hi + pad) / step).rounded(.up) * step
+        return floorLo...max(ceilHi, floorLo + step)
     }
 
     private static func dropped(_ day: String, epoch: Double) -> Bool {

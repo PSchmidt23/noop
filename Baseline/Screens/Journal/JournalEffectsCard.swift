@@ -59,28 +59,28 @@ struct JournalEffectRow: View {
                     .font(BaselineTheme.body)
                     .foregroundStyle(BaselineTheme.text)
                     .lineLimit(2)
-                HStack(spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     JournalConfidencePill(confidence: effect.confidence)
                     Text(detail)
                         .font(BaselineTheme.caption)
                         .foregroundStyle(BaselineTheme.textTertiary)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: 12)
             Text(JournalLabels.signedDelta(delta, unit: outcome.unit))
                 .font(.system(.title3, design: .rounded).weight(.semibold))
                 .foregroundStyle(deltaColor)
                 .monospacedDigit()
+                .fixedSize()
+                .layoutPriority(1)
         }
         .accessibilityElement(children: .combine)
     }
 
-    /// "12 nights · vs 30 without · next morning"
+    /// "13 vs 25 nights \u{00B7} next morning" (with-habit vs without-habit nights, then the lag).
     private var detail: String {
-        let n = effect.effect.nWith
-        let nights = n == 1 ? "1 night" : "\(n) nights"
-        return "\(nights) · vs \(effect.effect.nWithout) without · \(effect.leadLagText)"
+        "\(effect.effect.nWith) vs \(effect.effect.nWithout) nights \u{00B7} \(effect.leadLagText)"
     }
 }
 
