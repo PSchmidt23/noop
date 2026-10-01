@@ -65,14 +65,22 @@ struct SleepHypnogramCard: View {
             if night.hasStageTotals {
                 SleepStageBar(night: night)
                     .frame(height: 6)
-                HStack(spacing: 12) {
-                    StatCell(label: "Deep", value: SleepFormat.hhmm(night.deepMin), color: BaselineTheme.stageColor("deep"))
-                    StatCell(label: "REM", value: SleepFormat.hhmm(night.remMin), color: BaselineTheme.stageColor("rem"))
-                    StatCell(label: "Light", value: SleepFormat.hhmm(night.lightMin), color: BaselineTheme.stageColor("light"))
-                    StatCell(label: "Awake", value: SleepFormat.hhmm(night.awakeMin), color: BaselineTheme.stageColor("wake"))
+                // Four cells in a row while their h:mm values fit; at larger type a 2 × 2 grid, so a
+                // value never character-wraps inside a ~70pt cell.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { stageCells }
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                              alignment: .leading, spacing: 14) { stageCells }
                 }
             }
         }
+    }
+
+    @ViewBuilder private var stageCells: some View {
+        StatCell(label: "Deep", value: SleepFormat.hhmm(night.deepMin), color: BaselineTheme.stageColor("deep"))
+        StatCell(label: "REM", value: SleepFormat.hhmm(night.remMin), color: BaselineTheme.stageColor("rem"))
+        StatCell(label: "Light", value: SleepFormat.hhmm(night.lightMin), color: BaselineTheme.stageColor("light"))
+        StatCell(label: "Awake", value: SleepFormat.hhmm(night.awakeMin), color: BaselineTheme.stageColor("wake"))
     }
 
     private func note(_ text: String) -> some View {

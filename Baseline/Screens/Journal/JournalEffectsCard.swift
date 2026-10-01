@@ -96,12 +96,14 @@ struct JournalConfidencePill: View {
     }
 }
 
-/// A dose-response read for alcohol or caffeine timing: one sentence, the per-unit shift, nights.
+/// A dose-response read for alcohol or caffeine timing: one sentence, nights, confidence, and for
+/// caffeine the per-step shift in ms. Alcohol shows no figure: its outcome is a score Baseline never
+/// renders (see `JournalDose`).
 struct JournalDoseCard: View {
     let dose: JournalDose
 
     var body: some View {
-        BaselineCard(title: dose.title, subtitle: "Dose response · \(dose.outcomeLabel) next morning",
+        BaselineCard(title: dose.title, subtitle: dose.subtitle,
                      accessory: AnyView(Image(systemName: dose.icon)
                         .font(.system(size: 15, weight: .light))
                         .foregroundStyle(BaselineTheme.textTertiary))) {
@@ -110,10 +112,12 @@ struct JournalDoseCard: View {
                 .foregroundStyle(BaselineTheme.text)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .bottom, spacing: 12) {
-                StatCell(label: dose.perUnitLabel,
-                         value: JournalLabels.signedDelta(dose.response.perUnit, unit: ""),
-                         unit: dose.unit,
-                         color: dose.perUnitColor)
+                if let stat = dose.perUnitStat {
+                    StatCell(label: stat.label,
+                             value: JournalLabels.signedDelta(dose.response.perUnit, unit: ""),
+                             unit: stat.unit,
+                             color: stat.color)
+                }
                 StatCell(label: "Nights", value: "\(dose.response.nUser)")
                 JournalConfidencePill(confidence: dose.response.confidence)
             }

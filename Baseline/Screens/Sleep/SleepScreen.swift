@@ -14,13 +14,10 @@ struct SleepScreen: View {
         let loaded: Bool
     }
 
-    /// ONE average for the whole screen: asleep minutes over the latest 30 nights. Both the hero pill
-    /// and the bar chart's rule read this, so they can never disagree. nil until three nights exist.
-    private var average30: Double? {
-        let recent = nights.prefix(30)
-        guard recent.count >= 3 else { return nil }
-        return recent.reduce(0) { $0 + $1.asleepMin } / Double(recent.count)
-    }
+    /// ONE average for the app: `BaselineReadouts.sleepAverage30`, which the Today tab's sleep card reads
+    /// too, so the hero pill, the bar chart's rule and Today's delta can never disagree. nil until three
+    /// nights exist.
+    private var average30: Double? { BaselineReadouts.sleepAverage30(nights) }
 
     private var listed: [SleepNight] { Array(nights.prefix(30)) }
 

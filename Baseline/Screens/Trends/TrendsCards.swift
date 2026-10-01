@@ -97,17 +97,28 @@ struct TrendBandCard: View {
         return "\(range.subtitle) · \(higherIsBetter ? "higher" : "lower") is better"
     }
 
+    /// Selected night: its date and value. Otherwise the trend over the range, worded as a change
+    /// ("Up 4 ms · 30 days") rather than the "+4 ms vs baseline" deviation Today shows, because the two
+    /// are different numbers. `fixedSize` keeps the pill on one line; the subtitle wraps first if it must.
     private var accessory: AnyView? {
         if let s = selected {
             let text = "\(TrendsFormat.shortDate(s.date)) · \(TrendsFormat.whole(s.value)) \(unit)"
-            return AnyView(BaselinePill(text: text, color: color))
+            return AnyView(BaselinePill(text: text, color: color)
+                .fixedSize()
+                .accessibilityLabel("\(title) on \(TrendsFormat.shortDate(s.date)): \(TrendsFormat.whole(s.value)) \(unit)"))
         }
         guard let t = metric.trend else { return nil }
         let steady = abs(t) < 0.5
         let improving = higherIsBetter ? t > 0 : t < 0
         let pillColor: Color = steady ? BaselineTheme.textSecondary
             : (improving ? BaselineTheme.good : BaselineTheme.watch)
-        return AnyView(BaselinePill(text: steady ? "Steady" : TrendsFormat.signed(t, unit: unit), color: pillColor))
+        let direction = t > 0 ? "Up" : "Down"
+        let amount = "\(TrendsFormat.whole(abs(t))) \(unit)"
+        let text = steady ? "Steady" : "\(direction) \(amount) · \(range.days) days"
+        let spoken = steady ? "steady" : "\(direction.lowercased()) \(amount)"
+        return AnyView(BaselinePill(text: text, color: pillColor)
+            .fixedSize()
+            .accessibilityLabel("\(title) trend: \(spoken) across the last \(range.days) days"))
     }
 
     private var footnote: String {
@@ -157,7 +168,8 @@ struct TrendBarCard: View {
     }
 }
 
-/// Fourteen dots, one per night, coloured by that morning's HRV readiness tier.
+/// Fourteen dots, one per night, coloured by that morning's HRV readiness tier. Labels and colours are
+/// `ReadinessTier.baselineLabel` / `.baselineColor`, the same words and hues as the Today pill.
 struct ReadinessStripCard: View {
     let readiness: TrendsSeries.Readiness
 
@@ -167,7 +179,7 @@ struct ReadinessStripCard: View {
                 ForEach(readiness.nights) { night in
                     dot(night.tier)
                         .frame(maxWidth: .infinity)
-                        .accessibilityLabel("\(TrendsFormat.shortDate(night.date)): \(night.tier.map(Self.label) ?? "no reading")")
+                        .accessibilityLabel("\(TrendsFormat.shortDate(night.date)): \(night.tier?.baselineLabel ?? "no reading")")
                 }
             }
             .padding(.vertical, 4)
@@ -184,13 +196,13 @@ struct ReadinessStripCard: View {
 
     private var latestPill: AnyView? {
         guard let tier = readiness.latest else { return nil }
-        return AnyView(BaselinePill(text: Self.label(tier), color: Self.color(tier)))
+        return AnyView(BaselinePill(text: tier.baselineLabel, color: tier.baselineColor))
     }
 
     @ViewBuilder
     private func dot(_ tier: ReadinessTier?) -> some View {
         if let tier {
-            Circle().fill(Self.color(tier)).frame(width: 10, height: 10)
+            Circle().fill(tier.baselineColor).frame(width: 10, height: 10)
         } else {
             Circle().strokeBorder(BaselineTheme.hairline, lineWidth: 1).frame(width: 10, height: 10)
         }
@@ -200,29 +212,13 @@ struct ReadinessStripCard: View {
         HStack(spacing: 14) {
             ForEach([ReadinessTier.primed, .normal, .suppressed], id: \.self) { tier in
                 HStack(spacing: 5) {
-                    Circle().fill(Self.color(tier)).frame(width: 6, height: 6)
-                    Text(Self.label(tier))
+                    Circle().fill(tier.baselineColor).frame(width: 6, height: 6)
+                    Text(tier.baselineLabel)
                 }
             }
         }
         .font(BaselineTheme.caption)
         .foregroundStyle(BaselineTheme.textTertiary)
-    }
-
-    static func color(_ tier: ReadinessTier) -> Color {
-        switch tier {
-        case .primed: return BaselineTheme.good
-        case .normal: return BaselineTheme.accent
-        case .suppressed: return BaselineTheme.watch
-        }
-    }
-
-    static func label(_ tier: ReadinessTier) -> String {
-        switch tier {
-        case .primed: return "Primed"
-        case .normal: return "Normal"
-        case .suppressed: return "Suppressed"
-        }
     }
 }
 #endif

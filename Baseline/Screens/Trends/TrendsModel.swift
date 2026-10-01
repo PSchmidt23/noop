@@ -71,8 +71,9 @@ struct TrendsSeries {
     /// A nightly metric drawn over its time-varying personal band (HRV, resting HR).
     struct BandMetric {
         let points: [BandPoint]
-        /// Baseline going into today: the fold of every night before today (the same state the Today
-        /// screen compares this morning against).
+        /// The baseline the newest night in history was judged against: the fold of every night before
+        /// it, from `BaselineReadouts.latestNight`, the same state the Today hero reads, so the "Baseline"
+        /// cell, the band at the chart's last point and Today's tile show one number and one count.
         let current: BaselineState
         /// Mean of the valid nights in range.
         let average: Double?
@@ -125,15 +126,14 @@ struct TrendsSeries {
         let upToToday = days.filter { $0.day <= todayKey }
         let history = upToToday.filter { $0.day < startKey }
         let inRange = upToToday.filter { $0.day >= startKey }
-        let beforeToday = upToToday.filter { $0.day < todayKey }
 
         let totalNights = upToToday.reduce(into: 0) { acc, d in
             if d.avgHrv != nil || d.restingHr != nil || d.totalSleepMin != nil { acc += 1 }
         }
 
-        let hrv = bandMetric(history: history, inRange: inRange, beforeToday: beforeToday,
+        let hrv = bandMetric(history: history, inRange: inRange, upToToday: upToToday,
                              cfg: Baselines.hrvCfg, epoch: epoch, window: range.trendWindow, step: 5) { $0.avgHrv }
-        let rhr = bandMetric(history: history, inRange: inRange, beforeToday: beforeToday,
+        let rhr = bandMetric(history: history, inRange: inRange, upToToday: upToToday,
                              cfg: Baselines.restingHRCfg, epoch: epoch, window: range.trendWindow, step: 2) {
             $0.restingHr.map { Double($0) }
         }
@@ -170,7 +170,7 @@ struct TrendsSeries {
     /// (the state after folding every night before it), so "inside / outside the band" matches what the
     /// Today screen said that morning. Nights dated before the recalibration epoch are dropped exactly as
     /// `Baselines.foldHistory(_:dayKeys:cfg:)` drops them.
-    private static func bandMetric(history: [DailyMetric], inRange: [DailyMetric], beforeToday: [DailyMetric],
+    private static func bandMetric(history: [DailyMetric], inRange: [DailyMetric], upToToday: [DailyMetric],
                                    cfg: MetricCfg, epoch: Double, window: Int, step: Double,
                                    value: (DailyMetric) -> Double?) -> BandMetric {
         var state: BaselineState? = history.isEmpty ? nil
@@ -197,8 +197,7 @@ struct TrendsSeries {
             state = Baselines.update(state, value: raw, cfg: cfg)
         }
 
-        let current = Baselines.foldHistory(beforeToday.map(value), dayKeys: beforeToday.map(\.day),
-                                            cfg: cfg, baselineEpoch: epoch)
+        let current = BaselineReadouts.latestNight(upToToday: upToToday, cfg: cfg, value: value).state
         return BandMetric(points: points, current: current, average: mean(values),
                           trend: trend(values, window: window), yDomain: yDomain(points: points, step: step))
     }

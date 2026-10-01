@@ -4,20 +4,25 @@ import StrandAnalytics
 import WhoopStore
 
 /// Today: strap status, the date with a readiness line, HRV and resting HR against the person's own
-/// baseline, last night, today's effort, and a four-chip journal prompt. Reads `repo.days`,
+/// baseline, last night, today's effort, and a four-chip journal prompt. Reads `repo.days`, `repo.sleeps`,
 /// `repo.workoutRows(days:)` and the native journal; reloads on `repo.refreshSeq`.
 @MainActor
 struct TodayScreen: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var repo: Repository
     @EnvironmentObject private var live: LiveState
-    @StateObject private var catalog = JournalCatalogStore()
+    /// The app's one catalog store (injected by `BaselineApp`), shared with the Journal tab so a habit
+    /// hidden, renamed or added there changes these chips at once rather than at the next launch.
+    @EnvironmentObject private var catalog: JournalCatalogStore
 
     @State private var snapshot: TodaySnapshot?
     @State private var workouts: [TodayWorkout] = []
     @State private var answers: [String: Bool] = [:]
     @State private var todayKey = Repository.localDayKey(Date())
+    /// "Pair strap" first asks which WHOOP model, then opens the wizard on that model's prep step
+    /// (`pairing`), past NOOP's device-type chooser and its Experimental tier.
     @State private var showPair = false
+    @State private var pairing: AddDeviceWizard.DeviceType?
 
     private struct LoadKey: Hashable {
         let seq: Int
@@ -44,7 +49,7 @@ struct TodayScreen: View {
                 heroes(s)
                 LastNightCard(sleep: s.sleep, todayKey: s.todayKey)
                 EffortCard(effort: s.effort, workouts: workouts)
-                JournalPromptCard(items: journalItems, labels: journalLabels, answers: answers, onToggle: toggle)
+                JournalPromptCard(items: journalItems, label: label(_:), answers: answers, onCycle: cycle)
             }
         }
         .refreshable {
@@ -55,8 +60,12 @@ struct TodayScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             todayKey = Repository.localDayKey(Date())
         }
-        .sheet(isPresented: $showPair) {
-            AddDeviceWizard(live: model.live, onClose: { showPair = false })
+        .confirmationDialog("Which strap do you have?", isPresented: $showPair, titleVisibility: .visible) {
+            Button("WHOOP 4.0") { pairing = .whoop4 }
+            Button("WHOOP 5.0 / MG") { pairing = .whoop5mg }
+        }
+        .sheet(item: $pairing) { type in
+            AddDeviceWizard(live: model.live, onClose: { pairing = nil }, startAt: (type: type, step: .prep))
         }
     }
 
@@ -77,10 +86,12 @@ struct TodayScreen: View {
                 .foregroundStyle(BaselineTheme.text)
             HStack(alignment: .center, spacing: 10) {
                 BaselinePill(text: readinessPill(s.readiness), color: readinessColor(s.readiness))
-                Text(readinessLine(s.readiness))
-                    .font(BaselineTheme.caption)
-                    .foregroundStyle(BaselineTheme.textSecondary)
-                    .lineLimit(2)
+                if let line = readinessLine(s.readiness) {
+                    Text(line)
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textSecondary)
+                        .lineLimit(2)
+                }
             }
         }
         .padding(.top, 4)
@@ -89,36 +100,37 @@ struct TodayScreen: View {
     private func heroes(_ s: TodaySnapshot) -> some View {
         HStack(alignment: .top, spacing: 12) {
             TodayHeroTile(title: "HRV", unit: "ms", color: BaselineTheme.hrv,
-                          higherIsBetter: true, reading: s.hrv)
+                          higherIsBetter: true, reading: s.hrv, todayKey: s.todayKey)
             TodayHeroTile(title: "Resting HR", unit: "bpm", color: BaselineTheme.rhr,
-                          higherIsBetter: false, reading: s.restingHr)
+                          higherIsBetter: false, reading: s.restingHr, todayKey: s.todayKey)
         }
         .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: Readiness copy
 
+    /// The calibrating pill names what its count unlocks (readiness, 14 nights), the same shape the hero
+    /// tiles use for their own, smaller count ("Baseline after 4 nights · n so far").
     private func readinessPill(_ r: TodayReadiness) -> String {
         switch r {
-        case .calibrating(let n): return "Calibrating · \(n) of \(HRVReadiness.minNights) nights"
-        case .tier(.primed): return "Primed"
-        case .tier(.normal): return "On baseline"
-        case .tier(.suppressed): return "Below your normal range"
+        case .calibrating(let n): return "Readiness after \(HRVReadiness.minNights) nights · \(n) so far"
+        case .stale: return "Paused"
+        case .tier(let tier): return tier.baselineLabel   // shared with Trends' readiness strip
         }
     }
 
     private func readinessColor(_ r: TodayReadiness) -> Color {
         switch r {
-        case .calibrating: return BaselineTheme.textTertiary
-        case .tier(.primed): return BaselineTheme.good
-        case .tier(.normal): return BaselineTheme.accent
-        case .tier(.suppressed): return BaselineTheme.watch
+        case .calibrating, .stale: return BaselineTheme.textTertiary
+        case .tier(let tier): return tier.baselineColor
         }
     }
 
-    private func readinessLine(_ r: TodayReadiness) -> String {
+    /// nil while calibrating: the pill already says when readiness arrives.
+    private func readinessLine(_ r: TodayReadiness) -> String? {
         switch r {
-        case .calibrating: return "Readiness arrives after 14 nights."
+        case .calibrating: return nil
+        case .stale(let day): return "No HRV since \(TodayFormat.dayLabel(day)). Readiness returns with the next synced night."
         case .tier(.primed): return "HRV is running above its usual range. A good day to push."
         case .tier(.normal): return "HRV is where it usually is."
         case .tier(.suppressed): return "HRV is lower than usual. Go gently today."
@@ -131,40 +143,43 @@ struct TodayScreen: View {
         Array(catalog.resolvedItems(imported: []).filter { !$0.hidden && !$0.kind.isNumeric }.prefix(4))
     }
 
-    private var journalLabels: [String: String] {
-        var out: [String: String] = [:]
-        for item in journalItems {
-            out[item.canonical] = item.displayName ?? Self.shortLabels[item.canonical] ?? item.canonical
-        }
-        return out
+    /// Chip label: the user's rename, else `JournalLabels.short`, the one table the Journal tab reads
+    /// (`JournalScreen.label(for:)`), so a habit has one name on both tabs. The canonical question is
+    /// what is saved.
+    private func label(_ item: JournalCatalogItem) -> String {
+        if let n = item.displayName, !n.isEmpty { return n }
+        return JournalLabels.short(item.canonical)
     }
 
-    /// Chip-length labels for the starter questions. Display only: the canonical question is what is saved.
-    private static let shortLabels: [String: String] = [
-        "Did you drink any alcohol?": "Alcohol",
-        "Did you have caffeine late in the day?": "Late caffeine",
-        "Did you view a screen in bed?": "Screen in bed",
-        "Did you eat close to bedtime?": "Ate late",
-        "Did you feel stressed?": "Stressed",
-        "Did you use a sauna?": "Sauna",
-        "Did you share your bed?": "Shared bed",
-        "Did you feel sick or ill?": "Felt ill",
-        "Did you take magnesium?": "Magnesium",
-        "Did you read before bed?": "Read in bed",
-    ]
-
-    private func toggle(_ question: String) {
-        let next = !(answers[question] ?? false)
+    /// yes → no → clear → yes, as the Journal tab's chips cycle. A "no" is a real answer (the control
+    /// night the effects engine compares against); only clear deletes the row.
+    private func cycle(_ question: String) {
+        let next: Bool?
+        switch answers[question] {
+        case nil: next = true
+        case .some(true): next = false
+        case .some(false): next = nil
+        }
         answers[question] = next
         let day = todayKey
-        Task { await repo.saveJournalAnswer(day: day, question: question, answeredYes: next, notes: nil) }
+        Task {
+            if let next {
+                await repo.saveJournalAnswer(day: day, question: question, answeredYes: next, notes: nil)
+            } else {
+                await repo.clearJournalAnswer(day: day, question: question)
+            }
+        }
     }
 
     // MARK: Load
 
     private func load() async {
         let key = todayKey
-        snapshot = TodaySnapshot.build(days: repo.days, todayKey: key)
+        // The same night list the Sleep tab builds, so last night's total and its 30-night average
+        // are one number on both tabs.
+        let habitual = await repo.habitualMidsleepSec()
+        let nights = SleepNightBuilder.nights(sessions: repo.sleeps, days: repo.days, habitualMidsleepSec: habitual)
+        snapshot = TodaySnapshot.build(days: repo.days, nights: nights, todayKey: key)
         let rows = await repo.workoutRows(days: 2)
         workouts = rows
             .filter { Repository.localDayKey(Date(timeIntervalSince1970: TimeInterval($0.startTs))) == key }

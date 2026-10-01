@@ -3,20 +3,27 @@ import Foundation
 import WhoopStore
 import StrandAnalytics
 
-// Pure derivations for the Today screen. Everything here is a value type built from `repo.days` and
-// `repo.workoutRows(days:)`; nothing touches the store or SwiftUI.
+// Pure derivations for the Today screen. Everything here is a value type built from `repo.days`, the
+// Sleep tab's `SleepNight` list and `repo.workoutRows(days:)`; nothing touches the store or SwiftUI.
 
 /// One metric (HRV or resting HR) read against the person's own baseline.
 struct TodayMetricReading {
-    /// Last night's value and the day key (the morning) it belongs to.
-    let value: Double
+    /// Day key (the morning) of the newest night with a value, whatever its age.
     let day: String
-    /// Baseline folded from every night BEFORE `day`, so the value is judged against history it is not part of.
+    /// That night's value, or nil once the night is older than `Baselines.vitalCarryDays`: a weeks-old
+    /// number must not read as this morning's measurement (NOOP's carry rule), so the tile shows "–"
+    /// and names the day instead.
+    let value: Double?
+    /// Baseline folded from every night BEFORE `day`, so the value is judged against history it is not
+    /// part of. Shared with the Trends tab through `BaselineReadouts.latestNight`.
     let state: BaselineState
-    /// nil until the baseline is usable (`Baselines.minNightsSeed` nights).
+    /// nil until the baseline is usable (`Baselines.minNightsSeed` nights) or when the value is stale.
     let deviation: Deviation?
-    /// Up to the last 14 nights with a value, oldest to newest, for the sparkline.
+    /// Up to the last 14 nights with a value, oldest to newest, for the sparkline. Empty when stale, so
+    /// an axis-free line never reads as "the last 14 nights".
     let recent: [(day: String, value: Double)]
+
+    var isStale: Bool { value == nil }
 
     var band: BaselineBand {
         guard state.usable, let d = deviation else { return .calibrating }
@@ -35,8 +42,8 @@ struct TodayStage: Identifiable {
     let minutes: Double
 }
 
-/// Last night, as the sleep card shows it. Stage minutes come from the daily row; wake is derived from
-/// efficiency (in-bed = asleep / efficiency) because the daily row carries no wake figure.
+/// Last night, as the sleep card shows it. Built from the same `SleepNight` the Sleep tab's hero shows,
+/// so the two tabs print one total, one efficiency and one delta for the night.
 struct TodaySleepReading {
     let day: String
     let totalMin: Double
@@ -45,8 +52,23 @@ struct TodaySleepReading {
     let remMin: Double
     let lightMin: Double
     let wakeMin: Double
-    /// Mean total sleep over the 30 recorded nights before this one; nil on the first night.
+    /// False when the night carries no per-stage minutes (an imported total only); the card then skips
+    /// the stage bar rather than painting the whole night as one stage.
+    let hasStages: Bool
+    /// `BaselineReadouts.sleepAverage30` over the same nights; nil until three nights exist.
     let avg30Min: Double?
+
+    init(night: SleepNight, avg30Min: Double?) {
+        day = night.dayKey
+        totalMin = night.asleepMin
+        efficiencyPct = night.efficiency.map { $0 * 100 }
+        deepMin = max(0, night.deepMin)
+        remMin = max(0, night.remMin)
+        lightMin = max(0, night.lightMin)
+        wakeMin = max(0, night.awakeMin)
+        hasStages = night.hasStageTotals
+        self.avg30Min = avg30Min
+    }
 
     var stages: [TodayStage] {
         [TodayStage(id: "deep", minutes: deepMin),
@@ -72,9 +94,12 @@ struct TodayWorkout: Identifiable {
 }
 
 /// The readiness line under the date. `HRVReadiness` refuses to score below 14 valid nights, so the
-/// calibrating case carries the honest count rather than a fabricated tier.
+/// calibrating case carries the honest count rather than a fabricated tier. `stale` is the HRV tile's
+/// carry cap applied here too: once the newest HRV night is older than `Baselines.vitalCarryDays`, a
+/// tier evaluated from it must not read as this morning's.
 enum TodayReadiness {
     case calibrating(nights: Int)
+    case stale(lastDay: String)
     case tier(ReadinessTier)
 }
 
@@ -87,32 +112,41 @@ struct TodaySnapshot {
     /// Today's effort 0-100 (`DailyMetric.strain`); nil until the strap has recorded part of the day.
     let effort: Double?
 
-    static func build(days: [DailyMetric], todayKey: String) -> TodaySnapshot {
+    /// `nights` is `SleepNightBuilder.nights(…)` (newest first), the same list the Sleep tab draws.
+    static func build(days: [DailyMetric], nights: [SleepNight], todayKey: String) -> TodaySnapshot {
         let scoped = days.filter { $0.day <= todayKey }
+        let hrv = reading(scoped, todayKey: todayKey, cfg: Baselines.hrvCfg) { $0.avgHrv }
         return TodaySnapshot(
             todayKey: todayKey,
-            hrv: reading(scoped, cfg: Baselines.hrvCfg) { $0.avgHrv },
-            restingHr: reading(scoped, cfg: Baselines.restingHRCfg) { $0.restingHr.map(Double.init) },
-            readiness: readiness(scoped),
-            sleep: sleep(scoped),
+            hrv: hrv,
+            restingHr: reading(scoped, todayKey: todayKey, cfg: Baselines.restingHRCfg) { $0.restingHr.map(Double.init) },
+            readiness: readiness(scoped, hrv: hrv),
+            sleep: sleep(nights, todayKey: todayKey),
             effort: scoped.last(where: { $0.day == todayKey })?.strain)
     }
 
-    private static func reading(_ scoped: [DailyMetric], cfg: MetricCfg,
+    private static func reading(_ scoped: [DailyMetric], todayKey: String, cfg: MetricCfg,
                                 value: (DailyMetric) -> Double?) -> TodayMetricReading? {
-        guard let latest = scoped.last(where: { value($0) != nil }), let v = value(latest) else { return nil }
-        let history = scoped.filter { $0.day < latest.day }
-        let state = Baselines.foldHistory(history.map(value), dayKeys: history.map(\.day), cfg: cfg)
-        let deviation = state.usable ? Baselines.deviation(v, state: state) : nil
-        let recent = scoped.compactMap { d -> (day: String, value: Double)? in
-            guard let x = value(d) else { return nil }
-            return (day: d.day, value: x)
-        }.suffix(14)
-        return TodayMetricReading(value: v, day: latest.day, state: state, deviation: deviation,
-                                  recent: Array(recent))
+        let readout = BaselineReadouts.latestNight(upToToday: scoped, cfg: cfg, value: value)
+        guard let latest = readout.latest else { return nil }
+        // NOOP's carry rule: a nightly vital is presented as "latest" for `vitalCarryDays`, then blanked.
+        let fresh = Baselines.freshestCarried([latest], todayKey: todayKey) != nil
+        let state = readout.state
+        let deviation = fresh && state.usable ? Baselines.deviation(latest.value, state: state) : nil
+        var recent: [(day: String, value: Double)] = []
+        if fresh {
+            let valued = scoped.compactMap { d -> (day: String, value: Double)? in
+                guard let x = value(d), cfg.minVal <= x, x <= cfg.maxVal else { return nil }
+                return (day: d.day, value: x)
+            }
+            recent = Array(valued.suffix(14))
+        }
+        return TodayMetricReading(day: latest.day, value: fresh ? latest.value : nil, state: state,
+                                  deviation: deviation, recent: recent)
     }
 
-    private static func readiness(_ scoped: [DailyMetric]) -> TodayReadiness {
+    private static func readiness(_ scoped: [DailyMetric], hrv: TodayMetricReading?) -> TodayReadiness {
+        if let hrv, hrv.isStale { return .stale(lastDay: hrv.day) }
         let series = scoped.map(\.avgHrv)
         if let r = HRVReadiness.evaluate(avgHrv: series) { return .tier(r.tier) }
         let cfg = Baselines.hrvCfg
@@ -120,22 +154,10 @@ struct TodaySnapshot {
         return .calibrating(nights: min(valid, HRVReadiness.minNights))
     }
 
-    private static func sleep(_ scoped: [DailyMetric]) -> TodaySleepReading? {
-        guard let night = scoped.last(where: { $0.totalSleepMin != nil }),
-              let total = night.totalSleepMin else { return nil }
-        // Daily rows carry efficiency as a percentage; a value at or below 1 can only be a fraction.
-        let eff = night.efficiency.map { $0 <= 1 ? $0 * 100 : $0 }
-        let deep = max(0, night.deepMin ?? 0)
-        let rem = max(0, night.remMin ?? 0)
-        let light = max(0, night.lightMin ?? (total - deep - rem))
-        let wake: Double = {
-            guard let e = eff, e > 0 else { return 0 }
-            return max(0, total / (e / 100) - total)
-        }()
-        let prior = scoped.filter { $0.day < night.day }.compactMap(\.totalSleepMin).suffix(30)
-        let avg = prior.isEmpty ? nil : prior.reduce(0, +) / Double(prior.count)
-        return TodaySleepReading(day: night.day, totalMin: total, efficiencyPct: eff,
-                                 deepMin: deep, remMin: rem, lightMin: light, wakeMin: wake, avg30Min: avg)
+    private static func sleep(_ nights: [SleepNight], todayKey: String) -> TodaySleepReading? {
+        let scoped = nights.filter { $0.dayKey <= todayKey }
+        guard let night = scoped.first else { return nil }
+        return TodaySleepReading(night: night, avg30Min: BaselineReadouts.sleepAverage30(scoped))
     }
 }
 
@@ -178,5 +200,18 @@ enum TodayFormat {
     }()
 
     static func date(fromDayKey key: String) -> Date? { dayKeyParser.date(from: key) }
+
+    /// "Mon 28 Sep" for a day key; the key itself if it does not parse.
+    static func dayLabel(_ key: String) -> String {
+        guard let d = date(fromDayKey: key) else { return key }
+        return d.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+    }
+
+    /// The provenance stamp every carried value on Today wears: "Woke Mon 28 Sep" when `day` is not this
+    /// morning, nil when it is. One phrase for the sleep card and the hero tiles, so the screen dates a
+    /// night one way.
+    static func wokeStamp(day: String, todayKey: String) -> String? {
+        day == todayKey ? nil : "Woke " + dayLabel(day)
+    }
 }
 #endif

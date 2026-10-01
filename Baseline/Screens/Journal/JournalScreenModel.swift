@@ -16,6 +16,11 @@ enum JournalOutcome: String, CaseIterable, Identifiable {
 }
 
 /// One dose-response read, ready for a card.
+///
+/// Caffeine's prior is documented in HRV (ms), the unit Today and Trends show, so that card carries
+/// the per-step shift. Alcohol's prior is documented in the engine's 0–100 overnight score ("Charge"
+/// upstream), which no Baseline screen renders and which is not the three-tier Readiness label, so
+/// that card names the morning as a whole and stays directional: no points, no per-drink figure.
 struct JournalDose: Identifiable {
     let behavior: DosedBehavior
     let response: DoseResponse
@@ -23,32 +28,44 @@ struct JournalDose: Identifiable {
 
     var title: String { behavior == .alcohol ? "Alcohol" : "Caffeine timing" }
     var icon: String { behavior == .alcohol ? "wineglass" : "cup.and.saucer" }
-    /// The outcome the engine's prior is documented in, in Baseline's vocabulary.
-    var outcomeLabel: String { behavior == .alcohol ? "Readiness" : "HRV" }
-    var unit: String { behavior == .alcohol ? "pts" : "ms" }
-    var perUnitLabel: String { behavior == .alcohol ? "Per drink" : "Per later step" }
-    /// Lower is worse for both documented outcomes (recovery score and HRV).
-    var perUnitColor: Color {
-        response.perUnit < -0.05 ? BaselineTheme.watch : (response.perUnit > 0.05 ? BaselineTheme.good : BaselineTheme.textSecondary)
+    var subtitle: String {
+        "Dose response · \(behavior == .alcohol ? "the next morning overall" : "HRV next morning")"
+    }
+
+    /// The per-unit shift as a stat cell: caffeine only, in ms. Lower is worse.
+    var perUnitStat: (label: String, unit: String, color: Color)? {
+        guard behavior == .caffeine else { return nil }
+        let color = response.perUnit < -0.05 ? BaselineTheme.watch : (response.perUnit > 0.05 ? BaselineTheme.good : BaselineTheme.textSecondary)
+        return (label: "Per later step", unit: "ms", color: color)
     }
 
     /// One honest sentence in Baseline's voice. Says when it is still mostly the population prior.
     var sentence: String {
         let r = response
-        let mag = JournalLabels.magnitude(abs(r.perUnit))
-        let dir = r.perUnit <= 0 ? "lower" : "higher"
         let nights = r.nUser == 1 ? "1 night" : "\(r.nUser) nights"
-        let unitWord = behavior == .alcohol ? "\(mag) points" : "\(mag) ms"
-        let step = behavior == .alcohol ? "Each extra drink" : "Each step later in the day you have caffeine"
-        if r.contradictsPrior {
-            let subject = behavior == .alcohol ? "drinks don't" : "late caffeine doesn't"
-            return "In your data so far, \(subject) move your \(outcomeLabel) the way it usually does (\(nights))."
+        switch behavior {
+        case .alcohol:
+            if r.contradictsPrior {
+                return "In your data so far, drinks don't bring the next morning down the way they usually do (\(nights))."
+            }
+            if r.priorDominated {
+                let dir = r.priorSlope <= 0 ? "lower" : "higher"
+                return "The more you drink, the \(dir) the next morning reads. That is the typical pattern, not yet yours (\(nights))."
+            }
+            let dir = r.perUnit <= 0 ? "lower" : "higher"
+            return "The more you drink, the \(dir) the next morning reads for you (\(nights))."
+        case .caffeine:
+            if r.contradictsPrior {
+                return "In your data so far, late caffeine doesn't move your HRV the way it usually does (\(nights))."
+            }
+            let mag = JournalLabels.magnitude(abs(r.perUnit))
+            let dir = r.perUnit <= 0 ? "lower" : "higher"
+            let base = "Each step later in the day you have caffeine lines up with about \(mag) ms \(dir) HRV the next morning"
+            if r.priorDominated {
+                return "\(base). That is the typical pattern, not yet yours (\(nights))."
+            }
+            return "\(base) for you (\(nights))."
         }
-        let base = "\(step) lines up with about \(unitWord) \(dir) \(outcomeLabel) the next morning"
-        if r.priorDominated {
-            return "\(base). That is the typical pattern, not yet yours (\(nights))."
-        }
-        return "\(base) for you (\(nights))."
     }
 }
 
@@ -81,7 +98,13 @@ final class JournalScreenModel: ObservableObject {
     private var controls: [String: Set<String>] = [:]
     private var numericSeries: [String: [String: Double]] = [:]
     private var outcomeByKey: [String: [String: Double]] = [:]
+    /// Bumped by every write, so a read that was in flight when the user tapped never lands on top
+    /// of the optimistic update.
     private var writeSeq = 0
+    /// Bumped whenever the chips' day changes, so a slower read for an older day (a full `load`
+    /// started before the tap, or a write's re-read of the day it targeted) never lands under the
+    /// newer day's caption.
+    private var daySeq = 0
 
     private static let source = "my-whoop"
     /// hrv / rhr drive the feed; recovery backs the alcohol dose prior ("Charge" in the engine).
@@ -90,6 +113,7 @@ final class JournalScreenModel: ObservableObject {
     // MARK: Load
 
     func load(repo: Repository, day: String) async {
+        let gen = daySeq
         var byKey: [String: [String: Double]] = [:]
         for key in Self.outcomeKeys {
             var dict: [String: Double] = [:]
@@ -109,7 +133,7 @@ final class JournalScreenModel: ObservableObject {
         importedQuestions = questions
 
         await reloadJournal(repo: repo)
-        await reloadDay(repo: repo, day: day)
+        await readDay(repo: repo, day: day, gen: gen)   // skipped if a chip tap moved the day meanwhile
         loaded = true
     }
 
@@ -134,11 +158,20 @@ final class JournalScreenModel: ObservableObject {
         redose()
     }
 
+    /// The chips' day changed: read it, superseding any slower read still in flight for another day.
     func reloadDay(repo: Repository, day: String) async {
+        daySeq += 1
+        await readDay(repo: repo, day: day, gen: daySeq)
+    }
+
+    /// Read `day`'s rows into the chips, unless the day or a write moved on while the store answered.
+    /// `gen` is the `daySeq` the caller saw when `day` was still the chips' day.
+    private func readDay(repo: Repository, day: String, gen: Int) async {
+        guard gen == daySeq else { return }   // the chips already show another day
         let seq = writeSeq
         let a = await repo.nativeJournalAnswers(day: day)
         let n = await repo.nativeJournalNumeric(day: day)
-        guard seq == writeSeq else { return }   // a newer write already updated the chips
+        guard gen == daySeq, seq == writeSeq else { return }   // a newer day or write already updated the chips
         answers = a
         numeric = n
     }
@@ -147,6 +180,7 @@ final class JournalScreenModel: ObservableObject {
 
     /// yes / no / nil (clear) for a yes-no item.
     func setAnswer(_ value: Bool?, question: String, day: String, repo: Repository) async {
+        let gen = daySeq
         writeSeq += 1
         answers[question] = value
         numeric[question] = nil
@@ -155,18 +189,19 @@ final class JournalScreenModel: ObservableObject {
         } else {
             await repo.clearJournalAnswer(day: day, question: question)
         }
-        await afterWrite(repo: repo, day: day)
+        await afterWrite(repo: repo, day: day, gen: gen)
     }
 
     /// A numeric item's value (≥ 1). Zero is written as a "no" answer because the store records
     /// every numeric row as the behaviour having occurred.
     func setNumeric(_ value: Double, question: String, day: String, repo: Repository) async {
         guard value >= 1 else { await setAnswer(false, question: question, day: day, repo: repo); return }
+        let gen = daySeq
         writeSeq += 1
         numeric[question] = value
         answers[question] = true
         await repo.saveJournalNumeric(day: day, question: question, value: value)
-        await afterWrite(repo: repo, day: day)
+        await afterWrite(repo: repo, day: day, gen: gen)
     }
 
     /// Write "no" for every listed question that has no answer on `day`. This is what gives the
@@ -174,19 +209,20 @@ final class JournalScreenModel: ObservableObject {
     func markRestNo(questions: [String], day: String, repo: Repository) async {
         let pending = questions.filter { answers[$0] == nil }
         guard !pending.isEmpty else { return }
+        let gen = daySeq
         writeSeq += 1
+        // Every optimistic mark before the first suspension: a chip tap mid-loop would otherwise
+        // paint the rest of these over the newer day's rows.
+        for q in pending { answers[q] = false }
         for q in pending {
-            answers[q] = false
             await repo.saveJournalAnswer(day: day, question: q, answeredYes: false)
         }
-        await afterWrite(repo: repo, day: day)
+        await afterWrite(repo: repo, day: day, gen: gen)
     }
 
-    private func afterWrite(repo: Repository, day: String) async {
-        let seq = writeSeq
-        let a = await repo.nativeJournalAnswers(day: day)
-        let n = await repo.nativeJournalNumeric(day: day)
-        if seq == writeSeq { answers = a; numeric = n }
+    /// Re-read the day the write targeted (only if the chips still show it), then the journal as a whole.
+    private func afterWrite(repo: Repository, day: String, gen: Int) async {
+        await readDay(repo: repo, day: day, gen: gen)
         await reloadJournal(repo: repo)
     }
 

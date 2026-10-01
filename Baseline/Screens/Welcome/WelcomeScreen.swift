@@ -2,9 +2,10 @@
 import SwiftUI
 import WhoopStore
 
-/// First run, three steps, no account: a welcome line, strap pairing through NOOP's `AddDeviceWizard`,
-/// and the Apple Health permission. Every step can be skipped; the disclaimer is accepted implicitly
-/// through the footnote on the first page. Calls `onFinished` once, from the last step.
+/// First run, three steps, no account: a welcome line, strap pairing through NOOP's `AddDeviceWizard`
+/// (opened on the chosen WHOOP model's prep step, past NOOP's device-type chooser), and the Apple Health
+/// permission. Every step can be skipped; the disclaimer is accepted implicitly through the footnote on
+/// the first page. Calls `onFinished` once, from the last step.
 struct WelcomeScreen: View {
     var onFinished: () -> Void
     @State private var step = WelcomeScreen.launchStep
@@ -72,7 +73,9 @@ private struct WelcomePairStep: View {
     var onContinue: () -> Void
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var live: LiveState
-    @State private var showWizard = false
+    /// The strap model whose pairing wizard is open, or nil. Seeding the wizard with a model skips
+    /// NOOP's device-type chooser (eight rows, an Experimental tier) and lands on that WHOOP prep step.
+    @State private var pairing: AddDeviceWizard.DeviceType?
 
     var body: some View {
         WelcomeStepLayout {
@@ -81,6 +84,12 @@ private struct WelcomePairStep: View {
                 Text("Pair your strap")
                     .font(BaselineTheme.hero(34))
                     .foregroundStyle(BaselineTheme.text)
+                // Names NOOP before the wizard's own copy does.
+                Text("Pairing runs on NOOP, the open-source engine Baseline is built on.")
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 10) {
                     // Facts reused from NOOP's pairing guidance: a strap holds one Bluetooth link at a
                     // time, and a 5.0 / MG enters pairing mode when its LEDs flash blue.
@@ -94,13 +103,13 @@ private struct WelcomePairStep: View {
             }
         } actions: {
             if let registry = model.deviceRegistry {
-                WelcomePairActions(registry: registry, onPair: { showWizard = true }, onContinue: onContinue)
+                WelcomePairActions(registry: registry, onPair: { pairing = $0 }, onContinue: onContinue)
             } else {
-                WelcomePairButtons(paired: live.bonded, onPair: { showWizard = true }, onContinue: onContinue)
+                WelcomePairButtons(paired: live.bonded, onPair: { pairing = $0 }, onContinue: onContinue)
             }
         }
-        .sheet(isPresented: $showWizard) {
-            AddDeviceWizard(live: live, onClose: { showWizard = false })
+        .sheet(item: $pairing) { type in
+            AddDeviceWizard(live: live, onClose: { pairing = nil }, startAt: (type: type, step: .prep))
         }
     }
 }
@@ -111,7 +120,7 @@ private struct WelcomePairStep: View {
 private struct WelcomePairActions: View {
     @ObservedObject var registry: DeviceRegistry
     @EnvironmentObject private var live: LiveState
-    var onPair: () -> Void
+    var onPair: (AddDeviceWizard.DeviceType) -> Void
     var onContinue: () -> Void
 
     private var paired: Bool {
@@ -123,9 +132,11 @@ private struct WelcomePairActions: View {
     }
 }
 
+/// One button per WHOOP model, so the wizard can open on that model's prep step instead of NOOP's
+/// device-type chooser. Nominative use of the WHOOP name only.
 private struct WelcomePairButtons: View {
     let paired: Bool
-    var onPair: () -> Void
+    var onPair: (AddDeviceWizard.DeviceType) -> Void
     var onContinue: () -> Void
 
     var body: some View {
@@ -136,7 +147,9 @@ private struct WelcomePairButtons: View {
             }
             .transition(.opacity)
         }
-        Button(paired ? "Pair another strap" : "Pair strap", action: onPair)
+        Button("Pair WHOOP 4.0") { onPair(.whoop4) }
+            .buttonStyle(WelcomeCapsuleButtonStyle(filled: !paired))
+        Button("Pair WHOOP 5.0 / MG") { onPair(.whoop5mg) }
             .buttonStyle(WelcomeCapsuleButtonStyle(filled: !paired))
         Button("Continue", action: onContinue)
             .buttonStyle(WelcomeCapsuleButtonStyle(filled: paired))
@@ -198,23 +211,30 @@ private struct WelcomeHealthStep: View {
 
 // MARK: - Layout pieces
 
-/// Centered copy above, a column of actions pinned below. Keeps the three steps aligned.
+/// Centered copy above, a column of actions below. Keeps the three steps aligned. The column fills the
+/// page and centres when it fits; at accessibility Dynamic Type sizes or on short phones it scrolls
+/// instead of pushing the actions under the dots or off-screen.
 private struct WelcomeStepLayout<Hero: View, Actions: View>: View {
     @ViewBuilder var hero: () -> Hero
     @ViewBuilder var actions: () -> Actions
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 24)
-            hero()
-                .frame(maxWidth: 420)
-            Spacer(minLength: 24)
-            VStack(spacing: 14) { actions() }
-                .frame(maxWidth: 420)
-                .padding(.bottom, 12)
+        GeometryReader { geo in
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 24)
+                    hero()
+                        .frame(maxWidth: 420)
+                    Spacer(minLength: 24)
+                    VStack(spacing: 14) { actions() }
+                        .frame(maxWidth: 420)
+                        .padding(.bottom, 12)
+                }
+                .padding(.horizontal, 32)
+                .frame(maxWidth: .infinity, minHeight: geo.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
         }
-        .padding(.horizontal, 32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

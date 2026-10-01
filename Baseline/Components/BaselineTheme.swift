@@ -14,7 +14,9 @@ enum BaselineTheme {
     // Text
     static let text = Color.white.opacity(0.94)
     static let textSecondary = Color.white.opacity(0.62)
-    static let textTertiary = Color.white.opacity(0.40)
+    static let textTertiary = Color.white.opacity(0.55)        // ≥ 4.5:1 on background and cards (caption text)
+    /// Disabled controls and off-state indicators (not connected, not answered). Not for readable text.
+    static let inactive = Color.white.opacity(0.40)
 
     // Metric colours
     static let accent = Color(red: 0.25, green: 0.88, blue: 0.82)              // HRV teal

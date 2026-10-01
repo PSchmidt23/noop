@@ -6,7 +6,8 @@ import SwiftUI
 /// night leading into morning D, so today's key reads "Last night".
 struct JournalScreen: View {
     @EnvironmentObject private var repo: Repository
-    @StateObject private var catalog = JournalCatalogStore()
+    /// The app's one catalog store (injected by `BaselineApp`), shared with the Today tab's chips.
+    @EnvironmentObject private var catalog: JournalCatalogStore
     @StateObject private var model = JournalScreenModel()
     /// 0 = today's key (last night), 1 = yesterday's key, … 6.
     @State private var dayOffset = 0

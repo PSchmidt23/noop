@@ -14,6 +14,10 @@ struct BaselineApp: App {
     @StateObject private var router: NavRouter
     /// Only because a few NOOP screens we may host (Lift Log) declare it as an environment object.
     @StateObject private var liftSession: LiftSessionController
+    /// The one journal catalog for the app. The store is UserDefaults-backed with no cross-instance
+    /// notification, so Today and Journal must share this instance or an edit on one tab reaches the
+    /// other only at the next launch.
+    @StateObject private var journalCatalog = JournalCatalogStore()
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(ChartStyle.storageKey) private var chartStyleRaw = ChartStyle.titanium.rawValue
@@ -68,6 +72,7 @@ struct BaselineApp: App {
                 .environmentObject(router)
                 .environmentObject(UpdateStore.shared)
                 .environmentObject(liftSession)
+                .environmentObject(journalCatalog)
                 .environment(\.stressNudgeCenter, model.stressNudgeCenter)
                 .environment(\.locale, AppLanguage.activeLocale)
                 .chartStyle(chartStyleRaw)

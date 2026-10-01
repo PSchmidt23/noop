@@ -51,7 +51,8 @@ struct MetricHero: View {
     let value: String
     let unit: String
     let color: Color
-    /// e.g. "+6 ms vs baseline" or "Calibrating · 3 of 14 nights"
+    /// e.g. "+6 ms vs baseline · above your band" or "Baseline after 4 nights · 3 so far". Carries the band
+    /// position in words; `bandDot` only echoes it in colour.
     let context: String
     let band: BaselineBand
     /// `true` when a higher value is better (HRV); `false` for resting HR.
@@ -87,6 +88,7 @@ struct MetricHero: View {
         }()
         let c: Color = good == nil ? BaselineTheme.textTertiary : (good! ? BaselineTheme.good : BaselineTheme.watch)
         return Circle().fill(c).frame(width: 6, height: 6)
+            .accessibilityHidden(true)
     }
 }
 
