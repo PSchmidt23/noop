@@ -2,25 +2,42 @@
 import SwiftUI
 import StrandAnalytics
 
-/// Progress: is the personal baseline itself moving over months? Pushed from the Trends toolbar and the
-/// Today row. Draws the baseline alone (never nights) over 90 / 180 / 365 days or all time, one sentence
-/// per metric, with the EWMA noise floor deciding "steady". Built once per (data, horizon) in `.task`,
-/// exactly Trends' pattern: two fold walks and one sleep pass, sub-millisecond at 4000 rows.
+/// Progress: is the personal baseline itself moving over months? Draws the baseline alone (never
+/// nights) over 90 / 180 / 365 days or all time, one sentence per metric, with the EWMA noise floor
+/// deciding "steady". Lives as the "Progress" section of the Trends tab (`ProgressSection`, embedded in
+/// that screen's scroll); `ProgressScreen` is the same content on its own page for the readiness
+/// chevron on Home.
 struct ProgressScreen: View {
+    var body: some View {
+        BaselineScreen(title: "Progress", titleMode: .inline) {
+            ProgressSection()
+        }
+    }
+}
+
+/// The Progress content: horizon picker (flat, in the content — the pinned row belongs to the screen
+/// that embeds this), the HRV / resting HR / sleep cards and, only after a recalibration, the closing
+/// caption. Built once per (data, horizon, data source) in `.task`, exactly Trends' pattern: two fold
+/// walks and one sleep pass, sub-millisecond at 4000 rows. One `VStack`, so a `LazyVStack` host sees a
+/// single item and the task runs once.
+struct ProgressSection: View {
     @EnvironmentObject private var repo: Repository
     @AppStorage("baseline.progressHorizon") private var horizonRaw: Int = ProgressHorizon.quarter.rawValue
+    /// Strap-first / merged / import-only precedence (Settings → Data); part of the reload key.
+    @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
     @State private var snapshot: ProgressSnapshot?
 
     private struct LoadKey: Equatable {
         let seq: Int
         let loaded: Bool
         let horizon: Int
+        let dataSource: String
     }
 
     private var horizon: ProgressHorizon { ProgressHorizon.resolve(horizonRaw) }
 
     var body: some View {
-        BaselineScreen(title: "Progress") {
+        VStack(alignment: .leading, spacing: BaselineTheme.cardSpacing) {
             if let s = snapshot {
                 if s.totalNights == 0 {
                     emptyState
@@ -29,14 +46,17 @@ struct ProgressScreen: View {
                     // ready) or a sleep window can be compared; until then the HRV card leads.
                     if s.hasHorizonContent {
                         BaselineRangePicker<ProgressHorizon>(
-                            selection: Binding(get: { horizon }, set: { horizonRaw = $0.rawValue }))
+                            selection: Binding(get: { horizon }, set: { horizonRaw = $0.rawValue }),
+                            style: .flat)
                     }
                     cards(s)
-                    Text(ProgressCopy.closingCaption(recalibratedOn: s.recalibratedOn))
-                        .font(BaselineTheme.caption)
-                        .foregroundStyle(BaselineTheme.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 4)
+                    if s.recalibratedOn != nil {
+                        Text(ProgressCopy.closingCaption(recalibratedOn: s.recalibratedOn))
+                            .font(BaselineTheme.caption)
+                            .foregroundStyle(BaselineTheme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 4)
+                    }
                 }
             } else {
                 ProgressView()
@@ -45,12 +65,14 @@ struct ProgressScreen: View {
                     .padding(.top, 48)
             }
         }
-        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, horizon: horizonRaw)) {
+        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, horizon: horizonRaw, dataSource: dataSourceRaw)) {
             guard repo.loaded else { snapshot = nil; return }
             // The same night list Today and Sleep build, so the 30-night average is one number everywhere.
+            let days = repo.baselineDays
             let habitual = await repo.habitualMidsleepSec()
-            let nights = SleepNightBuilder.nights(sessions: repo.sleeps, days: repo.days, habitualMidsleepSec: habitual)
-            snapshot = ProgressSnapshot.build(days: repo.days, nights: nights, horizon: horizon,
+            let sessions = await repo.baselineNights()
+            let nights = SleepNightBuilder.nights(sessions: sessions, days: days, habitualMidsleepSec: habitual)
+            snapshot = ProgressSnapshot.build(days: days, nights: nights, horizon: horizon,
                                               todayKey: Repository.localDayKey(Date()))
         }
     }
@@ -63,9 +85,7 @@ struct ProgressScreen: View {
         ProgressMetricCard(title: "Resting HR baseline", noun: "resting HR", unit: "bpm", color: BaselineTheme.rhr,
                            higherIsBetter: false, status: s.restingHr, horizon: s.horizon, todayKey: s.todayKey, step: 2)
 
-        ProgressSleepCard(duration: s.sleep.duration, horizon: s.horizon)
-
-        ProgressSleepTimingCard(regularity: s.sleep.regularity, horizon: s.horizon)
+        ProgressSleepCard(duration: s.sleep.duration, regularity: s.sleep.regularity, horizon: s.horizon)
     }
 
     private var emptyState: some View {

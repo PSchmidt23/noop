@@ -4,12 +4,15 @@ import StrandAnalytics
 
 extension TrendsRange: BaselineRangeOption {}
 
-/// 7D / 30D / 90D segmented pill: the shared `BaselineRangePicker`, the same control Progress uses.
+/// 7D / 30D / 90D segmented pill: the shared `BaselineRangePicker` (flat, at the top of the Trends
+/// section's content; `ProgressModelTests` asserts the alias).
 typealias TrendRangePicker = BaselineRangePicker<TrendsRange>
 
-/// HRV / Resting HR: baseline and average, the nightly line over its band, and a one-line footnote.
-/// Dragging the chart shows that night in the header while the finger is down; lifting it (or tapping
-/// the numbers) returns the header to the trend.
+/// HRV / Resting HR: baseline and average, the nightly line over its band. The range is in the picker
+/// above and "higher / lower is better" is the card's accessibility hint, so the header carries only
+/// the title and the trend pill; dragging the chart shows that night instead (date and value in the
+/// pill, deviation and band position in the subtitle) and lifting the finger returns the trend pill.
+/// One caption appears only while the band is provisional or still calibrating.
 struct TrendBandCard: View {
     let title: String
     /// How the metric reads mid-sentence ("HRV", "resting HR").
@@ -22,7 +25,8 @@ struct TrendBandCard: View {
     @State private var selected: BandPoint?
 
     var body: some View {
-        BaselineCard(title: title, subtitle: subtitle, accessory: accessory) {
+        BaselineCard {
+            header
             if metric.points.isEmpty {
                 Text("No nights with \(noun) in the last \(range.days) days.")
                     .font(BaselineTheme.caption)
@@ -37,12 +41,54 @@ struct TrendBandCard: View {
                     if selected != nil { withAnimation(.easeOut(duration: 0.2)) { selected = nil } }
                 }
                 TrendsBandChart(points: metric.points, color: color, yDomain: metric.yDomain, selected: $selected)
-                Text(footnote)
-                    .font(BaselineTheme.caption)
-                    .foregroundStyle(BaselineTheme.textTertiary)
+                if let footnote {
+                    Text(footnote)
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
+        .accessibilityHint(higherIsBetter ? "Higher is better" : "Lower is better")
         .onChange(of: metric.points.map(\.id)) { _, _ in selected = nil }
+    }
+
+    /// The card's own header: the pill trails the title while both fit on one line, otherwise it sits
+    /// under the title (`ViewThatFits`, as the Sleep and Progress cards reflow), so at accessibility
+    /// sizes "Down 4 bpm · 30 days" is never pushed past the card's trailing edge. Only the pill's own
+    /// width can then exceed the card, and it scales down before it truncates. The scrub subtitle is a
+    /// full-width line below the row rather than part of it, so its length never flips the row between
+    /// the two layouts mid-drag.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let accessory {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline) {
+                        titleText
+                        Spacer(minLength: 8)
+                        accessory
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        titleText
+                        accessory
+                            .minimumScaleFactor(0.8)
+                    }
+                }
+            } else {
+                titleText
+            }
+            if let subtitle {
+                Text(subtitle)
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The same title style `BaselineCard(title:)` draws.
+    private var titleText: some View {
+        Text(title).font(BaselineTheme.label).foregroundStyle(BaselineTheme.textSecondary)
     }
 
     private var baselineText: String {
@@ -53,29 +99,28 @@ struct TrendBandCard: View {
         metric.average.map(TrendsFormat.whole) ?? "—"
     }
 
-    private var subtitle: String {
-        if let s = selected {
-            guard let b = s.baseline else { return "Before your band was ready" }
-            let delta = s.value - b
-            let inside: Bool = {
-                guard let lo = s.low, let hi = s.high else { return true }
-                return s.value >= lo && s.value <= hi
-            }()
-            // `BaselineBand.positionPhrase`: the same words Today and the morning summary use.
-            let band: BaselineBand = inside ? .inside : (delta > 0 ? .above : .below)
-            return "\(TrendsFormat.signed(delta, unit: unit)) vs baseline · \(band.positionPhrase ?? "")"
-        }
-        return "\(range.subtitle) · \(higherIsBetter ? "higher" : "lower") is better"
+    /// Only while scrubbing: the selected night against the band it was judged by.
+    private var subtitle: String? {
+        guard let s = selected else { return nil }
+        guard let b = s.baseline else { return "Before your band was ready" }
+        let delta = s.value - b
+        let inside: Bool = {
+            guard let lo = s.low, let hi = s.high else { return true }
+            return s.value >= lo && s.value <= hi
+        }()
+        // `BaselineBand.positionPhrase`: the same words Today and the morning summary use.
+        let band: BaselineBand = inside ? .inside : (delta > 0 ? .above : .below)
+        return "\(TrendsFormat.signed(delta, unit: unit)) vs baseline · \(band.positionPhrase ?? "")"
     }
 
     /// Selected night: its date and value. Otherwise the trend over the range, worded as a change
     /// ("Up 4 ms · 30 days") rather than the "+4 ms vs baseline" deviation Today shows, because the two
-    /// are different numbers. `fixedSize` keeps the pill on one line; the subtitle wraps first if it must.
+    /// are different numbers. No `fixedSize`: `header` keeps the pill whole by moving it under the
+    /// title when the row is too narrow, instead of letting it run past the card.
     private var accessory: AnyView? {
         if let s = selected {
             let text = "\(TrendsFormat.shortDate(s.date)) · \(TrendsFormat.whole(s.value)) \(unit)"
             return AnyView(BaselinePill(text: text, color: color)
-                .fixedSize()
                 .accessibilityLabel("\(title) on \(TrendsFormat.shortDate(s.date)): \(TrendsFormat.whole(s.value)) \(unit)"))
         }
         guard let t = metric.trend else { return nil }
@@ -88,15 +133,13 @@ struct TrendBandCard: View {
         let text = steady ? "Steady" : "\(direction) \(amount) · \(range.days) days"
         let spoken = steady ? "steady" : "\(direction.lowercased()) \(amount)"
         return AnyView(BaselinePill(text: text, color: pillColor)
-            .fixedSize()
             .accessibilityLabel("\(title) trend: \(spoken) across the last \(range.days) days"))
     }
 
-    private var footnote: String {
+    /// nil once the band is trusted; the provisional / calibrating sentence until then.
+    private var footnote: String? {
         let s = metric.current
-        if s.trusted {
-            return "Shaded band is your typical range going into each night."
-        }
+        if s.trusted { return nil }
         if s.usable {
             return "Shaded band is your typical range · provisional until \(Baselines.minNightsTrust) nights (\(s.nValid) so far)."
         }
@@ -111,26 +154,23 @@ struct TrendStat {
     var unit: String? = nil
 }
 
-/// A quiet text link under a card's chart that pushes another screen ("All workouts").
-struct TrendCardLink {
-    let label: String
-    let hint: String
-    let destination: () -> AnyView
-}
-
-/// Sleep / Effort: two stats over bars with a dashed average rule, and an optional link row beneath.
+/// Sleep / Effort: two stats over bars with a dashed average rule. On the Trends tab the window is the
+/// 7D / 30D / 90D picker just above the cards, so the header carries no "Last 30 days" of its own (the
+/// "of 28 nights" cell already counts the window). The Effort card closes with the "All workouts" row
+/// (`showsAllWorkouts`), the Trends tab's path to the Workouts list.
 struct TrendBarCard: View {
     let title: String
-    let subtitle: String
+    /// Trailing caption in the header, for a host whose range is not already on screen; nil omits it.
+    var caption: String? = nil
     let color: Color
     let bars: [BaselineBarChart.Bar]
     let average: Double?
     let stats: [TrendStat]
     let emptyText: String
-    var link: TrendCardLink? = nil
+    var showsAllWorkouts: Bool = false
 
     var body: some View {
-        BaselineCard(title: title, subtitle: subtitle) {
+        BaselineCard(title: title, accessory: caption.map { AnyView(captionView($0)) }) {
             if bars.isEmpty {
                 Text(emptyText)
                     .font(BaselineTheme.caption)
@@ -143,75 +183,20 @@ struct TrendBarCard: View {
                 }
                 TrendsBarChart(bars: bars, color: color, average: average)
             }
-            if let link {
-                NavigationLink { link.destination() } label: {
-                    HStack(spacing: 4) {
-                        Text(link.label)
-                            .font(.system(.caption, design: .rounded).weight(.semibold))
-                        Image(systemName: "chevron.right")
-                            .font(BaselineTheme.symbolSmall)
-                    }
-                    .foregroundStyle(BaselineTheme.accent)
-                    .contentShape(Rectangle())
+            if showsAllWorkouts {
+                Divider().overlay(BaselineTheme.hairline)
+                BaselineChevronRow(text: "All workouts", accessibilityHint: "Shows every recorded workout") {
+                    WorkoutsScreen()
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint(link.hint)
             }
         }
     }
-}
 
-/// Fourteen dots, one per night, coloured by that morning's HRV readiness tier. Labels and colours are
-/// `ReadinessTier.baselineLabel` / `.baselineColor`, the same words and hues as the Today pill.
-struct ReadinessStripCard: View {
-    let readiness: TrendsSeries.Readiness
-
-    var body: some View {
-        BaselineCard(title: "Readiness", subtitle: "Last \(TrendsSeries.readinessNights) nights", accessory: latestPill) {
-            HStack(spacing: 0) {
-                ForEach(readiness.nights) { night in
-                    dot(night.tier)
-                        .frame(maxWidth: .infinity)
-                        .accessibilityLabel("\(TrendsFormat.shortDate(night.date)): \(night.tier?.baselineLabel ?? "no reading")")
-                }
-            }
-            .padding(.vertical, 4)
-            HStack {
-                if let first = readiness.nights.first { Text(TrendsFormat.shortDate(first.date)) }
-                Spacer()
-                Text("Today")
-            }
+    private func captionView(_ text: String) -> some View {
+        Text(text)
             .font(BaselineTheme.caption)
             .foregroundStyle(BaselineTheme.textTertiary)
-            legend
-        }
-    }
-
-    private var latestPill: AnyView? {
-        guard let tier = readiness.latest else { return nil }
-        return AnyView(BaselinePill(text: tier.baselineLabel, color: tier.baselineColor))
-    }
-
-    @ViewBuilder
-    private func dot(_ tier: ReadinessTier?) -> some View {
-        if let tier {
-            Circle().fill(tier.baselineColor).frame(width: 10, height: 10)
-        } else {
-            Circle().strokeBorder(BaselineTheme.hairline, lineWidth: 1).frame(width: 10, height: 10)
-        }
-    }
-
-    private var legend: some View {
-        HStack(spacing: 14) {
-            ForEach([ReadinessTier.primed, .normal, .suppressed], id: \.self) { tier in
-                HStack(spacing: 5) {
-                    Circle().fill(tier.baselineColor).frame(width: 6, height: 6)
-                    Text(tier.baselineLabel)
-                }
-            }
-        }
-        .font(BaselineTheme.caption)
-        .foregroundStyle(BaselineTheme.textTertiary)
+            .lineLimit(1)
     }
 }
 #endif

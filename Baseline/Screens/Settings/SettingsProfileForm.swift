@@ -2,23 +2,34 @@
 import SwiftUI
 
 /// The few profile fields NOOP's engine actually reads: date of birth (age), sex, weight, height and an
-/// optional manual max heart rate. Writes straight to `ProfileStore`, which persists each change.
+/// optional manual max heart rate. Writes straight to `ProfileStore`, which persists each change. The
+/// two segmented choices (sex, units) are flat in-card `BaselineSegmentedPicker`s, like every picker
+/// inside content.
 struct SettingsProfileForm: View {
     @EnvironmentObject private var profile: ProfileStore
     @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
 
     private var unitSystem: UnitSystem { UnitSystem(rawValue: unitSystemRaw) ?? .metric }
 
-    private let sexes: [(key: String, label: String)] = [
+    private static let sexes: [(key: String, label: String)] = [
         ("male", "Male"), ("female", "Female"), ("nonbinary", "Other")
     ]
+    private static let sexKeys = sexes.map(\.key)
+    private static func sexLabel(_ key: String) -> String {
+        sexes.first { $0.key == key }?.label ?? key
+    }
+    private static let unitKeys = [UnitSystem.metric.rawValue, UnitSystem.imperial.rawValue]
+    private static func unitLabel(_ raw: String) -> String {
+        raw == UnitSystem.imperial.rawValue ? "Imperial" : "Metric"
+    }
 
     var body: some View {
         BaselineScreen(title: "Profile") {
             Text("Used for heart-rate zones, calorie estimates and your max heart rate. Stays on this iPhone.")
                 .font(BaselineTheme.caption)
-                .foregroundStyle(BaselineTheme.textSecondary)
+                .foregroundStyle(BaselineTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
 
             BaselineCard(title: "About you") {
                 DatePicker(selection: $profile.dateOfBirth,
@@ -30,23 +41,18 @@ struct SettingsProfileForm: View {
                 SettingsDivider()
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Sex").font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textTertiary)
-                    Picker("Sex", selection: $profile.sex) {
-                        ForEach(sexes, id: \.key) { entry in
-                            Text(entry.label).tag(entry.key)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    BaselineSegmentedPicker(options: Self.sexKeys, selection: $profile.sex,
+                                            label: Self.sexLabel,
+                                            accessibilityLabel: { "Sex: \(Self.sexLabel($0))" },
+                                            style: .flat)
                 }
             }
 
             BaselineCard(title: "Body") {
-                Picker("Units", selection: $unitSystemRaw) {
-                    Text("Metric").tag(UnitSystem.metric.rawValue)
-                    Text("Imperial").tag(UnitSystem.imperial.rawValue)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                BaselineSegmentedPicker(options: Self.unitKeys, selection: $unitSystemRaw,
+                                        label: Self.unitLabel,
+                                        accessibilityLabel: { "Units: \(Self.unitLabel($0))" },
+                                        style: .flat)
                 SettingsDivider()
                 Stepper(value: $profile.weightKg, in: 30...250, step: 0.5) {
                     SettingsFieldLabel(title: "Weight",
@@ -59,7 +65,10 @@ struct SettingsProfileForm: View {
                 }
             }
 
-            BaselineCard(title: "Max heart rate", subtitle: "Sets the top of your effort scale and zones") {
+            BaselineCard(title: "Max heart rate") {
+                Text("Sets the top of your effort scale and zones.")
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textTertiary)
                 Toggle(isOn: manualMaxHR) {
                     SettingsFieldLabel(title: "Set manually", value: nil)
                 }
@@ -95,6 +104,7 @@ struct SettingsFieldLabel: View {
             Spacer(minLength: 8)
             if let value {
                 Text(value).font(BaselineTheme.label).foregroundStyle(BaselineTheme.textSecondary)
+                    .monospacedDigit()
             }
         }
     }

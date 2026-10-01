@@ -2,19 +2,30 @@
 import SwiftUI
 import StrandDesign
 
-/// Baseline's shell: five tabs, each with its own navigation stack. A first-run gate covers it until the
-/// person has paired a strap (or chosen to skip).
+/// Baseline's shell: three tabs (Home, Trends, Sleep), each with its own navigation stack. Settings is
+/// the gear in every tab's toolbar, the journal is a sheet Home presents, so neither is a tab. A
+/// first-run gate covers the shell until the person has paired a strap (or chosen to skip).
 struct BaselineRoot: View {
     @AppStorage(BaselineRoot.onboardedKey) private var onboarded = false
     /// Raised by `BaselineNotificationDelegate` when the evening check-in is tapped; consumed below.
     @AppStorage(BaselineNotificationDelegate.pendingTabKey) private var pendingTab: String?
-    @State private var tab: Tab = BaselineRoot.launchTab ?? .today
+    @State private var tab: Tab
+    /// Bumped whenever something asks Home to present the journal sheet (`--tab journal`, the evening
+    /// check-in's tap). Home watches it with `initial: true`, so a request raised before the view
+    /// existed (a cold start) is still honoured.
+    @State private var journalRequest: Int
+    /// Bumped when `--tab settings` asks Home to push Settings.
+    @State private var settingsRequest: Int
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Touching the static runs the launch-argument override exactly once per process, before the
         // first @AppStorage read, however many times SwiftUI re-creates this value.
         _ = BaselineRoot.onboardingOverrideApplied
+        let request = BaselineRoot.launchRequest
+        _tab = State(initialValue: request.tab)
+        _journalRequest = State(initialValue: request.journal ? 1 : 0)
+        _settingsRequest = State(initialValue: request.settings ? 1 : 0)
     }
 
     static let onboardedKey = "baseline.onboarded"
@@ -52,40 +63,64 @@ struct BaselineRoot: View {
         #endif
     }
 
-    /// DEBUG-only: `--tab trends` opens the app on that tab (used for screenshots and verification).
-    private static var launchTab: Tab? {
-        #if DEBUG
-        let args = CommandLine.arguments
-        guard let i = args.firstIndex(of: "--tab"), i + 1 < args.count else { return nil }
-        switch args[i + 1] {
-        case "trends": return .trends
-        case "sleep": return .sleep
-        case "journal": return .journal
-        case "settings": return .settings
-        default: return .today
+    /// What `--tab …` asked for: the tab to open and whether Home should present the journal sheet
+    /// (`journal`) or push Settings (`settings`) on top. Pure, so `parse` is unit-tested.
+    struct LaunchRequest: Equatable {
+        var tab: Tab = .home
+        var journal = false
+        var settings = false
+
+        /// `--tab home|trends|sleep`, with the aliases the screenshot harness and older notes use:
+        /// `today` → home; `journal` → home with the journal sheet presented; `settings` → home with
+        /// Settings pushed. Anything else, or a missing value, is Home.
+        static func parse(_ arguments: [String]) -> LaunchRequest {
+            guard let i = arguments.firstIndex(of: "--tab"), i + 1 < arguments.count else { return LaunchRequest() }
+            switch arguments[i + 1] {
+            case "trends": return LaunchRequest(tab: .trends)
+            case "sleep": return LaunchRequest(tab: .sleep)
+            case "journal": return LaunchRequest(tab: .home, journal: true)
+            case "settings": return LaunchRequest(tab: .home, settings: true)
+            default: return LaunchRequest(tab: .home)   // "home", "today", unknown
+            }
         }
+    }
+
+    /// DEBUG-only: `--tab trends` opens the app on that tab (used for screenshots and verification).
+    /// Always Home in Release.
+    private static var launchRequest: LaunchRequest {
+        #if DEBUG
+        return LaunchRequest.parse(CommandLine.arguments)
         #else
-        return nil
+        return LaunchRequest()
         #endif
     }
 
-    enum Tab: Hashable { case today, trends, sleep, journal, settings }
+    /// DEBUG-only: `--ui-testing` (passed by BaselineUITests' ScreenshotTests and MarketingShots) pins the
+    /// tab bar so a scrolled capture is deterministic. Always false in Release.
+    private static let isUITesting: Bool = {
+        #if DEBUG
+        return CommandLine.arguments.contains("--ui-testing")
+        #else
+        return false
+        #endif
+    }()
+
+    enum Tab: Hashable { case home, trends, sleep }
 
     var body: some View {
         ZStack {
             TabView(selection: $tab) {
-                NavigationStack { TodayScreen() }
-                    .tabItem { Label("Today", systemImage: "sun.horizon") }.tag(Tab.today)
+                NavigationStack { TodayScreen(journalRequest: journalRequest, settingsRequest: settingsRequest) }
+                    .tabItem { Label("Home", systemImage: "house") }.tag(Tab.home)
                 NavigationStack { TrendsScreen() }
                     .tabItem { Label("Trends", systemImage: "chart.xyaxis.line") }.tag(Tab.trends)
                 NavigationStack { SleepScreen() }
                     .tabItem { Label("Sleep", systemImage: "moon.zzz") }.tag(Tab.sleep)
-                NavigationStack { JournalScreen() }
-                    .tabItem { Label("Journal", systemImage: "checklist") }.tag(Tab.journal)
-                NavigationStack { SettingsScreen() }
-                    .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }.tag(Tab.settings)
             }
             .tint(BaselineTheme.accent)
+            // The native glass tab bar shrinks while reading data; `.never` under `--ui-testing` so the
+            // screenshot harness' frame-compare scroll loop never sees the bar animating.
+            .tabBarMinimizeBehavior(BaselineRoot.isUITesting ? .never : .onScrollDown)
             if !onboarded {
                 WelcomeScreen(onFinished: {
                     BaselineRoot.clearOnboardingOverride()
@@ -102,11 +137,15 @@ struct BaselineRoot: View {
         .onChange(of: scenePhase) { _, phase in if phase == .active { consumePendingTab() } }
     }
 
-    /// Switch to the tab a notification asked for, once, then clear the request so the same tap cannot
-    /// re-fire on the next activation. Unknown values are cleared without effect.
+    /// Open what a notification asked for, once, then clear the request so the same tap cannot re-fire
+    /// on the next activation. "journal" is Home with the journal sheet for today (the evening check-in
+    /// logs tonight's habits). Unknown values are cleared without effect.
     private func consumePendingTab() {
         guard let value = pendingTab else { return }
-        if value == BaselineNotificationDelegate.pendingTabJournal { tab = .journal }
+        if value == BaselineNotificationDelegate.pendingTabJournal {
+            tab = .home
+            journalRequest += 1
+        }
         pendingTab = nil
     }
 }

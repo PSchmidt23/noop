@@ -1,41 +1,78 @@
 #if os(iOS)
 import SwiftUI
 
-/// Baseline's design tokens. Dark-first, one teal accent for HRV, a warm coral for resting HR.
-/// Keep every colour here; screens never hard-code hex values.
+/// Hex literal for a design token (`Color(baselineHex: 0xF4F5F8)`). Only this file spells a colour;
+/// screens and components read `BaselineTheme.*`.
+fileprivate extension Color {
+    init(baselineHex: UInt32, opacity: Double = 1) {
+        self.init(red: Double((baselineHex >> 16) & 0xFF) / 255,
+                  green: Double((baselineHex >> 8) & 0xFF) / 255,
+                  blue: Double(baselineHex & 0xFF) / 255,
+                  opacity: opacity)
+    }
+}
+
+/// Baseline's design tokens: flat light paper, white cards carrying the data, glass only on the chrome
+/// that floats above content. One teal accent for HRV, a coral for resting HR. Keep every colour here;
+/// screens never hard-code hex values. Contrast figures are WCAG 2.1 against white (cards) / #F4F5F8.
 enum BaselineTheme {
-    // Surfaces
-    static let background = Color(red: 0.043, green: 0.063, blue: 0.125)        // deep navy
-    static let backgroundTop = Color(red: 0.070, green: 0.100, blue: 0.190)
-    static let card = Color.white.opacity(0.06)
-    static let cardStroke = Color.white.opacity(0.08)
-    static let hairline = Color.white.opacity(0.10)
+    // MARK: Surfaces
+    /// Cool off-white paper; also the launch screen.
+    static let background = Color(baselineHex: 0xF4F5F8)
+    /// Top of `BaselineBackground`'s wash (a near-flat gradient so glass chrome has something to refract).
+    static let backgroundTop = Color(baselineHex: 0xF7F8FB)
+    /// Bottom of `BaselineBackground`'s wash.
+    static let backgroundBottom = Color(baselineHex: 0xF2F3F7)
+    /// Card surface. Opaque white: text on a card never depends on what sits beneath.
+    static let card = Color(baselineHex: 0xFFFFFF)
+    /// The ONE shadow a card carries (`.shadow(color: cardShadow, radius: 16, x: 0, y: 6)`). Never on
+    /// rows or chips.
+    static let cardShadow = Color(baselineHex: 0x111827, opacity: 0.06)
+    /// Dividers inside cards. Chart grid lines use `hairline.opacity(0.75)`.
+    static let hairline = Color(baselineHex: 0x111827, opacity: 0.08)
+    /// Unfilled ring arc: a track, not information.
+    static let ringTrack = Color(baselineHex: 0xE9EBF1)
+    /// The "no"-state chip fill inside a white card.
+    static let chipFill = Color(baselineHex: 0xF4F5F8)
+    /// Flat segmented-picker track inside a card.
+    static let fill = Color(baselineHex: 0x111827, opacity: 0.04)
+    /// Stroke around `fill`.
+    static let fillStroke = Color(baselineHex: 0x111827, opacity: 0.08)
 
-    // Text
-    static let text = Color.white.opacity(0.94)
-    static let textSecondary = Color.white.opacity(0.62)
-    static let textTertiary = Color.white.opacity(0.55)        // ≥ 4.5:1 on background and cards (caption text)
-    /// Disabled controls and off-state indicators (not connected, not answered). Not for readable text.
-    static let inactive = Color.white.opacity(0.40)
-    /// The selected-point marker on a chart (the scrubbed night): the text colour, so it reads on every
-    /// metric colour without a screen reaching for a literal white.
-    static let marker = text
+    // MARK: Text
+    /// Ink. 17.7:1 on white, 16.3:1 on the background.
+    static let text = Color(baselineHex: 0x111827)
+    /// 7.6:1 / 6.9:1.
+    static let textSecondary = Color(baselineHex: 0x4B5563)
+    /// ALL caption text, axis labels, section labels, chevrons, footnotes. 5.4:1 / 5.0:1.
+    static let textTertiary = Color(baselineHex: 0x5F6B7B)
+    /// NON-TEXT ONLY (2.5:1): disabled glyphs, the unanswered-chip stroke, the not-connected dot.
+    static let inactive = Color(baselineHex: 0x9CA3AF)
+    /// The scrubbed chart point's fill; it takes a 2pt stroke in the metric colour
+    /// (`BaselineChartStyle.selectedPoint`).
+    static let marker = Color.white
+    /// Label on a filled accent control (5.2:1 on `accent`, 5.0:1 on `good`).
+    static let onAccent = Color(baselineHex: 0xFFFFFF)
 
-    // Metric colours
-    static let accent = Color(red: 0.25, green: 0.88, blue: 0.82)              // HRV teal
+    // MARK: Metric colours (each ≥ 4.5:1 on white; coloured text lives INSIDE white cards only)
+    /// Teal. 5.2:1 / 4.8:1. The one accent: it tints the prominent CTA and every selected control.
+    static let accent = Color(baselineHex: 0x0D7A72)
     static let hrv = accent
-    static let rhr = Color(red: 1.00, green: 0.55, blue: 0.45)                 // resting HR coral
-    static let sleep = Color(red: 0.56, green: 0.60, blue: 1.00)               // sleep lavender
-    static let effort = Color(red: 1.00, green: 0.78, blue: 0.36)              // effort amber
-    static let good = Color(red: 0.40, green: 0.87, blue: 0.56)
-    static let watch = Color(red: 1.00, green: 0.72, blue: 0.30)
-    static let low = Color(red: 1.00, green: 0.42, blue: 0.42)
+    /// Coral. 5.0:1 / 4.5:1.
+    static let rhr = Color(baselineHex: 0xC8412A)
+    /// Indigo. 6.3:1 / 5.8:1.
+    static let sleep = Color(baselineHex: 0x4A4FD0)
+    /// Amber. 5.0:1 / 4.6:1.
+    static let effort = Color(baselineHex: 0xB45309)
+    static let good = Color(baselineHex: 0x15803D)      // 5.0 / 4.6
+    static let watch = Color(baselineHex: 0xC2410C)     // 5.2 / 4.8
+    static let low = Color(baselineHex: 0xB91C1C)       // 6.5 / 5.9
 
-    // Sleep stages
-    static let stageDeep = Color(red: 0.30, green: 0.36, blue: 0.95)
-    static let stageRem = Color(red: 0.62, green: 0.55, blue: 1.00)
-    static let stageLight = Color(red: 0.45, green: 0.72, blue: 1.00)
-    static let stageWake = Color(red: 1.00, green: 0.70, blue: 0.45)
+    // MARK: Sleep stages (fills, swatches and 6pt dots only; never text: light 2.1:1, wake 1.8:1)
+    static let stageDeep = Color(baselineHex: 0x312E81)
+    static let stageRem = Color(baselineHex: 0x6D5BD0)
+    static let stageLight = Color(baselineHex: 0x8FB3F2)
+    static let stageWake = Color(baselineHex: 0xF0B37E)
 
     static func stageColor(_ stage: String) -> Color {
         switch stage.lowercased() {
@@ -46,12 +83,12 @@ enum BaselineTheme {
         }
     }
 
-    // Heart-rate zones (Z1 easy → Z5 maximal): one intensity ramp of the effort amber, so a zone bar
-    // reads as "more effort" as it brightens. Dedicated tokens: `good` / `watch` / `low` stay judgements
-    // and the sleep-stage colours stay stages, so neither can be mistaken for a zone.
-    static let zone1 = effort.opacity(0.35)
-    static let zone2 = effort.opacity(0.50)
-    static let zone3 = effort.opacity(0.65)
+    // MARK: Heart-rate zones (Z1 easy → Z5 maximal): one intensity ramp of the effort amber, so a zone
+    // bar reads as "more effort" as it darkens. `good` / `watch` / `low` stay judgements and the sleep
+    // stages stay stages, so neither can be mistaken for a zone.
+    static let zone1 = effort.opacity(0.30)
+    static let zone2 = effort.opacity(0.45)
+    static let zone3 = effort.opacity(0.60)
     static let zone4 = effort.opacity(0.80)
     static let zone5 = effort
 
@@ -65,13 +102,21 @@ enum BaselineTheme {
         }
     }
 
-    // Type
-    static func hero(_ size: CGFloat = 56) -> Font { .system(size: size, weight: .semibold, design: .rounded) }
+    // MARK: Type (SF Rounded everywhere; exactly these tokens, nothing ad hoc)
+    /// Ring numerals (44 in Today's rings, 36 for a duration numeral); Welcome keeps 54 / 34.
+    static func hero(_ size: CGFloat = 44) -> Font { .system(size: size, weight: .semibold, design: .rounded) }
+    /// 22 semibold. Welcome only.
     static let title = Font.system(.title2, design: .rounded).weight(.semibold)
+    /// 20 semibold: every StatCell value, the Journal day number, effect deltas, timing-grid values.
+    static let stat = Font.system(size: 20, weight: .semibold, design: .rounded)
+    /// 17 semibold.
     static let headline = Font.system(.headline, design: .rounded)
+    /// 17.
     static let body = Font.system(.body, design: .rounded)
-    static let caption = Font.system(.caption, design: .rounded)
+    /// 15 medium: card titles, chips, row titles.
     static let label = Font.system(.subheadline, design: .rounded).weight(.medium)
+    /// 13: every secondary line, axis labels, section labels.
+    static let caption = Font.system(.footnote, design: .rounded)
 
     // SF Symbols beside text take a text style, never a fixed point size, so an icon grows with the
     // label it sits next to under Dynamic Type.
@@ -82,37 +127,114 @@ enum BaselineTheme {
     /// A card's quiet accessory icon (≈15pt).
     static let symbolAccessory = Font.system(.subheadline, design: .rounded).weight(.light)
 
-    // Layout
+    // MARK: Layout
     static let gutter: CGFloat = 20
-    static let cardRadius: CGFloat = 22
-    static let cardPadding: CGFloat = 18
+    static let cardRadius: CGFloat = 28
+    static let cardPadding: CGFloat = 20
+    static let cardSpacing: CGFloat = 14
+    static let ringLineWidth: CGFloat = 10
+    /// Today's rings; the Sleep hero ring is 168 with a 12pt line.
+    static let ringSize: CGFloat = 128
+    static var cardShape: RoundedRectangle { RoundedRectangle(cornerRadius: cardRadius, style: .continuous) }
 }
 
-/// Full-screen background used by every Baseline screen.
+/// Full-screen background used by every Baseline screen: a near-flat wash from `backgroundTop` to
+/// `backgroundBottom`, so the glass chrome above it has a gradient to refract.
 struct BaselineBackground: View {
     var body: some View {
-        LinearGradient(colors: [BaselineTheme.backgroundTop, BaselineTheme.background],
+        LinearGradient(colors: [BaselineTheme.backgroundTop, BaselineTheme.backgroundBottom],
                        startPoint: .top, endPoint: .bottom)
             .ignoresSafeArea()
     }
 }
 
-/// Scroll container with Baseline's background, gutter and spacing. Use for every tab root.
-struct BaselineScreen<Content: View>: View {
+/// Scroll container with Baseline's background, gutter and spacing. Use for every tab root and pushed
+/// screen. The content is a `LazyVStack(pinnedViews: [.sectionHeaders])`, so a `Section { } header: { }`
+/// inside it pins its header (Settings). `pinned` is the one-row bar under the navigation bar
+/// (`safeAreaBar(edge: .top)`): the Trends / Progress range picker. `subtitle` becomes the navigation
+/// subtitle (Today's date and sync stamp). No `.toolbarColorScheme`: the bars are the system's glass.
+struct BaselineScreen<Content: View, Pinned: View>: View {
     let title: String
-    @ViewBuilder var content: Content
+    var titleMode: NavigationBarItem.TitleDisplayMode = .large
+    var subtitle: String? = nil
+    private let hasPinned: Bool
+    @ViewBuilder var pinned: () -> Pinned
+    @ViewBuilder var content: () -> Content
+
+    init(title: String, titleMode: NavigationBarItem.TitleDisplayMode = .large, subtitle: String? = nil,
+         @ViewBuilder pinned: @escaping () -> Pinned, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.titleMode = titleMode
+        self.subtitle = subtitle
+        self.hasPinned = true
+        self.pinned = pinned
+        self.content = content
+    }
+
+    fileprivate init(title: String, titleMode: NavigationBarItem.TitleDisplayMode, subtitle: String?,
+                     hasPinned: Bool, pinned: @escaping () -> Pinned, content: @escaping () -> Content) {
+        self.title = title
+        self.titleMode = titleMode
+        self.subtitle = subtitle
+        self.hasPinned = hasPinned
+        self.pinned = pinned
+        self.content = content
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) { content }
-                .padding(.horizontal, BaselineTheme.gutter)
-                .padding(.top, 8)
-                .padding(.bottom, 32)
+            LazyVStack(alignment: .leading, spacing: BaselineTheme.cardSpacing, pinnedViews: [.sectionHeaders]) {
+                content()
+            }
+            .padding(.horizontal, BaselineTheme.gutter)
+            .padding(.top, 8)
+            .padding(.bottom, 32)
         }
         .background(BaselineBackground())
         .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.large)
-        .toolbarColorScheme(.dark, for: .navigationBar)
+        .navigationBarTitleDisplayMode(titleMode)
+        .modifier(BaselineNavigationSubtitle(subtitle: subtitle))
+        .modifier(BaselinePinnedBar(hasPinned: hasPinned, pinned: pinned))
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .scrollIndicators(.hidden)
+    }
+}
+
+extension BaselineScreen where Pinned == EmptyView {
+    /// A screen with nothing pinned under the bar (every screen but Trends and Progress).
+    init(title: String, titleMode: NavigationBarItem.TitleDisplayMode = .large, subtitle: String? = nil,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.init(title: title, titleMode: titleMode, subtitle: subtitle, hasPinned: false,
+                  pinned: { EmptyView() }, content: content)
+    }
+}
+
+/// `.navigationSubtitle` only when there is one (an `if` on the chain, never a ternary over two views).
+private struct BaselineNavigationSubtitle: ViewModifier {
+    let subtitle: String?
+    func body(content: Content) -> some View {
+        if let subtitle {
+            content.navigationSubtitle(subtitle)
+        } else {
+            content
+        }
+    }
+}
+
+/// The one-row glass bar under the navigation bar, only when the screen asked for it.
+private struct BaselinePinnedBar<Pinned: View>: ViewModifier {
+    let hasPinned: Bool
+    let pinned: () -> Pinned
+    func body(content: Content) -> some View {
+        if hasPinned {
+            content.safeAreaBar(edge: .top, spacing: 0) {
+                pinned()
+                    .padding(.horizontal, BaselineTheme.gutter)
+                    .padding(.vertical, 6)
+            }
+        } else {
+            content
+        }
     }
 }
 #endif

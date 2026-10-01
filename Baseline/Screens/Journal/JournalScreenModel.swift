@@ -7,7 +7,7 @@ import WhoopStore
 enum JournalOutcome: String, CaseIterable, Identifiable {
     case hrv, rhr
     var id: String { rawValue }
-    /// `repo.series` key and `DailyMetric` fallback column.
+    /// `repo.baselineSeries(key:)` key (`Repository.dailyColumn`).
     var key: String { rawValue }
     var label: String { self == .hrv ? "HRV" : "Resting HR" }
     var unit: String { self == .hrv ? "ms" : "bpm" }
@@ -15,12 +15,12 @@ enum JournalOutcome: String, CaseIterable, Identifiable {
     var color: Color { self == .hrv ? BaselineTheme.hrv : BaselineTheme.rhr }
 }
 
-/// One dose-response read, ready for a card.
+/// One dose-response read, ready for a row.
 ///
-/// Caffeine's prior is documented in HRV (ms), the unit Today and Trends show, so that card carries
+/// Caffeine's prior is documented in HRV (ms), the unit Home and Trends show, so that row carries
 /// the per-step shift. Alcohol's prior is documented in the engine's 0–100 overnight score ("Charge"
 /// upstream), which no Baseline screen renders and which is not the three-tier Readiness label, so
-/// that card names the morning as a whole and stays directional: no points, no per-drink figure.
+/// that row names the morning as a whole and stays directional: no points, no per-drink figure.
 struct JournalDose: Identifiable {
     let behavior: DosedBehavior
     let response: DoseResponse
@@ -32,14 +32,14 @@ struct JournalDose: Identifiable {
         "Dose response · \(behavior == .alcohol ? "the next morning overall" : "HRV next morning")"
     }
 
-    /// The per-unit shift as a stat cell: caffeine only, in ms. Lower is worse.
+    /// The per-unit shift as a stat: caffeine only, in ms. Lower is worse.
     var perUnitStat: (label: String, unit: String, color: Color)? {
         guard behavior == .caffeine else { return nil }
         let color = response.perUnit < -0.05 ? BaselineTheme.watch : (response.perUnit > 0.05 ? BaselineTheme.good : BaselineTheme.textSecondary)
         return (label: "Per later step", unit: "ms", color: color)
     }
 
-    /// The per-step shift as the stat cell prints it, signed, to the same tenth the sentence states
+    /// The per-step shift as the stat prints it, signed, to the same tenth the sentence states
     /// ("−3.5", "+2", "0"), so the two can never disagree by a rounding.
     var perUnitText: String {
         let mag = JournalLabels.magnitude(abs(response.perUnit))
@@ -77,9 +77,10 @@ struct JournalDose: Identifiable {
     }
 }
 
-/// Journal screen state: the selected day's answers, the journal's yes/no day sets, the outcome
-/// series the effects are ranked against, and the ranked feed. Reads go through `Repository`;
-/// writes are optimistic and then re-read so the chips never lag the store.
+/// Journal state: the selected day's answers, the journal's yes/no day sets, the outcome series the
+/// effects are ranked against, and the ranked feed. Reads go through `Repository`; writes are
+/// optimistic and then re-read so the chips never lag the store. `JournalSheet` owns one instance
+/// loaded with `loadDay`, `JournalPatternsView` one loaded with `loadPatterns`.
 @MainActor
 final class JournalScreenModel: ObservableObject {
     @Published private(set) var loaded = false
@@ -92,8 +93,6 @@ final class JournalScreenModel: ObservableObject {
     @Published private(set) var importedQuestions: [String] = []
     /// Distinct days (imported ∪ native) carrying at least one answer in the last year.
     @Published private(set) var loggedDayCount = 0
-    /// Days in the picker range with at least one native answer (for the strip's dots).
-    @Published private(set) var loggedDayKeys: Set<String> = []
     /// Ranked for `outcome`: solid first, then by |delta|.
     @Published private(set) var effects: [RankedEffect] = []
     @Published private(set) var doses: [JournalDose] = []
@@ -102,6 +101,11 @@ final class JournalScreenModel: ObservableObject {
     /// Nights the effects card needs before it tries to find patterns.
     static let minLoggedDays = 5
 
+    /// Posted on the main actor after every journal write lands (object: the day key as a `String`),
+    /// so a patterns view on another tab, or Home's journal prompt, can re-read without a data refresh
+    /// (journal writes never bump `Repository.refreshSeq`).
+    static let didChange = Notification.Name("baseline.journal.didChange")
+
     private var behaviours: [String: Set<String>] = [:]
     private var controls: [String: Set<String>] = [:]
     private var numericSeries: [String: [String: Double]] = [:]
@@ -109,43 +113,67 @@ final class JournalScreenModel: ObservableObject {
     /// Bumped by every write, so a read that was in flight when the user tapped never lands on top
     /// of the optimistic update.
     private var writeSeq = 0
-    /// Bumped whenever the chips' day changes, so a slower read for an older day (a full `load`
-    /// started before the tap, or a write's re-read of the day it targeted) never lands under the
-    /// newer day's caption.
+    /// Bumped whenever the chips' day changes, so a slower read for an older day (a `load` started
+    /// before the change, or a write's re-read of the day it targeted) never lands under the newer day.
     private var daySeq = 0
 
-    private static let source = "my-whoop"
     /// hrv / rhr drive the feed; recovery backs the alcohol dose prior ("Charge" in the engine).
     private static let outcomeKeys = ["hrv", "rhr", "recovery"]
 
     // MARK: Load
 
+    /// Everything: the outcome series, the imported questions, the journal and `day`'s rows (the thin
+    /// `JournalScreen` wrapper).
     func load(repo: Repository, day: String) async {
+        daySeq += 1
         let gen = daySeq
+        loadOutcomes(repo: repo)
+        await loadImported(repo: repo)
+        await reloadJournal(repo: repo)
+        await readDay(repo: repo, day: day, gen: gen)
+        loaded = true
+    }
+
+    /// The sheet: `day`'s rows and the imported questions the catalog resolves against. No ranking.
+    func loadDay(repo: Repository, day: String) async {
+        daySeq += 1
+        let gen = daySeq
+        await loadImported(repo: repo)
+        await readDay(repo: repo, day: day, gen: gen)
+        loaded = true
+    }
+
+    /// The patterns view: the outcome series over the funnel's days, the imported questions, the
+    /// journal's day sets and the ranked feed. No day is read.
+    func loadPatterns(repo: Repository) async {
+        loadOutcomes(repo: repo)
+        await loadImported(repo: repo)
+        await reloadJournal(repo: repo)
+        loaded = true
+    }
+
+    /// The three outcome series over `repo.baselineDays` (the strap-first funnel), never NOOP's
+    /// import-wins `repo.series` cache, so the effects rank against the same nights Home and Trends show.
+    private func loadOutcomes(repo: Repository) {
         var byKey: [String: [String: Double]] = [:]
         for key in Self.outcomeKeys {
             var dict: [String: Double] = [:]
-            for row in await repo.series(key: key, source: Self.source) { dict[row.day] = row.value }
-            for d in repo.days where dict[d.day] == nil {
-                if let v = Self.dailyOutcome(key: key, day: d) { dict[d.day] = v }
-            }
+            for row in repo.baselineSeries(key: key) { dict[row.day] = row.value }
             byKey[key] = dict
         }
         outcomeByKey = byKey
+    }
 
+    private func loadImported(repo: Repository) async {
         var seen = Set<String>()
         var questions: [String] = []
         for e in await repo.importedJournalEntries() where seen.insert(JournalCatalogStore.norm(e.question)).inserted {
             questions.append(e.question)
         }
         importedQuestions = questions
-
-        await reloadJournal(repo: repo)
-        await readDay(repo: repo, day: day, gen: gen)   // skipped if a chip tap moved the day meanwhile
-        loaded = true
     }
 
-    /// Re-read the journal (yes/no day sets, numeric series, logged-day counts) and re-rank.
+    /// Re-read the journal (yes/no day sets, numeric series, logged-day count) and re-rank.
     func reloadJournal(repo: Repository) async {
         let entries = await repo.journalEntries(days: 365)
         var yes: [String: Set<String>] = [:]
@@ -160,16 +188,8 @@ final class JournalScreenModel: ObservableObject {
         controls = no
         loggedDayCount = days.count
         numericSeries = await repo.numericJournalSeries()
-        loggedDayKeys = await repo.nativeJournalDays(from: JournalDay.key(offset: JournalDay.offsets.first ?? 6),
-                                                     to: JournalDay.key(offset: 0))
         rerank()
         redose()
-    }
-
-    /// The chips' day changed: read it, superseding any slower read still in flight for another day.
-    func reloadDay(repo: Repository, day: String) async {
-        daySeq += 1
-        await readDay(repo: repo, day: day, gen: daySeq)
     }
 
     /// Read `day`'s rows into the chips, unless the day or a write moved on while the store answered.
@@ -228,10 +248,12 @@ final class JournalScreenModel: ObservableObject {
         await afterWrite(repo: repo, day: day, gen: gen)
     }
 
-    /// Re-read the day the write targeted (only if the chips still show it), then the journal as a whole.
+    /// Re-read the day the write targeted (only if the chips still show it), re-read the journal as a
+    /// whole, then tell every other journal reader.
     private func afterWrite(repo: Repository, day: String, gen: Int) async {
         await readDay(repo: repo, day: day, gen: gen)
         await reloadJournal(repo: repo)
+        NotificationCenter.default.post(name: Self.didChange, object: day)
     }
 
     // MARK: Ranking
@@ -251,7 +273,7 @@ final class JournalScreenModel: ObservableObject {
 
     /// Dose per day for each dosed behaviour: a "no" night is dose 0, a plain "yes" is dose 1, and a
     /// numeric log overrides with its value. Only behaviours with at least one dosed night and one
-    /// paired next-morning outcome get a card.
+    /// paired next-morning outcome get a row.
     private func redose() {
         var out: [JournalDose] = []
         for behavior in DosedBehavior.allCases {
@@ -272,15 +294,6 @@ final class JournalScreenModel: ObservableObject {
     }
 
     // MARK: Shaping
-
-    private static func dailyOutcome(key: String, day d: DailyMetric) -> Double? {
-        switch key {
-        case "hrv": return d.avgHrv
-        case "rhr": return d.restingHr.map(Double.init)
-        case "recovery": return d.recovery
-        default: return nil
-        }
-    }
 
     /// Whether a journal question is the dosed behaviour (its yes-nights back-fill dose 1).
     static func matches(_ behavior: DosedBehavior, _ question: String) -> Bool {

@@ -1,249 +1,137 @@
 #if os(iOS)
 import SwiftUI
-import Charts
 import StrandDesign
 import StrandAnalytics
 import WhoopStore
 
-// MARK: - Strap status
+// MARK: - Readiness
 
-/// The one-line status strip once a strap is paired, or the pairing card until then. Observes the
-/// registry directly: `AppModel` does not republish when the nested registry's device list changes.
-/// The registry is seeded with a placeholder row that has no peripheral, so "non-empty" is not the
-/// test (the same rule `WelcomePairActions` applies); an adopted device or a live bond is.
-struct StrapStatusSection: View {
-    @ObservedObject var registry: DeviceRegistry
-    @EnvironmentObject private var live: LiveState
-    let onPair: () -> Void
-
-    private var paired: Bool {
-        live.bonded || registry.devices.contains { $0.peripheralId != nil && !$0.isImportSource }
-    }
+/// The first card of the day: the readiness tier as a flat pill, one sentence about the week, and the
+/// Progress chevron row once the HRV baseline has settled. Readiness is a pill and a sentence, never a
+/// ring. The tier is a seven-night reading, so its sentence speaks of the week and never contradicts the
+/// one-night delta under the HRV ring.
+struct ReadinessCard: View {
+    let readiness: TodayReadiness
+    /// `ProgressSnapshot.hrvHeadline`, the sentence Progress prints for the persisted horizon; nil hides the row.
+    let progressHeadline: String?
 
     var body: some View {
-        if paired {
-            StrapStatusStrip()
-        } else {
-            PairStrapCard(onPair: onPair)
+        BaselineCard(title: "Readiness") {
+            BaselinePill(text: pill, color: color)
+            if let line {
+                Text(line)
+                    .font(BaselineTheme.body)
+                    .foregroundStyle(BaselineTheme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let progressHeadline {
+                Divider().overlay(BaselineTheme.hairline)
+                BaselineChevronRow(text: progressHeadline, systemImage: "chart.line.uptrend.xyaxis",
+                                   accessibilityHint: "Opens Progress") { ProgressScreen() }
+            }
+        }
+    }
+
+    /// The calibrating pill names what its count unlocks (readiness, 14 nights), the same shape the ring
+    /// tiles use for their own, smaller count ("Baseline after 4 nights · n so far").
+    private var pill: String {
+        switch readiness {
+        case .calibrating(let n): return "Readiness after \(HRVReadiness.minNights) nights · \(n) so far"
+        case .stale: return "Paused"
+        case .tier(let tier): return tier.baselineLabel
+        }
+    }
+
+    private var color: Color {
+        switch readiness {
+        case .calibrating, .stale: return BaselineTheme.textTertiary
+        case .tier(let tier): return tier.baselineColor
+        }
+    }
+
+    /// nil while calibrating: the pill already says when readiness arrives. A tier's sentence is
+    /// `ReadinessTier.baselineWeekSentence` (shared vocabulary).
+    private var line: String? {
+        switch readiness {
+        case .calibrating: return nil
+        case .stale(let day): return "No HRV since \(TodayFormat.dayLabel(day)). Readiness returns with the next synced night."
+        case .tier(let tier): return tier.baselineWeekSentence
         }
     }
 }
 
-/// Connection · battery · last sync, with a small Sync control. Context, not a card, so it stays quiet.
-/// One line while the caption fits beside the control; at larger type the control drops to its own
-/// line and the caption wraps, so the sync time is never truncated away.
-struct StrapStatusStrip: View {
-    @EnvironmentObject private var model: AppModel
-    @EnvironmentObject private var live: LiveState
+// MARK: - Rings
 
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                status
-                Spacer(minLength: 8)
-                syncButton
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                status
-                HStack {
-                    Spacer(minLength: 0)
-                    syncButton
-                }
-            }
-        }
-        .padding(.horizontal, 4)
-    }
-
-    private var status: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Circle()
-                .fill(live.connected ? BaselineTheme.good : BaselineTheme.inactive)
-                .frame(width: 6, height: 6)
-            Text(statusText)
-                .font(BaselineTheme.caption)
-                .foregroundStyle(BaselineTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var syncButton: some View {
-        Button {
-            model.ble.syncNow()
-        } label: {
-            if live.backfilling {
-                ProgressView().controlSize(.small).tint(BaselineTheme.accent)
-            } else {
-                Label("Sync", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
-            }
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(canSync ? BaselineTheme.accent : BaselineTheme.inactive)
-        .disabled(!canSync)
-        .accessibilityLabel(live.backfilling ? "Syncing" : "Sync strap")
-    }
-
-    /// The same gate Settings' "Sync now" applies: a connected AND bonded strap that is not mid-offload.
-    private var canSync: Bool { live.connected && live.bonded && !live.backfilling }
-
-    private var statusText: String {
-        var parts: [String] = [live.connected ? "Connected" : "Not connected"]
-        if live.connected, let pct = live.batteryPct {
-            parts.append("\(Int(pct.rounded()))%" + (live.charging == true ? " charging" : ""))
-        }
-        if live.backfilling {
-            parts.append("Syncing…")
-        } else if let ts = live.lastSyncedAt {
-            parts.append("Synced \(relativeAgo(ts))")
-        } else {
-            parts.append("Not synced yet")
-        }
-        return parts.joined(separator: " · ")
-    }
-}
-
-struct PairStrapCard: View {
-    let onPair: () -> Void
-
-    var body: some View {
-        BaselineCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: "wave.3.right")
-                        .font(BaselineTheme.headline)
-                        .foregroundStyle(BaselineTheme.accent)
-                    Text("Pair your strap")
-                        .font(BaselineTheme.headline)
-                        .foregroundStyle(BaselineTheme.text)
-                }
-                Text("Baseline reads your strap directly over Bluetooth. Pair once and every night lands here, on this phone only.")
-                    .font(BaselineTheme.caption)
-                    .foregroundStyle(BaselineTheme.textSecondary)
-                Button(action: onPair) {
-                    Text("Pair strap")
-                        .font(BaselineTheme.label)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(BaselineTheme.accent)
-                .foregroundStyle(BaselineTheme.background)
-            }
-        }
-    }
-}
-
-// MARK: - Hero tiles
-
-/// HRV or resting HR: the hero number, where it sits against the baseline, and a 14-night sparkline.
-/// A value carried from an earlier morning wears its date ("Woke Mon 28 Sep", the sleep card's stamp);
-/// past `Baselines.vitalCarryDays` the tile shows "–" and names the last night instead.
-struct TodayHeroTile: View {
+/// HRV or resting HR as one `MetricRing` in its own tile: the night's value on a gauge whose domain is
+/// the funnel's baseline ± 3σ (`MetricRingScale.domain`), the band as a translucent arc, a baseline tick,
+/// and ONE context sentence. A value carried from an earlier morning wears its date ("Woke Mon 28 Sep ·
+/// …"); past `Baselines.vitalCarryDays` the numeral is "–", the ring is a bare track and the sentence
+/// names the last night instead. Nothing here computes a baseline: `reading.state` is the funnel's.
+struct TodayRingTile: View {
     let title: String
     let unit: String
     let color: Color
+    let cfg: MetricCfg
     let higherIsBetter: Bool
     let reading: TodayMetricReading?
-    let todayKey: String
+    /// The selected day's key: a reading dated earlier is a carried value.
+    let dayKey: String
 
     var body: some View {
-        BaselineCard {
-            VStack(alignment: .leading, spacing: 14) {
-                MetricHero(title: title, value: valueText, unit: unit, color: color,
-                           context: contextText, band: reading?.band ?? .calibrating,
-                           higherIsBetter: higherIsBetter)
-                if let stamp {
-                    Text(stamp)
-                        .font(BaselineTheme.caption)
-                        .foregroundStyle(BaselineTheme.textTertiary)
-                        .padding(.top, -8)
-                }
-                Spacer(minLength: 0)
-                if let r = reading, !r.isStale {
-                    TodaySparkline(points: r.recent, color: color,
-                                   baseline: r.baseline, low: r.bandLow, high: r.bandHigh)
-                        .frame(height: 56)
-                }
-            }
+        BaselineCard(padding: 16) {
+            MetricRing(value: reading?.value, domain: domain, color: color, label: title, unit: unit,
+                       context: contextText, band: band, baseline: baseline, tone: tone)
         }
     }
 
-    private var valueText: String {
-        reading?.value.map { "\(Int($0.rounded()))" } ?? "–"
+    /// The gauge's span; nil (track only) while the baseline is calibrating or the value is stale.
+    private var domain: ClosedRange<Double>? {
+        guard let r = reading, !r.isStale else { return nil }
+        return MetricRingScale.domain(state: r.state, cfg: cfg)
+    }
+
+    private var band: ClosedRange<Double>? {
+        guard let r = reading, !r.isStale, let low = r.bandLow, let high = r.bandHigh, low <= high else { return nil }
+        return low...high
+    }
+
+    private var baseline: Double? {
+        guard let r = reading, !r.isStale else { return nil }
+        return r.baseline
     }
 
     private var contextText: String {
         guard let r = reading else { return "Waiting for the first night" }
         if r.isStale { return "No night since \(TodayFormat.dayLabel(r.day))" }
-        guard r.state.usable, let d = r.deviation else {
-            return "Baseline after \(Baselines.minNightsSeed) nights · \(r.state.nValid) so far"
+        let text: String
+        if r.state.usable, let d = r.deviation {
+            let delta = abs(d.delta) < 0.5 ? "On your baseline"
+                                           : "\(TodayFormat.signed(d.delta, unit: unit)) vs baseline"
+            // `BaselineBand.positionPhrase`: the same words Trends and the morning summary use.
+            text = r.band.positionPhrase.map { "\(delta) · \($0)" } ?? delta
+        } else {
+            text = "Baseline after \(Baselines.minNightsSeed) nights · \(r.state.nValid) so far"
         }
-        let delta = abs(d.delta) < 0.5 ? "On your baseline"
-                                       : "\(TodayFormat.signed(d.delta, unit: unit)) vs baseline"
-        // `BaselineBand.positionPhrase`: the same words Trends and the morning summary use.
-        guard let position = r.band.positionPhrase else { return delta }
-        return "\(delta) · \(position)"
+        // A carried (still fresh) value from an earlier morning is dated first.
+        guard let stamp = TodayFormat.wokeStamp(day: r.day, todayKey: dayKey) else { return text }
+        return "\(stamp) · \(text)"
     }
 
-    /// Only for a carried (still fresh) value from an earlier morning.
-    private var stamp: String? {
-        guard let r = reading, !r.isStale else { return nil }
-        return TodayFormat.wokeStamp(day: r.day, todayKey: todayKey)
-    }
-}
-
-/// Axis-free 14-night line over a flat band of the current normal range (baseline ± sigma).
-struct TodaySparkline: View {
-    let points: [(day: String, value: Double)]
-    let color: Color
-    let baseline: Double?
-    let low: Double?
-    let high: Double?
-
-    var body: some View {
-        Chart {
-            ForEach(Array(points.enumerated()), id: \.offset) { i, p in
-                if let low, let high {
-                    AreaMark(x: .value("Night", Double(i)), yStart: .value("Low", low), yEnd: .value("High", high))
-                        .foregroundStyle(color.opacity(0.12))
-                }
-                LineMark(x: .value("Night", Double(i)), y: .value("Value", p.value))
-                    .foregroundStyle(color)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .interpolationMethod(.monotone)
-            }
-            if let baseline {
-                RuleMark(y: .value("Baseline", baseline))
-                    .foregroundStyle(color.opacity(0.4))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            }
-            if let last = points.indices.last {
-                PointMark(x: .value("Night", Double(last)), y: .value("Value", points[last].value))
-                    .foregroundStyle(color)
-                    .symbolSize(36)
-            }
+    /// inside → good; above / below → good or watch by the metric's direction; calibrating → tertiary.
+    private var tone: Color {
+        guard let r = reading, !r.isStale else { return BaselineTheme.textTertiary }
+        switch r.band {
+        case .inside: return BaselineTheme.good
+        case .calibrating: return BaselineTheme.textTertiary
+        case .above: return higherIsBetter ? BaselineTheme.good : BaselineTheme.watch
+        case .below: return higherIsBetter ? BaselineTheme.watch : BaselineTheme.good
         }
-        .chartXAxis(.hidden)
-        .chartYAxis(.hidden)
-        .chartLegend(.hidden)
-        .chartYScale(domain: yDomain)
-        .chartXScale(domain: 0.0...Double(max(1, points.count - 1)))
-        .accessibilityHidden(true)
-    }
-
-    private var yDomain: ClosedRange<Double> {
-        var values = points.map(\.value)
-        if let low { values.append(low) }
-        if let high { values.append(high) }
-        guard let lo = values.min(), let hi = values.max() else { return 0...1 }
-        let pad = max((hi - lo) * 0.15, 1)
-        return (lo - pad)...(hi + pad)
     }
 }
 
 // MARK: - Signals
 
-/// The early-warning card, directly under the hero tiles and only when `TodaySignals.build` found
+/// The early-warning card, directly under Readiness and only on today, when `TodaySignals.build` found
 /// something to say: one calm sentence per signal under a watch-coloured pill, and a single "How this
 /// is computed" disclosure listing each signal's method. The screen omits the card entirely when the
 /// list is empty, so a quiet morning shows no "all clear" either.
@@ -276,7 +164,7 @@ struct SignalsCard: View {
                     .padding(.top, 6)
                 } label: {
                     Text("How this is computed")
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .font(BaselineTheme.caption.weight(.semibold))
                         .foregroundStyle(BaselineTheme.accent)
                 }
                 .tint(BaselineTheme.textTertiary)
@@ -285,88 +173,71 @@ struct SignalsCard: View {
     }
 }
 
-// MARK: - Last night
+// MARK: - The night
 
+/// The night leading into the selected morning: the duration numeral, the efficiency cell, the stage
+/// bar and one line against the 30-night average. "Last night" on today, "Night" on an earlier day. A
+/// night older than the selected morning wears its date as the accessory pill. A flat numeral and a bar,
+/// never a ring: the sleep ring lives on the Sleep tab.
 struct LastNightCard: View {
     let sleep: TodaySleepReading?
-    let todayKey: String
+    /// The selected day's key.
+    let dayKey: String
+    var isToday: Bool = true
 
     var body: some View {
-        BaselineCard(title: "Last night", subtitle: subtitle) {
+        BaselineCard(title: isToday ? "Last night" : "Night", accessory: accessory) {
             if let s = sleep {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                HStack(alignment: .lastTextBaseline, spacing: 4) {
                     Text(BaselineReadouts.durationText(minutes: s.totalMin))
-                        .font(BaselineTheme.hero(40))
+                        .font(BaselineTheme.hero(36))
                         .foregroundStyle(BaselineTheme.text)
+                        .monospacedDigit()
                         .contentTransition(.numericText())
                     Text("asleep")
                         .font(BaselineTheme.headline)
                         .foregroundStyle(BaselineTheme.textSecondary)
-                    Spacer()
+                    Spacer(minLength: 8)
                     if let e = s.efficiencyPct {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("\(Int(e.rounded()))%")
-                                .font(.system(.title3, design: .rounded).weight(.semibold))
-                                .foregroundStyle(BaselineTheme.text)
-                            Text("efficiency")
-                                .font(BaselineTheme.caption)
-                                .foregroundStyle(BaselineTheme.textTertiary)
-                        }
+                        StatCell(label: "Efficiency", value: "\(Int(e.rounded()))%")
+                            .fixedSize()
                     }
                 }
                 if s.hasStages {
                     TodayStageBar(stages: s.stages)
-                    // Wraps at larger type instead of shrinking and truncating the last stages away.
-                    BaselineFlowLayout(spacing: 12) {
-                        ForEach(s.stages) { st in
-                            HStack(spacing: 5) {
-                                Circle().fill(BaselineTheme.stageColor(st.id)).frame(width: 6, height: 6)
-                                Text("\(stageLabel(st.id)) \(BaselineReadouts.durationText(minutes: st.minutes))")
-                                    .font(BaselineTheme.caption)
-                                    .foregroundStyle(BaselineTheme.textSecondary)
-                            }
-                        }
-                    }
                 }
                 Text(averageLine(s))
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("No night recorded yet.")
+                Text(isToday ? "No night recorded yet." : "No night recorded.")
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textSecondary)
             }
         }
     }
 
-    /// Only when the latest night is older than this morning, so a stale card says so.
-    private var subtitle: String? {
-        guard let s = sleep else { return nil }
-        return TodayFormat.wokeStamp(day: s.day, todayKey: todayKey)
-    }
-
-    private func stageLabel(_ stage: String) -> String {
-        switch stage {
-        case "deep": return "Deep"
-        case "rem": return "REM"
-        case "light": return "Light"
-        default: return "Awake"
-        }
+    /// Only when the night is older than the selected morning, so a carried night says so.
+    private var accessory: AnyView? {
+        guard let s = sleep, let stamp = TodayFormat.wokeStamp(day: s.day, todayKey: dayKey) else { return nil }
+        return AnyView(BaselinePill(text: stamp, color: BaselineTheme.textTertiary))
     }
 
     /// The Sleep tab's average and wording: `BaselineReadouts.sleepAverage30(before:in:)`, "30-night average".
     private func averageLine(_ s: TodaySleepReading) -> String {
         guard let avg = s.avg30Min else {
-            return "Your 30-night average appears after \(BaselineReadouts.sleepAverageMinNights) nights"
+            return "Your 30\u{2011}night average appears after \(BaselineReadouts.sleepAverageMinNights) nights"
         }
         if let delta = BaselineReadouts.signedDurationText(minutes: s.totalMin - avg) {
-            return "\(delta) vs your 30-night average"
+            return "\(delta) vs your 30\u{2011}night average"
         }
-        return "On your 30-night average"
+        return "On your 30\u{2011}night average"
     }
 }
 
-/// Slim proportional bar of deep / REM / light / awake.
+/// Slim proportional bar of deep / REM / light / awake. Keeps its explicit height: the card stack is lazy
+/// and the bar measures itself with a `GeometryReader`.
 struct TodayStageBar: View {
     let stages: [TodayStage]
 
@@ -376,7 +247,7 @@ struct TodayStageBar: View {
             HStack(spacing: 2) {
                 ForEach(stages) { s in
                     if total > 0, s.minutes > 0 {
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
                             .fill(BaselineTheme.stageColor(s.id))
                             .frame(width: max(2, geo.size.width * s.minutes / total - 2))
                     }
@@ -390,18 +261,22 @@ struct TodayStageBar: View {
 
 // MARK: - Effort
 
-/// Today's effort and its workouts. Each workout row pushes `WorkoutDetailScreen` (resolved by the
-/// row's start, the only key `TodayWorkout` carries), and the quiet link at the foot opens the
-/// year's list. The effort number is `BaselineReadouts.effortText`, the same rendering the Workouts
-/// screens use.
+/// The day's effort and its workouts (at most three rows; the chevron row opens the whole list). Each
+/// workout row pushes `WorkoutDetailScreen` (resolved by the row's start, the only key `TodayWorkout`
+/// carries). The effort number is `BaselineReadouts.effortText`, the same rendering the Workouts
+/// screens use. "All workouts" is the visible label of the chevron row (a UI-test anchor).
 struct EffortCard: View {
     let effort: Double?
     let workouts: [TodayWorkout]
+    var isToday: Bool = true
+
+    /// Rows shown inline before the list takes over.
+    static let maxRows = 3
 
     var body: some View {
-        BaselineCard(title: "Today's effort") {
+        BaselineCard(title: "Effort") {
             HStack(alignment: .top, spacing: 12) {
-                StatCell(label: "Effort so far", value: BaselineReadouts.effortText(effort),
+                StatCell(label: isToday ? "Effort so far" : "Effort", value: BaselineReadouts.effortText(effort),
                          unit: BaselineReadouts.effortUnit, color: BaselineTheme.effort)
                 // The sentence below already says when there are none; a "Workouts 0" cell would say it twice.
                 if !workouts.isEmpty {
@@ -409,13 +284,12 @@ struct EffortCard: View {
                 }
             }
             if workouts.isEmpty {
-                Text(effort == nil ? "Builds through the day as the strap records."
-                                   : "No workouts recorded yet today.")
+                Text(emptyLine)
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textSecondary)
             } else {
                 VStack(spacing: 10) {
-                    ForEach(workouts) { w in
+                    ForEach(workouts.prefix(Self.maxRows)) { w in
                         NavigationLink {
                             WorkoutDetailScreen(startTs: w.id, sport: w.sport)
                         } label: {
@@ -424,21 +298,22 @@ struct EffortCard: View {
                         .buttonStyle(.plain)
                     }
                 }
-            }
-            NavigationLink {
-                WorkoutsScreen()
-            } label: {
-                HStack(spacing: 4) {
-                    Text("All workouts")
-                    Image(systemName: "chevron.right")
-                        .font(BaselineTheme.symbolSmall)
+                if workouts.count > Self.maxRows {
+                    Text("\(workouts.count - Self.maxRows) more in All workouts")
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textTertiary)
                 }
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(BaselineTheme.accent)
             }
-            .buttonStyle(.plain)
-            .padding(.top, 2)
+            Divider().overlay(BaselineTheme.hairline)
+            BaselineChevronRow(text: "All workouts", accessibilityHint: "Shows every recorded workout") { WorkoutsScreen() }
         }
+    }
+
+    private var emptyLine: String {
+        if effort == nil {
+            return isToday ? "Builds through the day as the strap records." : "Nothing recorded on this day."
+        }
+        return isToday ? "No workouts recorded yet today." : "No workouts recorded."
     }
 }
 
@@ -471,40 +346,6 @@ struct TodayWorkoutRow: View {
                 .accessibilityHidden(true)
         }
         .contentShape(Rectangle())
-    }
-}
-
-// MARK: - Journal prompt
-
-/// The first few yes-no habits for last night, as the Journal tab's own chips: three states (yes, no,
-/// unanswered) and the same yes → no → clear cycle, so a chip here never looks blank while the store
-/// holds a "no" the effects engine counts as a control night. Today's key describes the evening and
-/// night leading into this morning, the engine's convention, hence "last night" not "yesterday".
-struct JournalPromptCard: View {
-    let items: [JournalCatalogItem]
-    /// Chip-length label for a catalog item (the rename, else `JournalLabels.short`).
-    let label: (JournalCatalogItem) -> String
-    /// nil = unanswered, true = yes, false = no.
-    let answers: [String: Bool]
-    let onCycle: (String) -> Void
-
-    var body: some View {
-        BaselineCard(title: "Last night's habits",
-                     subtitle: "Tap for yes, again for no, once more to clear. The full list lives in Journal.") {
-            if items.isEmpty {
-                Text("Add questions in the Journal tab.")
-                    .font(BaselineTheme.caption)
-                    .foregroundStyle(BaselineTheme.textSecondary)
-            } else {
-                BaselineFlowLayout(spacing: 8) {
-                    ForEach(items) { item in
-                        JournalHabitChip(label: label(item),
-                                         state: answers[item.canonical],
-                                         action: { onCycle(item.canonical) })
-                    }
-                }
-            }
-        }
     }
 }
 #endif

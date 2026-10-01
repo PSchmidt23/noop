@@ -3,7 +3,8 @@ import SwiftUI
 import StrandDesign
 import WhoopStore
 
-/// Every workout, newest first, one card per week. Each row pushes `WorkoutDetailScreen`.
+/// Every workout, newest first, one card per week (the week's count and total as the card's trailing
+/// caption). Each row pushes `WorkoutDetailScreen`. Reached from Home's Effort card ("All workouts").
 /// Reads `repo.workoutRows(days:)` (strap, imported and Apple Health sessions, merged and deduped)
 /// over `WorkoutsWindow`: the last year on first paint, with the window named under the title and a
 /// "Show earlier" link that widens it to the whole store, so sessions older than a year stay reachable
@@ -31,7 +32,8 @@ struct WorkoutsScreen: View {
             if loaded && repo.loaded {
                 Text(shown.caption)
                     .font(BaselineTheme.caption)
-                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .padding(.horizontal, 4)
             }
             if !weeks.isEmpty {
                 ForEach(weeks) { week in
@@ -60,7 +62,7 @@ struct WorkoutsScreen: View {
         .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, allTime: window == .all)) { await reload() }
     }
 
-    /// Quiet accent link, the style of Today's "All workouts", that widens the read to the whole store.
+    /// Quiet text action in accent that widens the read to the whole store.
     private var earlierLink: some View {
         Button {
             window = .all
@@ -68,9 +70,10 @@ struct WorkoutsScreen: View {
             HStack(spacing: 4) {
                 Text("Show earlier workouts")
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(BaselineTheme.symbolSmall)
+                    .accessibilityHidden(true)
             }
-            .font(.system(.caption, design: .rounded).weight(.semibold))
+            .font(BaselineTheme.caption.weight(.semibold))
             .foregroundStyle(BaselineTheme.accent)
             .contentShape(Rectangle())
         }
@@ -93,13 +96,18 @@ struct WorkoutsScreen: View {
     }
 }
 
-/// One week: its label and totals in the header, its sessions as rows.
+/// One week: its label as the title, its count and total as the trailing caption ("3 workouts · 2h 10m",
+/// also the list's "workout" UI-test anchor), its sessions as rows separated by hairlines.
 struct WorkoutWeekCard: View {
     let week: WorkoutWeek
 
     var body: some View {
         BaselineCard(title: WorkoutsModel.weekLabel(start: week.start),
-                     subtitle: WorkoutsFormat.weekSummary(count: week.count, totalDurationS: week.totalDurationS)) {
+                     accessory: AnyView(
+                        Text(WorkoutsFormat.weekSummary(count: week.count, totalDurationS: week.totalDurationS))
+                            .font(BaselineTheme.caption)
+                            .foregroundStyle(BaselineTheme.textTertiary)
+                            .lineLimit(1))) {
             VStack(spacing: 0) {
                 ForEach(week.items) { item in
                     NavigationLink {
@@ -109,7 +117,7 @@ struct WorkoutWeekCard: View {
                     }
                     .buttonStyle(.plain)
                     if item.id != week.items.last?.id {
-                        Rectangle().fill(BaselineTheme.hairline).frame(height: 1)
+                        Divider().overlay(BaselineTheme.hairline)
                     }
                 }
             }
@@ -124,7 +132,7 @@ struct WorkoutListRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: sportSymbol(item.row.sport))
-                .font(.system(size: 15, weight: .medium))
+                .font(BaselineTheme.symbolAccessory.weight(.medium))
                 .foregroundStyle(BaselineTheme.effort)
                 .frame(width: 22)
                 .accessibilityHidden(true)
@@ -141,20 +149,23 @@ struct WorkoutListRow: View {
             VStack(alignment: .trailing, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text(BaselineReadouts.effortText(item.row.strain))
-                        .font(.system(.body, design: .rounded).weight(.semibold))
+                        .font(BaselineTheme.headline)
+                        .monospacedDigit()
                         .foregroundStyle(item.row.strain == nil ? BaselineTheme.textTertiary : BaselineTheme.text)
                     Text(BaselineReadouts.effortUnit)
                         .font(BaselineTheme.caption)
                         .foregroundStyle(BaselineTheme.textTertiary)
                 }
                 if let hr = item.row.avgHr {
+                    // Inside a white card, so the coral reads (5.0:1); the "bpm" text is the UI test's row anchor.
                     Text("\(hr) bpm")
                         .font(BaselineTheme.caption)
+                        .monospacedDigit()
                         .foregroundStyle(BaselineTheme.rhr)
                 }
             }
             Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
+                .font(BaselineTheme.symbolSmall)
                 .foregroundStyle(BaselineTheme.textTertiary)
                 .accessibilityHidden(true)
         }

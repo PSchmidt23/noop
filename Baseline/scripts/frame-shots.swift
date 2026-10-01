@@ -1,6 +1,6 @@
 #!/usr/bin/env swift
 // Renders App Store frames from Baseline's marketing screenshots: a 1320×2868 canvas (Apple's 6.9-inch
-// class), BaselineTheme's navy gradient, a two-line caption at the top in SF Rounded (white 72pt headline,
+// class), BaselineTheme's light paper wash, a two-line caption at the top in SF Rounded (ink 72pt headline,
 // 44pt secondary) and the screenshot scaled to ~86% of the width with rounded corners, placed lower-centre.
 //
 //   swift Baseline/scripts/frame-shots.swift <in dir> <out dir>
@@ -22,9 +22,9 @@ import UniformTypeIdentifiers
 // MARK: - Captions (edit here)
 
 let captions: [String: (headline: String, secondary: String)] = [
-    "01": ("Your morning,", "against your own baseline"),
-    "02": ("Is your baseline moving?", "Months at a glance"),
-    "03": ("Trends", "with your typical range"),
+    "01": ("Your day,", "against your own baseline"),
+    "02": ("Trends", "with your typical range"),
+    "03": ("Is your baseline moving?", "Months at a glance"),
     "04": ("Sleep,", "stage by stage"),
     "05": ("Learn what moves", "your HRV"),
     "06": ("Effort and workouts,", "kept simple"),
@@ -47,13 +47,16 @@ let shotCornerRadius: CGFloat = 44
 let shotTop: CGFloat = 300              // top edge of the screenshot; the bottom runs off the canvas
 let shotShadowBlur: CGFloat = 40
 
-// BaselineTheme.backgroundTop / .background (Baseline/Components/BaselineTheme.swift)
-let navyTop = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0.070, 0.100, 0.190, 1])!
-let navyBottom = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0.043, 0.063, 0.125, 1])!
-let white = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [1, 1, 1, 0.94])!
-let whiteSecondary = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [1, 1, 1, 0.62])!
-let shadow = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0, 0, 0, 0.55])!
-let hairline = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [1, 1, 1, 0.10])!   // BaselineTheme.hairline
+// Mirrors BaselineTheme (Baseline/Components/BaselineTheme.swift); keep these in step with its hex tokens.
+let paperTop = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0.969, 0.973, 0.984, 1])!      // backgroundTop #F7F8FB
+let paperBottom = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0.949, 0.953, 0.969, 1])!   // backgroundBottom #F2F3F7
+let paper = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0.957, 0.961, 0.973, 1])!         // background #F4F5F8
+let ink = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0.067, 0.094, 0.153, 1])!           // text #111827
+let inkSecondary = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0.294, 0.333, 0.388, 1])!  // textSecondary #4B5563
+// cardShadow is #111827 @ 0.06 at a 16pt radius; the shot is a 568pt card under a 40pt blur, so it takes
+// more alpha to lift off the paper. Black 0.55 was tuned for the navy and muddies the light frame.
+let shadow = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0.067, 0.094, 0.153, 0.18])!
+let hairline = CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0.067, 0.094, 0.153, 0.08])!   // hairline #111827 @ 0.08
 
 // MARK: - Arguments
 
@@ -153,15 +156,15 @@ for input in inputs {
     ctx.scaleBy(x: scale, y: scale)      // from here on: points, origin bottom-left
     let w = canvasPoints.width, h = canvasPoints.height
 
-    // Background: BaselineBackground's top-to-bottom navy gradient.
-    let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [navyTop, navyBottom] as CFArray, locations: [0, 1])!
+    // Background: BaselineBackground's near-flat wash, backgroundTop at the top edge to backgroundBottom.
+    let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [paperTop, paperBottom] as CFArray, locations: [0, 1])!
     ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: h), end: CGPoint(x: 0, y: 0), options: [])
 
     // Caption.
     if let caption {
         let maxWidth = w - 2 * sideGutter
-        let (head, headPt) = line(caption.headline, size: headlineSize, weight: .bold, color: white, maxWidth: maxWidth)
-        let (sub, subPt) = line(caption.secondary, size: secondarySize, weight: .medium, color: whiteSecondary, maxWidth: maxWidth)
+        let (head, headPt) = line(caption.headline, size: headlineSize, weight: .bold, color: ink, maxWidth: maxWidth)
+        let (sub, subPt) = line(caption.secondary, size: secondarySize, weight: .medium, color: inkSecondary, maxWidth: maxWidth)
         // Cap height ≈ 0.70 of the point size for SF; the headline's cap line sits `captionTop` below the top edge.
         let headBaseline = h - captionTop - headPt * 0.70
         let subBaseline = headBaseline - captionGap - subPt * 1.0
@@ -178,7 +181,7 @@ for input in inputs {
     ctx.saveGState()
     ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: shotShadowBlur, color: shadow)
     ctx.addPath(path)
-    ctx.setFillColor(navyBottom)
+    ctx.setFillColor(paper)      // the shot's own background, so the antialiased edge carries no fringe
     ctx.fillPath()
     ctx.restoreGState()
 
@@ -188,7 +191,7 @@ for input in inputs {
     ctx.draw(shot, in: shotRect)
     ctx.restoreGState()
 
-    // Hairline, like BaselineTheme.cardStroke, so the frame edge reads on the navy.
+    // Hairline (BaselineTheme.hairline) so the shot's edge still reads where its paper meets the frame's.
     ctx.saveGState()
     ctx.addPath(path)
     ctx.setStrokeColor(hairline)

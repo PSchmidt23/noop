@@ -371,7 +371,7 @@ targets:
   Baseline:
     type: application
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: Strand
         excludes:
@@ -556,11 +556,13 @@ targets:
 
   # Unit tests for Baseline's pure builders (TodaySnapshot, TrendsSeries, SleepNightBuilder, the
   # Journal helpers). Hosted in the app so `@testable import Baseline` links against the real module;
-  # no UI, no BLE, no store. Run with `xcodebuild -scheme Baseline test` (simulator destination).
+  # no UI, no BLE, no on-disk store (the morning-summary funnel case seeds an in-memory `WhoopStore`
+  # through the DEBUG `Repository.setStoreForTesting` seam). Run with `xcodebuild -scheme Baseline test`
+  # (simulator destination).
   BaselineTests:
     type: bundle.unit-test
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - BaselineTests
     dependencies:
@@ -583,12 +585,12 @@ targets:
 
   # Screenshot harness for Baseline's screens (BaselineUITests/ScreenshotTests.swift). Launches the app
   # with its DEBUG launch arguments (--demo-seed, --skip-onboarding / --reset-onboarding, --tab,
-  # --welcome-step), scrolls each screen and writes PNGs to $BASELINE_SHOTS_DIR so a scrolled screen can
+  # --welcome-step, --ui-testing), scrolls each screen and writes PNGs to $BASELINE_SHOTS_DIR so a scrolled screen can
   # be verified headlessly. Run with `-only-testing:BaselineUITests`; see BASELINE.md.
   BaselineUITests:
     type: bundle.ui-testing
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - BaselineUITests
     dependencies:

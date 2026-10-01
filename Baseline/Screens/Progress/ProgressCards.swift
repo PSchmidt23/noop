@@ -12,7 +12,7 @@ struct ProgressSentence: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Circle().fill(dotColor).frame(width: 6, height: 6)
+            Circle().fill(ProgressToneDot.color(tone)).frame(width: 6, height: 6)
                 .accessibilityHidden(true)
             Text(text)
                 .font(BaselineTheme.headline)
@@ -20,8 +20,11 @@ struct ProgressSentence: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
+}
 
-    private var dotColor: Color {
+/// One mapping from a judgement to its dot colour (the sentence row and the timing grid share it).
+enum ProgressToneDot {
+    static func color(_ tone: ProgressCopy.Tone) -> Color {
         switch tone {
         case .improving: return BaselineTheme.good
         case .worsening: return BaselineTheme.watch
@@ -30,7 +33,8 @@ struct ProgressSentence: View {
     }
 }
 
-/// Header row shared by the Progress cards: colour dot + title, trailing caption.
+/// Header row shared by the Progress cards: 8pt colour dot + title, trailing caption. The title is a
+/// plain `Text` on its own (not a combined element): "HRV baseline" is the UI tests' first-card anchor.
 private struct ProgressCardHeader: View {
     let title: String
     let color: Color
@@ -39,30 +43,21 @@ private struct ProgressCardHeader: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             HStack(spacing: 6) {
-                Circle().fill(color).frame(width: 8, height: 8)
+                Circle().fill(color).frame(width: 8, height: 8).accessibilityHidden(true)
                 Text(title).font(BaselineTheme.label).foregroundStyle(BaselineTheme.textSecondary)
             }
-            Spacer()
+            Spacer(minLength: 8)
             Text(trailing).font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textTertiary)
                 .multilineTextAlignment(.trailing)
         }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private struct ProgressFootnote: View {
-    let text: String
-    var body: some View {
-        Text(text)
-            .font(BaselineTheme.caption)
-            .foregroundStyle(BaselineTheme.textTertiary)
-            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
 // MARK: - HRV / resting HR
 
-/// One baseline over the horizon: the sentence, then / now cells, the trajectory and a footnote.
+/// One baseline over the horizon: the sentence, then / now cells and the trajectory. No footnote: what
+/// the line is gets said once, by the closing caption, and the noise figure lives in the sentence's
+/// "about the same".
 struct ProgressMetricCard: View {
     let title: String
     /// How the metric reads mid-sentence ("HRV", "resting HR").
@@ -92,9 +87,6 @@ struct ProgressMetricCard: View {
                 ProgressSentence(text: sentence, tone: ProgressCopy.tone(status: status, higherIsBetter: higherIsBetter))
                 cells
                 chart
-                if let footnote = ProgressCopy.footnote(unit: unit, status: status) {
-                    ProgressFootnote(text: footnote)
-                }
             }
         }
     }
@@ -129,10 +121,14 @@ struct ProgressMetricCard: View {
     }
 }
 
-// MARK: - Sleep (how much)
+// MARK: - Sleep (how much, and how regular)
 
+/// Sleep duration (the 30-night average then and now) and, under a hairline, bed / wake timing with its
+/// spread. The regularity judgement is the 6pt dot before "Timing"; its sentence is the grid's
+/// accessibility label, so VoiceOver hears the reading the dot stands for.
 struct ProgressSleepCard: View {
     let duration: ProgressSleep.Duration
+    let regularity: ProgressSleep.Regularity
     let horizon: ProgressHorizon
 
     var body: some View {
@@ -141,71 +137,66 @@ struct ProgressSleepCard: View {
                 ProgressCardHeader(title: "Sleep", color: BaselineTheme.sleep, trailing: "30-night average")
                 ProgressSentence(text: ProgressCopy.sleepSentence(duration, horizon: horizon),
                                  tone: ProgressCopy.sleepTone(duration))
-                switch duration {
-                case .ready(let now, let then, _, _):
-                    HStack(spacing: 12) {
-                        StatCell(label: ProgressCopy.sleepThenLabel(then), value: BaselineReadouts.durationText(minutes: then.avgMin))
-                        StatCell(label: ProgressCopy.sleepNowLabel(nights: now.nights), value: BaselineReadouts.durationText(minutes: now.avgMin),
-                                 color: BaselineTheme.sleep)
-                    }
-                case .nowOnly(let avg, let nights, _):
-                    StatCell(label: ProgressCopy.sleepNowLabel(nights: nights), value: BaselineReadouts.durationText(minutes: avg),
-                             color: BaselineTheme.sleep)
-                case .building, .none:
-                    EmptyView()
-                }
-                if let footnote = ProgressCopy.sleepFootnote(duration) {
-                    ProgressFootnote(text: footnote)
+                durationCells
+                let rows = timingRows
+                if !rows.isEmpty {
+                    Divider().overlay(BaselineTheme.hairline)
+                    timing(rows)
                 }
             }
         }
     }
-}
 
-// MARK: - Sleep timing (how regular)
+    @ViewBuilder private var durationCells: some View {
+        switch duration {
+        case .ready(let now, let then, _, _):
+            HStack(spacing: 12) {
+                StatCell(label: ProgressCopy.sleepThenLabel(then), value: BaselineReadouts.durationText(minutes: then.avgMin))
+                StatCell(label: ProgressCopy.sleepNowLabel(nights: now.nights), value: BaselineReadouts.durationText(minutes: now.avgMin),
+                         color: BaselineTheme.sleep)
+            }
+        case .nowOnly(let avg, let nights, _):
+            StatCell(label: ProgressCopy.sleepNowLabel(nights: nights), value: BaselineReadouts.durationText(minutes: avg),
+                     color: BaselineTheme.sleep)
+        case .building, .none:
+            EmptyView()
+        }
+    }
 
-struct ProgressSleepTimingCard: View {
-    let regularity: ProgressSleep.Regularity
-    let horizon: ProgressHorizon
-
-    var body: some View {
-        BaselineCard {
-            VStack(alignment: .leading, spacing: 12) {
-                ProgressCardHeader(title: "Sleep timing", color: BaselineTheme.sleep, trailing: "last 30 strap nights")
-                ProgressSentence(text: ProgressCopy.timingSentence(regularity, horizon: horizon),
-                                 tone: ProgressCopy.timingTone(regularity))
-                let rows = timingRows
-                if !rows.isEmpty {
-                    // Label column beside the clock while both fit on one line. The column is sized to its
-                    // widest label, so "Bedtime" never breaks mid-word at larger type, and the "was …" line
-                    // shares the clock's column. Once the clock no longer fits beside the label, the label
-                    // moves above it instead.
-                    ViewThatFits(in: .horizontal) {
-                        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 12) {
-                            ForEach(rows) { row in
-                                GridRow {
-                                    label(row)
-                                        .accessibilityHidden(true)
-                                    values(row)
-                                        .accessibilityElement(children: .ignore)
-                                        .accessibilityLabel(row.spoken)
-                                }
-                            }
+    /// "Timing" with the regularity dot, then the bed / wake grid. Label column beside the clock while
+    /// both fit on one line (sized to its widest label, so "Bedtime" never breaks mid-word at larger
+    /// type; the "was …" line shares the clock's column); once the clock no longer fits beside the
+    /// label, the label moves above it.
+    private func timing(_ rows: [TimingRow]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Circle().fill(ProgressToneDot.color(ProgressCopy.timingTone(regularity)))
+                    .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
+                Text("Timing").font(BaselineTheme.label).foregroundStyle(BaselineTheme.textSecondary)
+            }
+            ViewThatFits(in: .horizontal) {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 12) {
+                    ForEach(rows) { row in
+                        GridRow {
+                            label(row)
+                            values(row)
                         }
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(rows) { row in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    label(row)
-                                    values(row)
-                                }
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityLabel(row.spoken)
-                            }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(rows) { row in
+                        VStack(alignment: .leading, spacing: 2) {
+                            label(row)
+                            values(row)
                         }
                     }
                 }
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(ProgressCopy.timingSentence(regularity, horizon: horizon))
+        .accessibilityValue(rows.map(\.spoken).joined(separator: " "))
     }
 
     /// Bedtime then wake, each with its spread and, over a comparison, the earlier window's figures.
@@ -232,15 +223,16 @@ struct ProgressSleepTimingCard: View {
 
     private func label(_ row: TimingRow) -> some View {
         Text(row.label)
-            .font(BaselineTheme.label)
-            .foregroundStyle(BaselineTheme.textSecondary)
+            .font(BaselineTheme.caption)
+            .foregroundStyle(BaselineTheme.textTertiary)
     }
 
     /// The clock with its spread and, when there is a comparison, the "was …" line directly beneath it.
     private func values(_ row: TimingRow) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(row.value)
-                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .font(BaselineTheme.stat)
+                .monospacedDigit()
                 .foregroundStyle(BaselineTheme.text)
                 .fixedSize(horizontal: false, vertical: true)
             if let was = row.was {
@@ -269,35 +261,6 @@ struct ProgressSleepTimingCard: View {
             ProgressCopy.timingSpoken(label: label, meanSec: mean, spreadMin: spread,
                                       wasMeanSec: wasMean, wasSpreadMin: wasSpread)
         }
-    }
-}
-
-// MARK: - Today row
-
-/// One quiet caption row under Today's hero tiles: the Progress HRV sentence verbatim, pushing
-/// `ProgressScreen`. Styled like `StrapStatusStrip` (caption, no card, 4pt side padding). The sentence
-/// wraps to as many lines as it needs at larger type, so its comparison date is never truncated away.
-struct TodayProgressRow: View {
-    let sentence: String
-
-    var body: some View {
-        NavigationLink { ProgressScreen() } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(BaselineTheme.caption).foregroundStyle(BaselineTheme.accent)
-                Text(sentence).font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(BaselineTheme.textTertiary)
-            }
-            .padding(.horizontal, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Progress: \(sentence)")
-        .accessibilityHint("Opens Progress")
     }
 }
 #endif

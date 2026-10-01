@@ -2,7 +2,8 @@
 import SwiftUI
 import WhoopStore
 
-/// Settings › Devices: one card per paired strap, an "Add strap" button, and the three pairing facts.
+/// Settings › Devices: one card per paired strap, an "Add strap" CTA (flat, in content), and the three
+/// pairing facts.
 /// The engine underneath is NOOP's `DeviceRegistry` (rename / make active / archive) and its
 /// `AddDeviceWizard`, opened on the chosen WHOOP model's prep step exactly as the welcome flow does.
 /// The outer view only waits for the registry to exist; `DevicesContent` observes it and `LiveState`.
@@ -49,7 +50,7 @@ private struct DevicesContent: View {
     var body: some View {
         // One container, not a Group: a Group would hand every presentation modifier below to each
         // child, and several children presenting the same sheet is a presentation conflict.
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: BaselineTheme.cardSpacing) {
             if straps.isEmpty {
                 BaselineCard {
                     BaselineEmptyState(icon: "dot.radiowaves.left.and.right",
@@ -117,20 +118,10 @@ private struct DevicesContent: View {
         }
     }
 
+    /// The one primary action on the page; its label is the UI test's `buttons["Add strap"]`.
     private var addButton: some View {
-        Button(action: { showChooser = true }) {
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                Text("Add strap")
-            }
-            .font(BaselineTheme.headline)
-            .foregroundStyle(BaselineTheme.background)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 15)
-            .background(BaselineTheme.accent, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Add strap")
+        BaselineCTA(title: "Add strap", systemImage: "plus") { showChooser = true }
+            .accessibilityLabel("Add strap")
     }
 
     /// Release the Bluetooth link (otherwise the engine keeps re-grabbing the strap and it can never enter
@@ -203,7 +194,7 @@ private struct StrapCard: View {
             menuItems
         } label: {
             Image(systemName: "ellipsis.circle")
-                .font(.system(size: 18, weight: .regular))
+                .font(BaselineTheme.symbolAccessory.weight(.regular))
                 .foregroundStyle(BaselineTheme.textSecondary)
                 .frame(width: 30, height: 30)
                 .contentShape(Rectangle())
@@ -258,7 +249,9 @@ private struct StrapCard: View {
 // MARK: - Add strap sheet
 
 /// The two-option chooser the welcome flow also offers, so the wizard opens on the right model's prep
-/// step instead of NOOP's device-type list. WHOOP is named nominatively only.
+/// step instead of NOOP's device-type list. WHOOP is named nominatively only. System sheet chrome, a
+/// flat body: the two choices are in-content CTAs (the 4.0 prominent, as on Welcome), each with its one
+/// pairing cue as a caption beneath.
 private struct AddStrapSheet: View {
     var onChoose: (AddDeviceWizard.DeviceType) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -266,15 +259,16 @@ private struct AddStrapSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
+                // A plain Text: the UI test waits for it after tapping "Add strap".
                 Text("Which strap are you adding?")
-                    .font(BaselineTheme.title)
+                    .font(BaselineTheme.headline)
                     .foregroundStyle(BaselineTheme.text)
                 Text("Pairing runs on NOOP, the open-source engine Baseline is built on. The strap talks to one phone at a time, so quit its previous app first.")
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                choice("WHOOP 4.0", detail: "The strap with the clasp-side sensor") { onChoose(.whoop4) }
-                choice("WHOOP 5.0 / MG", detail: "Tap it until the LEDs flash blue") { onChoose(.whoop5mg) }
+                choice("WHOOP 4.0", detail: "The strap with the clasp-side sensor", prominent: true) { onChoose(.whoop4) }
+                choice("WHOOP 5.0 / MG", detail: "Tap it until the LEDs flash blue", prominent: false) { onChoose(.whoop5mg) }
                 Spacer()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -285,33 +279,24 @@ private struct AddStrapSheet: View {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .toolbarColorScheme(.dark, for: .navigationBar)
         }
         .tint(BaselineTheme.accent)
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
     }
 
-    private func choice(_ title: String, detail: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(BaselineTheme.headline).foregroundStyle(BaselineTheme.text)
-                    Text(detail).font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textSecondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(BaselineTheme.textTertiary)
-            }
-            .padding(BaselineTheme.cardPadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(BaselineTheme.card, in: RoundedRectangle(cornerRadius: BaselineTheme.cardRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: BaselineTheme.cardRadius, style: .continuous)
-                .strokeBorder(BaselineTheme.cardStroke, lineWidth: 1))
-            .contentShape(Rectangle())
+    /// A `BaselineCTA` whose label is the model name verbatim, with its pairing cue beneath it (and as
+    /// the button's hint for VoiceOver).
+    private func choice(_ title: String, detail: String, prominent: Bool, action: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            BaselineCTA(title: title, prominent: prominent, action: action)
+                .accessibilityHint(detail)
+            Text(detail)
+                .font(BaselineTheme.caption)
+                .foregroundStyle(BaselineTheme.textTertiary)
+                .frame(maxWidth: .infinity)
+                .multilineTextAlignment(.center)
         }
-        .buttonStyle(.plain)
     }
 }
 
@@ -331,18 +316,14 @@ private struct PairingHelpCard: View {
         BaselineCard {
             Button(action: { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } }) {
                 HStack(spacing: 14) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(BaselineTheme.accent)
-                        .frame(width: 30, height: 30)
-                        .background(BaselineTheme.accent.opacity(0.12),
-                                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    SettingsIconTile(icon: "questionmark.circle")
                     Text("Pairing help").font(BaselineTheme.body).foregroundStyle(BaselineTheme.text)
                     Spacer()
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(BaselineTheme.symbolSmall)
                         .foregroundStyle(BaselineTheme.textTertiary)
                         .rotationEffect(.degrees(expanded ? 180 : 0))
+                        .accessibilityHidden(true)
                 }
                 .contentShape(Rectangle())
             }
@@ -354,6 +335,7 @@ private struct PairingHelpCard: View {
                     ForEach(Self.facts, id: \.self) { fact in
                         HStack(alignment: .top, spacing: 8) {
                             Circle().fill(BaselineTheme.textTertiary).frame(width: 4, height: 4).padding(.top, 7)
+                                .accessibilityHidden(true)
                             Text(fact)
                                 .font(BaselineTheme.caption)
                                 .foregroundStyle(BaselineTheme.textSecondary)

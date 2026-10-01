@@ -1,18 +1,36 @@
 #if os(iOS)
 import SwiftUI
 
-/// Segmented pill with a sliding accent selection: ONE look for every segmented control in the app
-/// (Trends' 7 / 30 / 90 days, Progress' horizons, Journal's HRV / Resting HR outcome, the new-habit
-/// type). `label` is the pill text, `accessibilityLabel` the spoken form (defaults to the label).
-/// Four segments fit at the narrowest supported width.
+/// Segmented capsule with a sliding accent selection: ONE look for every segmented control in the app.
+/// `.glass` is the pinned control under the navigation bar (`BaselineScreen.pinned`: Trends' 7 / 30 / 90
+/// days, Progress' horizons) — ONE `.glassEffect` on the whole control inside ONE `GlassEffectContainer`,
+/// never per segment. `.flat` lives inside cards (Journal's outcome, the new-habit kind, Compare's
+/// metric / source) on a `fill` track. `label` is the pill text, `accessibilityLabel` the spoken form.
+/// Four segments fit at the narrowest supported width. Text on glass is ink, never dependent on the blur.
 struct BaselineSegmentedPicker<Option: Hashable>: View {
     let options: [Option]
     @Binding var selection: Option
     let label: (Option) -> String
     var accessibilityLabel: ((Option) -> String)? = nil
+    var style: Style = .glass
+    enum Style { case glass, flat }
     @Namespace private var selectionSpace
 
     var body: some View {
+        switch style {
+        case .glass:
+            GlassEffectContainer(spacing: 4) {
+                segments
+                    .glassEffect(.regular, in: Capsule())
+            }
+        case .flat:
+            segments
+                .background(BaselineTheme.fill, in: Capsule())
+                .overlay(Capsule().strokeBorder(BaselineTheme.fillStroke, lineWidth: 1))
+        }
+    }
+
+    private var segments: some View {
         HStack(spacing: 4) {
             ForEach(options, id: \.self) { option in
                 Button {
@@ -20,7 +38,7 @@ struct BaselineSegmentedPicker<Option: Hashable>: View {
                 } label: {
                     Text(label(option))
                         .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(selection == option ? BaselineTheme.accent : BaselineTheme.textSecondary)
+                        .foregroundStyle(selection == option ? BaselineTheme.text : BaselineTheme.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity)
@@ -28,7 +46,7 @@ struct BaselineSegmentedPicker<Option: Hashable>: View {
                         .background {
                             if selection == option {
                                 Capsule()
-                                    .fill(BaselineTheme.accent.opacity(0.16))
+                                    .fill(BaselineTheme.accent.opacity(0.14))
                                     .matchedGeometryEffect(id: "selection", in: selectionSpace)
                             }
                         }
@@ -40,8 +58,6 @@ struct BaselineSegmentedPicker<Option: Hashable>: View {
             }
         }
         .padding(4)
-        .background(BaselineTheme.card, in: Capsule())
-        .overlay(Capsule().strokeBorder(BaselineTheme.cardStroke, lineWidth: 1))
     }
 }
 
@@ -64,14 +80,17 @@ extension BaselineRangeOption {
 
 /// The range control (Trends' 7 / 30 / 90 days, Progress' 90 / 180 / 365 / all): `BaselineSegmentedPicker`
 /// over every case, with the verbose `subtitle` for VoiceOver and `shortLabel` at accessibility sizes.
+/// `.glass` when pinned under the bar; `.flat` inside a card (Compare).
 struct BaselineRangePicker<Option: BaselineRangeOption>: View {
     @Binding var selection: Option
+    var style: BaselineSegmentedPicker<Option>.Style = .glass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         BaselineSegmentedPicker(options: Array(Option.allCases), selection: $selection,
                                 label: { dynamicTypeSize.isAccessibilitySize ? $0.shortLabel : $0.label },
-                                accessibilityLabel: { $0.subtitle })
+                                accessibilityLabel: { $0.subtitle },
+                                style: style)
     }
 }
 #endif

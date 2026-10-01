@@ -8,9 +8,10 @@ import StrandAnalytics
 
 // MARK: - Text (pure)
 
-/// The one-line morning summary, built from the same `TodaySnapshot` the Today tab draws, so the
-/// notification and the screen behind it print one HRV, one resting HR, one band position and one
-/// sleep total for the night. Pure and synchronous; unit-tested in `MorningSummaryTests`.
+/// The one-line morning summary, built from the same `TodaySnapshot` the Home tab draws (the notifier
+/// reads it through the same strap-first funnel, `MorningSummaryNotifier.summary`), so the notification
+/// and the screen behind it print one HRV, one resting HR, one band position and one sleep total for the
+/// night. Pure and synchronous; unit-tested in `MorningSummaryTests`.
 struct MorningSummary: Equatable {
     /// The newest morning any of the three facts is dated to (`TodaySnapshot`'s own day keys). The
     /// notifier only posts when this is today's key.
@@ -127,14 +128,13 @@ final class MorningSummaryNotifier: ObservableObject {
 
     private func check() async {
         guard defaults.bool(forKey: Self.enabledKey), repo.loaded else { return }
-        let todayKey = Repository.localDayKey(now())
+        let clock = now()
+        let todayKey = Repository.localDayKey(clock)
         guard defaults.string(forKey: Self.lastDayKey) != todayKey else { return }
 
-        // The same night list and snapshot the Today tab builds, so the summary cannot disagree with it.
-        let habitual = await repo.habitualMidsleepSec()
-        let nights = SleepNightBuilder.nights(sessions: repo.sleeps, days: repo.days, habitualMidsleepSec: habitual)
-        let snapshot = TodaySnapshot.build(days: repo.days, nights: nights, todayKey: todayKey)
-        guard let summary = MorningSummaryText.build(snapshot), summary.day == todayKey else { return }
+        guard let summary = await Self.summary(repo: repo, todayKey: todayKey,
+                                               logicalKey: Repository.logicalDayKey(clock)),
+              summary.day == todayKey else { return }
 
         let center = UNUserNotificationCenter.current()
         let status = await center.notificationSettings().authorizationStatus
@@ -157,6 +157,23 @@ final class MorningSummaryNotifier: ObservableObject {
         // trigger: nil = deliver now. Never a calendar or interval trigger.
         let request = UNNotificationRequest(identifier: Self.requestIdentifier, content: content, trigger: nil)
         try? await center.add(request)
+    }
+
+    /// THE resolver for the banner's figures: the same night list and `TodaySnapshot` the Home tab builds,
+    /// read through the strap-first funnel (`BaselineReadouts.days` / `nights`, what `repo.baselineDays` and
+    /// `repo.baselineNights()` return), never NOOP's import-wins `repo.days` / `repo.sleeps`. With a WHOOP
+    /// export overlapping last night the two tables disagree on HRV, resting HR and the night under
+    /// `.strapFirst` (the default); routing both readouts through this one funnel is what keeps the
+    /// notification and the ring behind it on one number. `mode` is injectable for the tests only; the
+    /// notifier passes the persisted setting. `logicalKey` mirrors Home's effort row (unused by the text).
+    static func summary(repo: Repository, todayKey: String, logicalKey: String? = nil,
+                        mode: BaselineDataSource = .current()) async -> MorningSummary? {
+        let habitual = await repo.habitualMidsleepSec()
+        let days = BaselineReadouts.days(repo, mode: mode)
+        let sessions = await BaselineReadouts.nights(repo, mode: mode)
+        let nights = SleepNightBuilder.nights(sessions: sessions, days: days, habitualMidsleepSec: habitual)
+        let snapshot = TodaySnapshot.build(days: days, nights: nights, todayKey: todayKey, logicalKey: logicalKey)
+        return MorningSummaryText.build(snapshot)
     }
 
     /// Ask once, at the moment the toggle goes on, and report where that left us. Only `.notDetermined`

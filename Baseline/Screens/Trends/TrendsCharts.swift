@@ -6,7 +6,8 @@ import Charts
 /// 50–70 bpm resting-HR line is not flattened against a wide axis) and edge-safe x labels (three ticks;
 /// the last label is anchored to its trailing edge so it never truncates against the y-axis column).
 /// Dragging across the plot selects the nearest night; the selection clears the moment the finger lifts,
-/// so the header's pill never lingers over a chart nobody is touching.
+/// so the header's pill never lingers over a chart nobody is touching. Colours and axes come from
+/// `BaselineChartStyle`, so this chart and Progress' draw the same grid, rule and marker.
 struct TrendsBandChart: View {
     let points: [BandPoint]
     let color: Color
@@ -19,12 +20,12 @@ struct TrendsBandChart: View {
             ForEach(points) { p in
                 if let low = p.low, let high = p.high {
                     AreaMark(x: .value("Day", p.date), yStart: .value("Low", low), yEnd: .value("High", high))
-                        .foregroundStyle(color.opacity(0.14))
+                        .foregroundStyle(color.opacity(BaselineChartStyle.bandOpacity))
                         .interpolationMethod(.monotone)
                 }
                 if let b = p.baseline {
                     LineMark(x: .value("Day", p.date), y: .value("Baseline", b), series: .value("s", "baseline"))
-                        .foregroundStyle(color.opacity(0.45))
+                        .foregroundStyle(color.opacity(BaselineChartStyle.baselineOpacity))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                         .interpolationMethod(.monotone)
                 }
@@ -32,7 +33,7 @@ struct TrendsBandChart: View {
             ForEach(points) { p in
                 LineMark(x: .value("Day", p.date), y: .value("Value", p.value), series: .value("s", "value"))
                     .foregroundStyle(color)
-                    .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                    .lineStyle(StrokeStyle(lineWidth: BaselineChartStyle.lineWidth, lineCap: .round))
                     .interpolationMethod(.monotone)
             }
             if let last = points.last {
@@ -42,18 +43,14 @@ struct TrendsBandChart: View {
             if let s = selected {
                 RuleMark(x: .value("Day", s.date)).foregroundStyle(BaselineTheme.hairline)
                 PointMark(x: .value("Day", s.date), y: .value("Value", s.value))
-                    .foregroundStyle(BaselineTheme.marker).symbolSize(70)
+                    .symbol { BaselineChartStyle.selectedPoint(color) }
             }
         }
         .chartYScale(domain: yDomain)
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { _ in
-                AxisGridLine().foregroundStyle(BaselineTheme.hairline)
-                AxisValueLabel().foregroundStyle(BaselineTheme.textTertiary).font(BaselineTheme.caption)
-            }
-        }
-        .chartXAxis { TrendsAxis.dayMarks() }
+        .chartYAxis { BaselineChartStyle.yAxis() }
+        .chartXAxis { BaselineChartStyle.dayAxis() }
         .chartXScale(range: .plotDimension(endPadding: 18))
+        .chartPlotStyle { $0.background(.clear) }
         .chartOverlay { proxy in
             GeometryReader { geo in
                 Rectangle().fill(.clear).contentShape(Rectangle())
@@ -85,36 +82,20 @@ struct TrendsBarChart: View {
         Chart {
             ForEach(bars) { b in
                 BarMark(x: .value("Day", b.date, unit: .day), y: .value("Value", b.value))
-                    .foregroundStyle(color.opacity(0.85))
-                    .cornerRadius(3)
+                    .foregroundStyle(color.opacity(BaselineChartStyle.barOpacity))
+                    .cornerRadius(BaselineChartStyle.barRadius)
             }
             if let average {
                 RuleMark(y: .value("Average", average))
-                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .foregroundStyle(color.opacity(BaselineChartStyle.baselineOpacity))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
             }
         }
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { _ in
-                AxisGridLine().foregroundStyle(BaselineTheme.hairline)
-                AxisValueLabel().foregroundStyle(BaselineTheme.textTertiary).font(BaselineTheme.caption)
-            }
-        }
-        .chartXAxis { TrendsAxis.dayMarks() }
+        .chartYAxis { BaselineChartStyle.yAxis(desiredCount: 3) }
+        .chartXAxis { BaselineChartStyle.dayAxis() }
         .chartXScale(range: .plotDimension(endPadding: 18))
+        .chartPlotStyle { $0.background(.clear) }
         .frame(height: height)
-    }
-}
-
-/// Shared x-axis for the Trends charts: a few "Sep 28"-style labels. Overlapping labels are dropped
-/// (greedy collision resolution) and the plot keeps trailing room so the last label is never clipped.
-enum TrendsAxis {
-    static func dayMarks() -> some AxisContent {
-        AxisMarks(values: .automatic(desiredCount: 3)) { _ in
-            AxisValueLabel(format: .dateTime.month(.abbreviated).day(), collisionResolution: .greedy)
-                .foregroundStyle(BaselineTheme.textTertiary)
-                .font(BaselineTheme.caption)
-        }
     }
 }
 #endif

@@ -116,7 +116,8 @@ struct WorkoutDetailScreen: View {
 
 // MARK: - Cards
 
-/// Sport, date and the session's time window.
+/// Sport, date and the session's time window, with the duration as the one hero numeral (`hero(36)`),
+/// said here and nowhere else on the screen.
 struct WorkoutHeaderCard: View {
     let item: WorkoutItem
 
@@ -124,10 +125,10 @@ struct WorkoutHeaderCard: View {
         BaselineCard {
             HStack(spacing: 14) {
                 Image(systemName: sportSymbol(item.row.sport))
-                    .font(.system(size: 22, weight: .medium))
+                    .font(BaselineTheme.title)
                     .foregroundStyle(BaselineTheme.effort)
                     .frame(width: 44, height: 44)
-                    .background(BaselineTheme.effort.opacity(0.14),
+                    .background(BaselineTheme.effort.opacity(0.10),
                                 in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
@@ -141,32 +142,43 @@ struct WorkoutHeaderCard: View {
                 }
                 Spacer(minLength: 0)
             }
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(BaselineReadouts.durationText(seconds: item.durationS))
+                    .font(BaselineTheme.hero(36))
+                    .foregroundStyle(BaselineTheme.text)
+                    .monospacedDigit()
+                    .minimumScaleFactor(0.75)
+                    .lineLimit(1)
+                Text("duration")
+                    .font(BaselineTheme.headline)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 }
 
-/// Duration, average and peak heart rate, effort out of 100, and calories when the row carries them.
+/// Average and peak heart rate, effort out of 100, and calories when the row carries them (the
+/// duration is the header's numeral). The "Session" title is the UI test's first-card anchor.
 struct WorkoutSessionCard: View {
     let item: WorkoutItem
 
     var body: some View {
         BaselineCard(title: "Session") {
             HStack(alignment: .top, spacing: 12) {
-                StatCell(label: "Duration", value: BaselineReadouts.durationText(seconds: item.durationS), color: BaselineTheme.text)
                 StatCell(label: "Avg HR", value: item.row.avgHr.map { "\($0)" } ?? "–",
                          unit: item.row.avgHr != nil ? "bpm" : nil, color: BaselineTheme.rhr)
                 StatCell(label: "Max HR", value: item.row.maxHr.map { "\($0)" } ?? "–",
                          unit: item.row.maxHr != nil ? "bpm" : nil, color: BaselineTheme.rhr)
-            }
-            HStack(alignment: .top, spacing: 12) {
                 StatCell(label: "Effort", value: BaselineReadouts.effortText(item.row.strain),
                          unit: BaselineReadouts.effortUnit, color: BaselineTheme.effort)
-                if let kcal = item.row.energyKcal, kcal > 0 {
+            }
+            if let kcal = item.row.energyKcal, kcal > 0 {
+                HStack(alignment: .top, spacing: 12) {
                     StatCell(label: "Calories", value: WorkoutsFormat.grouped(kcal), unit: "kcal")
-                } else {
+                    Spacer().frame(maxWidth: .infinity)
                     Spacer().frame(maxWidth: .infinity)
                 }
-                Spacer().frame(maxWidth: .infinity)
             }
             Text(item.row.strain == nil
                  ? "This session's contribution to the day's effort (0–100), as the strap recorded it. Not every source records one."
@@ -179,7 +191,8 @@ struct WorkoutSessionCard: View {
 }
 
 /// Five-segment zone bar with a legend: share of the session and minutes in each zone, and a line
-/// saying where the split came from (imported, or derived and approximate).
+/// saying where the split came from (imported, or derived and approximate). The scale note is the
+/// card's trailing caption.
 struct WorkoutZonesCard: View {
     /// Minutes in Z1…Z5 and their origin (`WorkoutDetailScreen.zoneSplit`).
     let split: WorkoutZoneSplit
@@ -189,12 +202,15 @@ struct WorkoutZonesCard: View {
 
     var body: some View {
         BaselineCard(title: "Heart-rate zones",
-                     subtitle: "Share of the session in each zone, Z1 easy to Z5 maximal") {
+                     accessory: AnyView(Text("Z1 easy → Z5 maximal")
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textTertiary))) {
             WorkoutZoneBar(minutes: minutes)
             BaselineFlowLayout(spacing: 12) {
                 ForEach(0..<5, id: \.self) { i in
                     HStack(spacing: 5) {
                         Circle().fill(BaselineTheme.zoneColor(i + 1)).frame(width: 6, height: 6)
+                            .accessibilityHidden(true)
                         Text(WorkoutsFormat.zoneLegend(zone: i + 1, minutes: minutes[i], total: total))
                             .font(BaselineTheme.caption)
                             .foregroundStyle(BaselineTheme.textSecondary)
@@ -223,7 +239,7 @@ struct WorkoutZoneBar: View {
             HStack(spacing: 2) {
                 ForEach(0..<5, id: \.self) { i in
                     if total > 0, minutes[i] > 0 {
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        RoundedRectangle(cornerRadius: BaselineChartStyle.barRadius, style: .continuous)
                             .fill(BaselineTheme.zoneColor(i + 1))
                             .frame(width: max(2, geo.size.width * minutes[i] / total - 2))
                     }
@@ -235,7 +251,8 @@ struct WorkoutZoneBar: View {
     }
 }
 
-/// The strap's heart rate across the session as a small line, with the average as a dashed rule.
+/// The strap's heart rate across the session as a small line, with the average as a dashed rule named
+/// once in the caption under the chart. Axes and constants from `BaselineChartStyle`.
 struct WorkoutTraceCard: View {
     let item: WorkoutItem
     /// `repo.workoutHrBuckets(from:to:source:)`: bucket means over the window, oldest first.
@@ -243,9 +260,13 @@ struct WorkoutTraceCard: View {
     let loaded: Bool
 
     var body: some View {
-        BaselineCard(title: "Heart rate", subtitle: subtitle) {
+        BaselineCard(title: "Heart rate") {
             if buckets.count > 1 {
                 chart
+                Text(caption)
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if loaded {
                 Text("No heart-rate samples were recorded over this session's window.")
                     .font(BaselineTheme.caption)
@@ -259,11 +280,10 @@ struct WorkoutTraceCard: View {
         }
     }
 
-    private var subtitle: String? {
-        guard buckets.count > 1 else { return nil }
+    private var caption: String {
         var parts = ["Beats per minute across the session"]
         if let avg = item.row.avgHr { parts.append("the dashed line is your average, \(avg) bpm") }
-        return parts.joined(separator: "; ")
+        return parts.joined(separator: "; ") + "."
     }
 
     private var chart: some View {
@@ -274,33 +294,29 @@ struct WorkoutTraceCard: View {
         return Chart {
             ForEach(points, id: \.t) { p in
                 AreaMark(x: .value("Time", p.t), yStart: .value("Low", lo), yEnd: .value("bpm", p.bpm))
-                    .foregroundStyle(BaselineTheme.rhr.opacity(0.12))
+                    .foregroundStyle(BaselineTheme.rhr.opacity(BaselineChartStyle.bandOpacity))
                     .interpolationMethod(.monotone)
                 LineMark(x: .value("Time", p.t), y: .value("bpm", p.bpm))
                     .foregroundStyle(BaselineTheme.rhr)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .lineStyle(StrokeStyle(lineWidth: BaselineChartStyle.lineWidth, lineCap: .round))
                     .interpolationMethod(.monotone)
             }
             if let avg = item.row.avgHr {
                 RuleMark(y: .value("Average", Double(avg)))
-                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .foregroundStyle(BaselineTheme.rhr.opacity(BaselineChartStyle.baselineOpacity))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
             }
         }
         .chartXScale(domain: item.start...max(item.end, item.start.addingTimeInterval(60)))
         .chartYScale(domain: lo...hi)
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { _ in
-                AxisGridLine().foregroundStyle(BaselineTheme.hairline)
-                AxisValueLabel().foregroundStyle(BaselineTheme.textTertiary).font(BaselineTheme.caption)
-            }
-        }
+        .chartYAxis { BaselineChartStyle.yAxis(desiredCount: 3) }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                 AxisValueLabel(format: .dateTime.hour().minute())
                     .foregroundStyle(BaselineTheme.textTertiary).font(BaselineTheme.caption)
             }
         }
+        .chartPlotStyle { $0.background(.clear) }
         .chartLegend(.hidden)
         .frame(height: 140)
         // One element for VoiceOver: without `.ignore` every bucket's area and line mark stays

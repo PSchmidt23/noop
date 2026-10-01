@@ -5,35 +5,88 @@ import StrandAnalytics
 
 // MARK: - Hero
 
-/// The night's headline: big "7h 24m" asleep, bedtime / wake / efficiency, and the night versus the
-/// 30-night average as a pill.
+/// The night's headline: ONE ring ("7h 24m" asleep against the 30-night average, the average as the
+/// ring's baseline tick and band) beside bedtime / wake / efficiency cells. The ring's context line is
+/// the one place the night is compared with the average; nothing else on the card repeats it.
+/// The only ring on the Sleep tab (trademark guardrail: never three circular gauges together).
 struct SleepHeroCard: View {
     let title: String
     let night: SleepNight
     /// `BaselineReadouts.sleepAverage30(before:in:)`: the 30 nights before this one; nil while too few.
     let average: Double?
+    /// The day label as the card's accessory. `NightDetailScreen` passes false: its title is the day.
+    var showsDayLabel: Bool = true
+
+    /// Width of the ring column in the side-by-side layout (the 168pt ring plus its line caps), so the
+    /// three cells keep a predictable column beside it.
+    private static let ringColumn: CGFloat = 184
 
     var body: some View {
-        BaselineCard(title: title, subtitle: SleepFormat.dayLabel(night.dayDate), accessory: pill) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(BaselineReadouts.durationText(minutes: night.asleepMin))
-                    .font(BaselineTheme.hero())
-                    .foregroundStyle(BaselineTheme.text)
-                    .contentTransition(.numericText())
-                Text("asleep")
-                    .font(BaselineTheme.headline)
-                    .foregroundStyle(BaselineTheme.textSecondary)
-            }
-            // Three-up at default sizes; at accessibility Dynamic Type sizes a clock like "11:21 PM" no
-            // longer fits a third of the card and would break mid-value, so the cells stack instead.
+        BaselineCard(title: title, accessory: dayAccessory) {
+            // Ring beside the cells while both fit; at accessibility Dynamic Type sizes the ring sits
+            // centred over a row of the three cells instead, so a clock like "11:21 PM" never breaks.
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { vitalsCells }
-                VStack(alignment: .leading, spacing: 12) { vitalsCells }
+                HStack(alignment: .center, spacing: 16) {
+                    ring.frame(width: Self.ringColumn)
+                    VStack(alignment: .leading, spacing: 12) { cells }
+                }
+                VStack(spacing: 16) {
+                    ring
+                    HStack(alignment: .top, spacing: 12) { cells }
+                }
             }
         }
     }
 
-    @ViewBuilder private var vitalsCells: some View {
+    private var dayAccessory: AnyView? {
+        guard showsDayLabel else { return nil }
+        return AnyView(
+            Text(SleepFormat.dayLabel(night.dayDate))
+                .font(BaselineTheme.caption)
+                .foregroundStyle(BaselineTheme.textTertiary)
+        )
+    }
+
+    private var ring: some View {
+        MetricRing(value: night.asleepMin,
+                   domain: MetricRingScale.sleepDomain(average30: average),
+                   color: BaselineTheme.sleep,
+                   label: "Asleep",
+                   unit: "",
+                   context: contextText,
+                   band: average.map { ($0 - 30)...($0 + 30) },
+                   baseline: average,
+                   tone: tone,
+                   size: 168,
+                   lineWidth: 12,
+                   valueText: BaselineReadouts.durationText(minutes: night.asleepMin),
+                   numeralFont: BaselineTheme.hero(36))
+    }
+
+    /// The ONE context sentence: the funnel's delta wording (`SleepFormat.deltaText`, the same number
+    /// and steady threshold Home's sleep card prints) and the name of the average it is against.
+    private var contextText: String {
+        guard let average else {
+            return "30\u{2011}night average appears after \(BaselineReadouts.sleepAverageMinNights) nights"
+        }
+        // `deltaText` says "vs average" (the morning summary's wording, where the window is implied);
+        // here the window is named once, inside the delta, so the sentence never says "average" twice.
+        return SleepFormat.deltaText(asleepMin: night.asleepMin, average: average)
+            .replacingOccurrences(of: "vs average", with: "vs your 30\u{2011}night average")
+            .replacingOccurrences(of: "On your average", with: "On your 30\u{2011}night average")
+    }
+
+    /// Dot before the context: well over the average → good, well under → watch, otherwise the sleep
+    /// colour; tertiary while there is no average yet.
+    private var tone: Color {
+        guard let average else { return BaselineTheme.textTertiary }
+        let delta = night.asleepMin - average
+        if delta >= 15 { return BaselineTheme.good }
+        if delta <= -45 { return BaselineTheme.watch }
+        return BaselineTheme.sleep
+    }
+
+    @ViewBuilder private var cells: some View {
         if let onset = night.onset, let wake = night.wake {
             StatCell(label: "Bedtime", value: SleepFormat.clock(onset))
             StatCell(label: "Wake", value: SleepFormat.clock(wake))
@@ -42,22 +95,14 @@ struct SleepHeroCard: View {
             StatCell(label: "Efficiency", value: eff)
         }
     }
-
-    private var pill: AnyView? {
-        guard let average else { return nil }
-        let delta = night.asleepMin - average
-        let color: Color = delta >= 15 ? BaselineTheme.good
-            : (delta <= -45 ? BaselineTheme.watch : BaselineTheme.sleep)
-        return AnyView(BaselinePill(text: SleepFormat.deltaText(asleepMin: night.asleepMin, average: average),
-                                    color: color))
-    }
 }
 
 // MARK: - Hypnogram
 
 /// Stage timeline plus minutes per stage. The chart's slot carries a quiet note instead when the night has
 /// no timeline (daily-row or imported nights), and beneath the chart when the strap's staging ran on
-/// sparse motion. The stage cells and the proportional bar stay whenever totals exist.
+/// sparse motion. The stage cells and the proportional bar stay whenever totals exist. Stage colours are
+/// fills and dots only: the cell values are ink (light and wake fail as text).
 struct SleepHypnogramCard: View {
     let night: SleepNight
 
@@ -84,15 +129,15 @@ struct SleepHypnogramCard: View {
     }
 
     @ViewBuilder private var stageCells: some View {
-        StatCell(label: "Deep", value: BaselineReadouts.durationText(minutes: night.deepMin), color: BaselineTheme.stageColor("deep"))
-        StatCell(label: "REM", value: BaselineReadouts.durationText(minutes: night.remMin), color: BaselineTheme.stageColor("rem"))
-        StatCell(label: "Light", value: BaselineReadouts.durationText(minutes: night.lightMin), color: BaselineTheme.stageColor("light"))
-        StatCell(label: "Awake", value: BaselineReadouts.durationText(minutes: night.awakeMin), color: BaselineTheme.stageColor("wake"))
+        StatCell(label: "Deep", value: BaselineReadouts.durationText(minutes: night.deepMin), dot: BaselineTheme.stageColor("deep"))
+        StatCell(label: "REM", value: BaselineReadouts.durationText(minutes: night.remMin), dot: BaselineTheme.stageColor("rem"))
+        StatCell(label: "Light", value: BaselineReadouts.durationText(minutes: night.lightMin), dot: BaselineTheme.stageColor("light"))
+        StatCell(label: "Awake", value: BaselineReadouts.durationText(minutes: night.awakeMin), dot: BaselineTheme.stageColor("wake"))
     }
 
     private func note(_ text: String) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: "info.circle").font(BaselineTheme.caption)
+            Image(systemName: "info.circle").font(BaselineTheme.symbol).accessibilityHidden(true)
             Text(text).font(BaselineTheme.caption)
         }
         .foregroundStyle(BaselineTheme.textTertiary)
@@ -144,7 +189,7 @@ struct BaselineHypnogram: View {
                           y: .value("Stage", b.lane),
                           height: .ratio(0.7))
                 .foregroundStyle(BaselineTheme.stageColor(b.stage))
-                .cornerRadius(2)
+                .cornerRadius(3)
         }
         .chartYScale(domain: Self.lanes)
         .chartXScale(domain: onset...wake)
@@ -157,20 +202,22 @@ struct BaselineHypnogram: View {
         }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                AxisGridLine().foregroundStyle(BaselineTheme.hairline)
+                AxisGridLine().foregroundStyle(BaselineTheme.hairline.opacity(0.75))
                 AxisValueLabel(format: .dateTime.hour())
                     .foregroundStyle(BaselineTheme.textTertiary)
                     .font(BaselineTheme.caption)
             }
         }
+        .chartPlotStyle { $0.background(.clear) }
         .frame(height: height)
     }
 }
 
-// MARK: - Vitals
+// MARK: - Vitals (NightDetailScreen only)
 
 /// Resting HR, HRV, breathing rate and skin-temperature deviation for the night. Cells without data
-/// are hidden; the caller hides the card when nothing is present (`night.hasVitals`).
+/// are hidden; the caller hides the card when nothing is present (`night.hasVitals`). Shown on a
+/// night's detail only: the tab keeps to the ring, the stages and the list.
 struct SleepVitalsCard: View {
     let night: SleepNight
 
@@ -198,7 +245,7 @@ struct SleepVitalsCard: View {
 
 // MARK: - Night row
 
-/// Compact list row: date, "7h 24m" asleep, efficiency, and a thin stage-proportion bar.
+/// Compact list row: date, a thin stage-proportion bar, "7h 24m" asleep, efficiency, chevron.
 struct SleepNightRow: View {
     let night: SleepNight
 
@@ -213,7 +260,7 @@ struct SleepNightRow: View {
             }
             Spacer(minLength: 8)
             Text(BaselineReadouts.durationText(minutes: night.asleepMin))
-                .font(.system(.body, design: .rounded).weight(.semibold))
+                .font(BaselineTheme.body.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(BaselineTheme.text)
             Text(SleepFormat.percent(night.efficiency) ?? "\u{2014}")
@@ -222,15 +269,19 @@ struct SleepNightRow: View {
                 .foregroundStyle(BaselineTheme.textSecondary)
                 .frame(width: 38, alignment: .trailing)
             Image(systemName: "chevron.right")
-                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .font(BaselineTheme.symbolSmall)
                 .foregroundStyle(BaselineTheme.textTertiary)
+                .accessibilityHidden(true)
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the night's stages and vitals")
     }
 }
 
-/// Thin horizontal bar split by stage proportion (deep, REM, light, awake).
+/// Thin horizontal bar split by stage proportion (deep, REM, light, awake). A `GeometryReader`, so the
+/// caller gives it an explicit height (the stack it sits in is lazy).
 struct SleepStageBar: View {
     let night: SleepNight
 
@@ -264,6 +315,7 @@ struct SleepStageBar: View {
             }
             .clipShape(Capsule())
         }
+        .accessibilityHidden(true)
     }
 }
 #endif

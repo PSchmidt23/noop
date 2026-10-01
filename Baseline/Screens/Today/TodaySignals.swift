@@ -4,7 +4,7 @@ import WhoopStore
 import StrandAnalytics
 
 // Pure derivations for Today's Signals card: the few early-warning patterns worth a sentence, built
-// from `repo.days`, the Sleep tab's `SleepNight` list, the `TodaySnapshot` the hero tiles draw and the
+// from `repo.baselineDays`, the Sleep tab's `SleepNight` list, the `TodaySnapshot` the hero tiles draw and the
 // recent native journal. Nothing here touches the store or SwiftUI; unit-tested in `TodaySignalsTests`.
 
 /// One thing worth saying this morning. `sentence` is the calm, non-medical line the card prints;
@@ -54,7 +54,7 @@ struct TodaySignals: Equatable {
 
     // MARK: Build
 
-    /// `days` is `repo.days` (oldest → newest); `nights` is `SleepNightBuilder.nights(…)` (newest
+    /// `days` is `repo.baselineDays` (oldest → newest); `nights` is `SleepNightBuilder.nights(…)` (newest
     /// first), the Sleep tab's list; `snapshot` is the `TodaySnapshot` built for the same inputs, so the
     /// baselines judged here are the ones the hero tiles print; `journal` is the recent native journal
     /// (`repo.journalEntries(days: 7)`), read only for the confounders NOOP's engine rules out.

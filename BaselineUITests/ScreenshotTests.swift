@@ -1,12 +1,16 @@
 import UIKit
 import XCTest
 
-/// Screenshot harness: one test per Baseline screen (tabs, pushed screens, Settings' Devices / Apple Health /
-/// Import / Compare / Export) plus the three welcome steps and the launch frame. Each test launches the
-/// app with its DEBUG launch arguments, waits for the screen's first card, captures the top of the screen,
-/// then scrolls up until the content stops moving (at most 12 scrolls), capturing after each scroll. Every PNG
-/// is written as `<screen>-<n>.png` to `$BASELINE_SHOTS_DIR` (default `/private/tmp/baseline-shots`) and
-/// attached to the test result, so a scrolled screen can be verified headlessly. Run it through
+/// Screenshot harness: one test per Baseline screen — the three tabs (`home`, `trends`, `sleep`), the
+/// journal sheet over Home (`journal`, via Home's "Journal" button), Settings (`settings`, via the gear) and
+/// its Devices / Apple Health / Import / Compare / Export pushes, Trends' embedded Progress and Habits
+/// sections (via the pinned segments), Workouts and its detail — plus the three welcome steps and the launch
+/// frame. Each test launches the app with its DEBUG launch arguments (`--tab home|trends|sleep`, always with
+/// `--ui-testing`, which pins the tab bar so a scrolled capture is deterministic),
+/// waits for the screen's first card, captures the top of the screen, then scrolls up until the content
+/// stops moving (at most 12 scrolls), capturing after each scroll. Every PNG is written as
+/// `<screen>-<n>.png` to `$BASELINE_SHOTS_DIR` (default `/private/tmp/baseline-shots`) and attached to the
+/// test result, so a scrolled screen can be verified headlessly. Run it through
 /// `Baseline/scripts/ui-shots.sh` for a fixed 9:41 status bar. See BASELINE.md.
 final class ScreenshotTests: XCTestCase {
 
@@ -20,8 +24,8 @@ final class ScreenshotTests: XCTestCase {
 
     // MARK: - Tabs (seeded, onboarding skipped)
 
-    func testToday() throws {
-        try captureTab("today", firstCard: "HRV")
+    func testHome() throws {
+        try captureTab("home", firstCard: "HRV")
     }
 
     func testTrends() throws {
@@ -32,8 +36,21 @@ final class ScreenshotTests: XCTestCase {
         try captureTab("sleep", firstCard: "Stages")
     }
 
+    /// Home → the floating "Journal" button → `JournalSheet` at its medium detent (the journal is not a
+    /// tab). Captures the sheet as it opens over Home (`journal-0`), lifts it to the large detent and
+    /// captures again (`journal-1`). The sheet is not scrolled: its habits fit one screen, and a gutter
+    /// drag over a sheet with nothing left to scroll makes XCUITest's event synthesis time out.
     func testJournal() throws {
-        try captureTab("journal", firstCard: "Habits")
+        let app = launchTab("home")
+        XCTAssertTrue(openJournal(app), "home: Journal button did not open the sheet")
+        let card = app.staticTexts["Habits"].firstMatch
+        let cardShown = card.waitForExistence(timeout: 20)
+        Thread.sleep(forTimeInterval: 0.6)
+        try save(XCUIScreen.main.screenshot(), as: "journal-0")
+        let lifted = liftSheet(app, titled: "Journal")
+        try save(XCUIScreen.main.screenshot(), as: "journal-1")
+        XCTAssertTrue(cardShown, "journal: first card (Habits) did not appear (screenshots still written)")
+        XCTAssertTrue(lifted, "journal: sheet did not lift to its large detent (screenshots still written)")
     }
 
     func testSettings() throws {
@@ -42,37 +59,46 @@ final class ScreenshotTests: XCTestCase {
         // `-baseline.eveningCheckIn.enabled YES` seeds the AppStorage key through UserDefaults' argument
         // domain, so the Notifications card shows the evening toggle on with its time row, without the
         // tap that would ask for notification permission (a system alert over the capture).
-        try captureTab("settings", firstCard: NSPredicate(format: "label CONTAINS[c] %@", "connected"),
-                       extraArguments: ["-baseline.eveningCheckIn.enabled", "YES"])
+        let app = launchSettings(extraArguments: ["-baseline.eveningCheckIn.enabled", "YES"])
+        try capturePushed(app, screen: "settings", title: nil,
+                          firstCard: NSPredicate(format: "label CONTAINS[c] %@", "connected"))
     }
 
-    // MARK: - Pushed screens (seeded, onboarding skipped)
+    // MARK: - Sections and pushed screens (seeded, onboarding skipped)
 
-    /// Trends → "Progress" toolbar button → the Progress screen (HRV / resting HR / sleep / sleep timing).
+    /// Trends → the "Progress" segment of the pinned section control → the Progress section (HRV /
+    /// resting HR / sleep baselines over months), embedded in the Trends screen: the navigation title
+    /// stays "Trends", so the switch is confirmed by the segment's selected state and the first card.
     func testProgress() throws {
         let app = launchTab("trends")
-        // The toolbar can lag the seeded first paint by a few seconds on a fresh install.
-        let button = app.buttons["Progress"].firstMatch
-        XCTAssertTrue(button.waitForExistence(timeout: 20), "trends: Progress toolbar button did not appear")
-        button.tap()
-        try capturePushed(app, screen: "progress", title: "Progress",
+        selectTrendsSection(app, "Progress")
+        try capturePushed(app, screen: "progress", title: nil,
                           firstCard: NSPredicate(format: "label == %@", "HRV baseline"))
     }
 
-    /// Today → effort card's "All workouts" link → the Workouts list, then its first row → the detail.
+    /// Trends → the "Habits" segment → the journal patterns (what moves your HRV / Resting HR, dose rows),
+    /// embedded like Progress.
+    func testHabits() throws {
+        let app = launchTab("trends")
+        selectTrendsSection(app, "Habits")
+        try capturePushed(app, screen: "habits", title: nil,
+                          firstCard: NSPredicate(format: "label BEGINSWITH %@", "What moves your"))
+    }
+
+    /// Home → effort card's "All workouts" link → the Workouts list, then its first row → the detail.
     func testWorkouts() throws {
-        let app = launchTab("today")
+        let app = launchTab("home")
         let link = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "All workouts")).firstMatch
-        XCTAssertTrue(scrollUntilHittable(app, link), "today: All workouts link did not appear")
+        XCTAssertTrue(scrollUntilHittable(app, link), "home: All workouts link did not appear")
         link.tap()
         try capturePushed(app, screen: "workouts", title: "Workouts",
                           firstCard: NSPredicate(format: "label CONTAINS[c] %@", "workout"))
 
-        // Back to Today and in again, so the list is at its top with the newest row on screen. The rows
+        // Back to Home and in again, so the list is at its top with the newest row on screen. The rows
         // are plain NavigationLinks whose children stay separate elements, so the row is reached through
         // its "… bpm" text.
         app.navigationBars.buttons.firstMatch.tap()
-        XCTAssertTrue(link.waitForExistence(timeout: 10), "today: All workouts link did not reappear")
+        XCTAssertTrue(link.waitForExistence(timeout: 10), "home: All workouts link did not reappear")
         link.tap()
         let row = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "bpm")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 20), "workouts: no workout row to open (screenshots still written)")
@@ -87,7 +113,7 @@ final class ScreenshotTests: XCTestCase {
     /// Settings → Devices: with no strap bonded the empty state, the "Add strap" button and the pairing
     /// help; then the "Add strap" chooser sheet, captured once as `devices-add-0`.
     func testDevices() throws {
-        let app = launchTab("settings")
+        let app = launchSettings()
         try openSettingsRow(app, "Devices")
         try capturePushed(app, screen: "devices", title: "Devices",
                           firstCard: NSPredicate(format: "label == %@", "No strap yet"))
@@ -103,7 +129,7 @@ final class ScreenshotTests: XCTestCase {
 
     /// Settings → Apple Health: the access card, what Baseline reads and writes back.
     func testAppleHealth() throws {
-        let app = launchTab("settings")
+        let app = launchSettings()
         try openSettingsRow(app, "Apple Health")
         try capturePushed(app, screen: "apple-health", title: "Apple Health",
                           firstCard: NSPredicate(format: "label == %@", "Baseline reads"))
@@ -111,7 +137,7 @@ final class ScreenshotTests: XCTestCase {
 
     /// Settings → Import data: the WHOOP export and Apple Health export cards.
     func testImport() throws {
-        let app = launchTab("settings")
+        let app = launchSettings()
         try openSettingsRow(app, "Import data")
         try capturePushed(app, screen: "import", title: "Import",
                           firstCard: NSPredicate(format: "label == %@", "WHOOP export"))
@@ -121,7 +147,7 @@ final class ScreenshotTests: XCTestCase {
     /// Apple Health import), so this is the empty state; with an import it is the metric card and the
     /// night-by-night list.
     func testCompare() throws {
-        let app = launchTab("settings")
+        let app = launchSettings()
         try openSettingsRow(app, "Compare sources")
         try capturePushed(app, screen: "compare", title: "Compare",
                           firstCard: NSPredicate(format: "label == %@ OR label CONTAINS %@",
@@ -130,10 +156,18 @@ final class ScreenshotTests: XCTestCase {
 
     /// Settings → Export CSV: the one card (what the zip holds, the stored-history line, the button).
     func testExport() throws {
-        let app = launchTab("settings")
+        let app = launchSettings()
         try openSettingsRow(app, "Export CSV")
         try capturePushed(app, screen: "export", title: "Export",
                           firstCard: NSPredicate(format: "label == %@", "CSV export"))
+    }
+
+    /// Home with Settings pushed from the gear in the bar (every tab root carries it; Home is the launch
+    /// tab). Waits for the "Settings" navigation title.
+    private func launchSettings(extraArguments: [String] = []) -> XCUIApplication {
+        let app = launchTab("home", extraArguments: extraArguments)
+        XCTAssertTrue(openSettings(app), "home: Settings gear did not push Settings")
+        return app
     }
 
     /// Taps the Settings row whose folded label (title + subtitle) starts with `title`.
@@ -146,13 +180,15 @@ final class ScreenshotTests: XCTestCase {
     // MARK: - Launch
 
     /// The earliest frame XCUITest can grab after launch, before waiting for any card, so the launch
-    /// background (navy, never white) and the first paint can be checked as `launch-0` / `launch-1`.
+    /// background (the `LaunchBackground` asset: BaselineTheme's off-white wash in both appearances, so
+    /// nothing flashes between the launch screen and the first paint) and the first paint can be checked
+    /// as `launch-0` / `launch-1`. Lands on Home, whose title is the selected day: "Today" at launch.
     func testLaunch() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-seed", "--skip-onboarding"]
+        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--ui-testing"]
         app.launch()
         try save(XCUIScreen.main.screenshot(), as: "launch-0")
-        let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "today")).firstMatch
+        let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Today")).firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 10), "launch: Today title did not appear")
         try save(XCUIScreen.main.screenshot(), as: "launch-1")
     }
@@ -191,14 +227,96 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(cardShown, "\(tab): first card (\(firstCard.predicateFormat)) did not appear (screenshots still written)")
     }
 
-    /// Launches the seeded app on `tab` with onboarding skipped and waits for the tab's navigation title.
+    /// Launches the seeded app on `tab` (`home`, `trends` or `sleep`) with onboarding skipped (and
+    /// `--ui-testing`, which pins the tab bar so the scroll loop never sees it animating) and waits for the
+    /// navigation title that `--tab` lands on.
     private func launchTab(_ tab: String, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--tab", tab] + extraArguments
+        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--tab", tab, "--ui-testing"] + extraArguments
         app.launch()
-        let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", tab)).firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 10), "\(tab): navigation title did not appear")
+        let expected = Self.launchTitle(for: tab)
+        let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", expected)).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 10), "\(tab): \"\(expected)\" navigation title did not appear")
         return app
+    }
+
+    /// The navigation-bar title `--tab <tab>` lands on. Home's title is the selected day, "Today" on a cold
+    /// launch (`BaselineDaySwitcher.title`), so `home` (and its `today` alias) waits for that word; `trends`
+    /// and `sleep` are their own titles. Matched case-insensitively.
+    private static func launchTitle(for tab: String) -> String {
+        switch tab {
+        case "today", "home": return "Today"
+        default: return tab
+        }
+    }
+
+    /// The gear in the bar (accessibility label "Settings", a NavigationLink that pushes SettingsScreen):
+    /// taps it until the pushed screen's "Settings" title appears (a tap that lands while the seeded screen
+    /// is still settling can be swallowed; three tries). The gear and the pushed title share the word, so
+    /// the gear is looked up among the bar's buttons and the title among its static texts.
+    @discardableResult
+    private func openSettings(_ app: XCUIApplication) -> Bool {
+        let gear = app.navigationBars.buttons["Settings"].firstMatch
+        guard gear.waitForExistence(timeout: 20) else {
+            XCTFail("home: Settings gear did not appear")
+            return false
+        }
+        let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Settings")).firstMatch
+        for _ in 1...3 {
+            gear.tap()
+            if title.waitForExistence(timeout: 6) { return true }
+            guard gear.exists && gear.isHittable else { break }
+        }
+        return title.exists
+    }
+
+    /// Home's floating "Journal" button (a glass capsule in the bottom safe-area bar): taps it until the
+    /// sheet's own "Journal" bar title appears (three tries).
+    @discardableResult
+    private func openJournal(_ app: XCUIApplication) -> Bool {
+        let button = app.buttons["Journal"].firstMatch
+        guard button.waitForExistence(timeout: 20) else {
+            XCTFail("home: Journal button did not appear")
+            return false
+        }
+        let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Journal")).firstMatch
+        for _ in 1...3 {
+            button.tap()
+            if title.waitForExistence(timeout: 6) { return true }
+            guard button.exists && button.isHittable else { break }
+        }
+        return title.exists
+    }
+
+    /// Trends' pinned section control: taps the segment named `label` until it carries the selected trait
+    /// (a tap that lands while the seeded screen is still settling can be swallowed; three tries). The
+    /// navigation title stays "Trends" whichever section shows, so the trait, not a title, is the signal.
+    @discardableResult
+    private func selectTrendsSection(_ app: XCUIApplication, _ label: String) -> Bool {
+        let segment = app.buttons[label].firstMatch
+        guard segment.waitForExistence(timeout: 20) else {
+            XCTFail("trends: \(label) segment did not appear")
+            return false
+        }
+        for _ in 1...3 {
+            segment.tap()
+            if segment.wait(for: \.isSelected, toEqual: true, timeout: 6) { return true }
+        }
+        XCTFail("trends: \(label) segment did not become selected")
+        return false
+    }
+
+    /// Lifts the presented sheet whose bar reads `title` from its medium detent to the large one: the same
+    /// held gutter drag the scroll loop uses, which the sheet takes as a pan on itself while its content
+    /// has nowhere to scroll (a `swipeUp()` on the bar's title does not move it). True when the bar moved up.
+    @discardableResult
+    private func liftSheet(_ app: XCUIApplication, titled title: String) -> Bool {
+        let bar = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", title)).firstMatch
+        guard bar.waitForExistence(timeout: 10) else { return false }
+        let before = bar.frame.minY
+        scrollUp(app)
+        Thread.sleep(forTimeInterval: 0.8)
+        return bar.exists && bar.frame.minY < before
     }
 
     /// A screen pushed by a tap: waits for `title` (when given) and `firstCard`, then captures top and
@@ -214,16 +332,25 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(cardShown, "\(screen): first card (\(firstCard.predicateFormat)) did not appear (screenshots still written)")
     }
 
-    /// Scrolls up (at most twelve times) until `element` exists and is hittable.
+    /// Scrolls up (at most twelve times) until `element` exists, is hittable and sits clear of Home's
+    /// floating bottom bar (the "Journal" button): XCUITest reports a row under that bar as hittable, but
+    /// the tap lands on the bar, exactly as content under a tab bar is out of reach.
     @discardableResult
     private func scrollUntilHittable(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
         _ = element.waitForExistence(timeout: 10)
         for _ in 0..<12 {
-            if element.exists && element.isHittable { return true }
+            if element.exists && element.isHittable && Self.clearOfBottomBar(app, element) { return true }
             scrollUp(app)
             Thread.sleep(forTimeInterval: 0.6)
         }
         return element.exists && element.isHittable
+    }
+
+    /// True unless the floating "Journal" bar is on screen and `element` overlaps its band.
+    private static func clearOfBottomBar(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
+        let bar = app.buttons["Journal"].firstMatch
+        guard bar.exists else { return true }
+        return element.frame.maxY <= bar.frame.minY - 8
     }
 
     /// One deterministic scroll of ~45% of the screen: a drag in the 20pt left gutter, held at the end so
@@ -239,7 +366,7 @@ final class ScreenshotTests: XCTestCase {
     /// so the step is not scrolled.
     private func captureWelcome(step: Int, marker: String) throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-onboarding", "--welcome-step", String(step)]
+        app.launchArguments = ["--reset-onboarding", "--welcome-step", String(step), "--ui-testing"]
         app.launch()
 
         let shown = app.staticTexts[marker].firstMatch.waitForExistence(timeout: 10)
@@ -248,8 +375,8 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(shown, "\(name): \"\(marker)\" did not appear (screenshot still written)")
     }
 
-    /// Top capture, then scroll up and capture until two consecutive captures are pixel-identical below
-    /// the status bar (the content stopped moving) or twelve scrolls have been taken.
+    /// Top capture (`<screen>-0`), then scroll up and capture until two consecutive captures are
+    /// pixel-identical below the status bar (the content stopped moving) or twelve scrolls have been taken.
     private func captureScrolled(_ app: XCUIApplication, screen: String) throws {
         var previous = XCUIScreen.main.screenshot()
         var previousContent = Self.contentBelowStatusBar(previous)

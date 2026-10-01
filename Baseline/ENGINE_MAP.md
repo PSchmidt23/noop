@@ -25,7 +25,10 @@ If you host `TodayView`/`TrendsView` add `.tabRouteDestinations()` (Strand/App/T
 
 ## Daily data (Strand/Data/Repository.swift)
 - `@Published var days: [DailyMetric]` — merged (imported ∪ computed ∪ steps), oldest→newest. Filter by day key.
-  Do NOT use `dailyMetrics(fromDay:toDay:)` (imported rows only).
+  Do NOT use `dailyMetrics(fromDay:toDay:)` (imported rows only). A Baseline screen reads `repo.baselineDays`
+  (`Baseline/Components/BaselineDays.swift`: the same table under the persisted `baseline.dataSource`
+  precedence, strap first by default; see DESIGN.md "Data funnel"), never `days` itself. Import's
+  stored-history count is the one deliberate read of `days`.
 - `@Published var vitalRows: [SourcedDailyMetric { metric: DailyMetric, source: DailyMetricSource }]` — the same
   nights BEFORE the merge, one row per source (`.whoopImport`, `.noopComputed` = the strap's own, `.appleHealth`,
   `.localCache`), published on every refresh. This is what Compare pairs night by night; `days` has already
@@ -57,7 +60,7 @@ If you host `TodayView`/`TrendsView` add `.tabRouteDestinations()` (Strand/App/T
   suppression from the journal. Baseline's Today Signals card feeds it (`Baseline/Screens/Today/TodaySignals.swift`).
 - Recipe:
   ```swift
-  let hist = repo.days.filter { $0.day < todayKey }
+  let hist = repo.baselineDays.filter { $0.day < todayKey }   // the funnel, never repo.days
   let s = Baselines.foldHistory(hist.map(\.avgHrv), dayKeys: hist.map(\.day), cfg: Baselines.hrvCfg)
   guard s.usable else { /* calibrating */ }
   let d = Baselines.deviation(todayHrv, state: s)  // d.delta ms, d.ratio, band = s.baseline ± Baselines.sigma(s)
@@ -97,6 +100,8 @@ If you host `TodayView`/`TrendsView` add `.tabRouteDestinations()` (Strand/App/T
   outcomeByDay:) -> DoseResponse?`.
 - Template view-model: `InsightsHubViewModel` (Strand/Screens/InsightsHubView.swift ~line 490):
   outcome map = `repo.series(key: "recovery"|"hrv"|"rhr"|"sleep_performance", source: "my-whoop")`.
+  Baseline's `JournalScreenModel` reads `repo.baselineSeries(key:)` instead (the strap-first funnel over
+  `Repository.dailyColumn`; `repo.series` is NOOP's import-wins cache).
 
 ## Design system (Packages/StrandDesign)
 - Tokens: `StrandPalette` (surface/text/hairline, `accent`, score colours, sleep-stage colours), `StrandFont`.

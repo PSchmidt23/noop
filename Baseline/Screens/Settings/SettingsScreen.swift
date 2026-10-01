@@ -2,17 +2,19 @@
 import SwiftUI
 import UserNotifications
 
-/// Settings: grouped cards, one idea each. Strap, Apple Health and Data push Baseline's own screens
-/// over NOOP's engine (`DevicesScreen`, `AppleHealthScreen`, `ImportScreen`, `CompareScreen`,
-/// `ExportScreen`); Profile is Baseline's small
-/// form over `ProfileStore`; About carries attribution, the privacy policy, license and the disclaimer.
-/// Each card observes only what it needs, so the root never re-renders on strap ticks.
+/// Settings: grouped cards, one idea each, under pinned glass section headers. Pushed from the gear in
+/// every tab's navigation bar, so it assumes nothing about a tab: the title is "Settings" and the bar's
+/// Back button takes the person to wherever they came from. Strap, Apple Health and Data push Baseline's
+/// own screens over NOOP's engine (`DevicesScreen`, `AppleHealthScreen`, `ImportScreen`, `CompareScreen`,
+/// `ExportScreen`); Profile is Baseline's small form over `ProfileStore`; About carries attribution, the
+/// privacy policy, license and the disclaimer. Each card observes only what it needs, so the root never
+/// re-renders on strap ticks.
 struct SettingsScreen: View {
     var body: some View {
         BaselineScreen(title: "Settings") {
             SettingsSection(label: "Strap") { SettingsStrapCard() }
             SettingsSection(label: "Apple Health") { SettingsHealthCard() }
-            SettingsSection(label: "Data") { SettingsImportCard() }
+            SettingsSection(label: "Data") { SettingsDataCard() }
             SettingsSection(label: "Profile") { SettingsProfileCard() }
             SettingsSection(label: "Notifications") { SettingsNotificationsCard() }
             #if DEBUG
@@ -35,8 +37,10 @@ private struct SettingsStrapCard: View {
         BaselineCard {
             HStack(spacing: 10) {
                 Circle()
-                    .fill(live.connected ? BaselineTheme.good : BaselineTheme.textTertiary)
+                    .fill(live.connected ? BaselineTheme.good : BaselineTheme.inactive)
                     .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+                // The "connected" UI-test anchor: a plain Text, never folded into a button.
                 Text(live.connected ? "Connected" : "Not connected")
                     .font(BaselineTheme.headline)
                     .foregroundStyle(BaselineTheme.text)
@@ -47,7 +51,7 @@ private struct SettingsStrapCard: View {
             }
             Text(lastSyncLine)
                 .font(BaselineTheme.caption)
-                .foregroundStyle(BaselineTheme.textSecondary)
+                .foregroundStyle(BaselineTheme.textTertiary)
             SettingsDivider()
             SettingsLinkRow(icon: "dot.radiowaves.left.and.right", title: "Devices",
                             subtitle: "Pair, rename or forget a strap") {
@@ -68,7 +72,7 @@ private struct SettingsStrapCard: View {
     }
 
     /// Battery is the strap's own number and outlives its link, so it is only shown while the strap is
-    /// the connected source.
+    /// the connected source. The pill's text is ink; the dot carries the level.
     private var battery: (text: String, color: Color)? {
         guard live.connected, live.activeIsWhoop, let pct = live.batteryPct else { return nil }
         let n = max(0, min(100, Int(pct.rounded())))
@@ -107,9 +111,14 @@ private struct SettingsHealthCard: View {
     }
 }
 
-// MARK: - Import
+// MARK: - Data
 
-private struct SettingsImportCard: View {
+/// Import / Compare / Export rows (unchanged: Compare is where an imported WHOOP export is checked
+/// against the strap) and the data-source precedence `BaselineDataSourceSetting` persists: which
+/// source a night both recorded shows on Home, Trends and Sleep. Three ways, one sentence each.
+private struct SettingsDataCard: View {
+    @StateObject private var dataSource = BaselineDataSourceSetting()
+
     var body: some View {
         BaselineCard {
             SettingsLinkRow(icon: "square.and.arrow.down", title: "Import data",
@@ -126,7 +135,24 @@ private struct SettingsImportCard: View {
                             subtitle: "Your daily table as a file") {
                 ExportScreen()
             }
+            SettingsDivider()
+            SettingsRowLabel(icon: "arrow.triangle.branch", title: BaselineDataSourceSetting.title,
+                             subtitle: "Which source a night both recorded shows") {
+                EmptyView()
+            }
+            BaselineSegmentedPicker(options: BaselineDataSourceSetting.options,
+                                    selection: $dataSource.selection,
+                                    label: { $0.label },
+                                    accessibilityLabel: { "\(BaselineDataSourceSetting.title): \($0.label)" },
+                                    style: .flat)
+            Text(dataSource.selection.subtitle)
+                .font(BaselineTheme.caption)
+                .foregroundStyle(BaselineTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentTransition(.opacity)
+                .animation(.snappy(duration: 0.25), value: dataSource.selection)
         }
+        .onAppear { dataSource.reload() }
     }
 }
 
@@ -166,7 +192,8 @@ private struct SettingsProfileCard: View {
 /// The opt-in morning summary (`MorningSummaryNotifier`) and evening check-in (`EveningCheckInScheduler`).
 /// Turning either on asks for notification permission right here, at a predictable moment, through the
 /// one authorization flow; a refusal leaves the toggle on (that is still what the person wants) and
-/// points at iOS Settings, re-checking whenever the app comes back to the foreground.
+/// points at iOS Settings, re-checking whenever the app comes back to the foreground. Each row carries a
+/// one-line subtitle; the longer explanation is the row's accessibility hint.
 private struct SettingsNotificationsCard: View {
     @AppStorage(MorningSummaryNotifier.enabledKey) private var enabled = false
     @AppStorage(EveningCheckInScheduler.enabledKey) private var eveningEnabled = false
@@ -175,6 +202,9 @@ private struct SettingsNotificationsCard: View {
     @State private var status: UNAuthorizationStatus?
 
     private var denied: Bool { (enabled || eveningEnabled) && status == .denied }
+
+    private static let morningHint = "One notification when the first sync of the day lands: HRV, resting HR and sleep against your baseline. Never on a schedule."
+    private static let eveningHint = "One reminder each evening to log tonight's habits, so the Journal can learn what moves your HRV. Opens the day's Journal."
 
     /// The `DatePicker` edits a `Date`; only its hour and minute are kept.
     private var eveningTime: Binding<Date> {
@@ -186,19 +216,21 @@ private struct SettingsNotificationsCard: View {
         BaselineCard {
             Toggle(isOn: $enabled) {
                 SettingsRowLabel(icon: "sun.max", title: "Morning summary",
-                                 subtitle: "One notification when the first sync of the day lands: HRV, resting HR and sleep against your baseline. Never on a schedule.") {
+                                 subtitle: "When the first sync of the day lands.") {
                     EmptyView()
                 }
             }
             .tint(BaselineTheme.accent)
+            .accessibilityHint(Self.morningHint)
             SettingsDivider()
             Toggle(isOn: $eveningEnabled) {
                 SettingsRowLabel(icon: "moon", title: "Evening check-in",
-                                 subtitle: "One reminder each evening to log tonight's habits, so the Journal can learn what moves your HRV. Opens the Journal tab.") {
+                                 subtitle: "A reminder to log tonight's habits.") {
                     EmptyView()
                 }
             }
             .tint(BaselineTheme.accent)
+            .accessibilityHint(Self.eveningHint)
             if eveningEnabled {
                 HStack {
                     Text("Time")
@@ -210,7 +242,7 @@ private struct SettingsNotificationsCard: View {
                         .datePickerStyle(.compact)
                         .tint(BaselineTheme.accent)
                 }
-                .padding(.leading, 44)   // under the row's text, past the 30pt icon and its 14pt gap
+                .padding(.leading, 44)   // under the row's text, past the 30pt icon tile and its 14pt gap
             }
             if denied {
                 SettingsDivider()
@@ -280,14 +312,17 @@ private struct SettingsDeveloperCard: View {
 
 // MARK: - Shared rows
 
-/// Section label plus its card, so the screen body stays within the view-builder limit.
+/// A `Section` whose header is the pinned glass capsule: `BaselineScreen`'s `LazyVStack(pinnedViews:
+/// [.sectionHeaders])` keeps it floating over the rows that scroll beneath it. The only custom glass on
+/// this screen (≤ 7 small capsules; the downgrade on a device that shows jank is `style: .flat`).
 private struct SettingsSection<Content: View>: View {
     let label: String
     @ViewBuilder var content: () -> Content
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            BaselineSectionLabel(text: label)
+        Section {
             content()
+        } header: {
+            BaselineSectionLabel(text: label, style: .glass)
         }
     }
 }
@@ -296,7 +331,25 @@ struct SettingsDivider: View {
     var body: some View { Divider().overlay(BaselineTheme.hairline) }
 }
 
-/// Icon, title, optional subtitle, and whatever sits at the trailing edge (a pill, a chevron, a spinner).
+/// The 30pt icon tile every Settings-style row leads with: a glyph in accent on `accent @ 0.10`,
+/// radius 10 continuous. Shared by the Settings rows and the Apple Health / Import / Export / Devices
+/// card headers so one tile looks the same everywhere.
+struct SettingsIconTile: View {
+    let icon: String
+    var body: some View {
+        Image(systemName: icon)
+            .font(BaselineTheme.symbolAccessory.weight(.medium))
+            .foregroundStyle(BaselineTheme.accent)
+            .frame(width: 30, height: 30)
+            .background(BaselineTheme.accent.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
+/// Icon tile, title, optional subtitle, and whatever sits at the trailing edge (a pill, a chevron, a
+/// spinner). The title comes first in the folded accessibility label, so a UI test's `label BEGINSWITH
+/// "Devices"` resolves the row.
 struct SettingsRowLabel<Trailing: View>: View {
     let icon: String
     let title: String
@@ -305,12 +358,7 @@ struct SettingsRowLabel<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(BaselineTheme.accent)
-                .frame(width: 30, height: 30)
-                .background(BaselineTheme.accent.opacity(0.12),
-                            in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            SettingsIconTile(icon: icon)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(BaselineTheme.body).foregroundStyle(BaselineTheme.text)
                 if let subtitle {
@@ -326,7 +374,17 @@ struct SettingsRowLabel<Trailing: View>: View {
     }
 }
 
-/// A row that pushes `destination` on the tab's navigation stack.
+/// The trailing chevron of a row that pushes or presents something.
+struct SettingsChevron: View {
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(BaselineTheme.symbolSmall)
+            .foregroundStyle(BaselineTheme.textTertiary)
+            .accessibilityHidden(true)
+    }
+}
+
+/// A row that pushes `destination` on the navigation stack it sits in.
 struct SettingsLinkRow<Destination: View>: View {
     let icon: String
     let title: String
@@ -340,9 +398,7 @@ struct SettingsLinkRow<Destination: View>: View {
         } label: {
             SettingsRowLabel(icon: icon, title: title, subtitle: subtitle) {
                 if let badge { BaselinePill(text: badge.text, color: badge.color) }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(BaselineTheme.textTertiary)
+                SettingsChevron()
             }
         }
         .buttonStyle(.plain)

@@ -136,4 +136,45 @@ final class MorningSummaryTests: BaselineEngineTestCase {
             XCTAssertTrue(summary.body.hasSuffix("Slept " + BaselineReadouts.durationText(minutes: minutes)), summary.body)
         }
     }
+
+    // MARK: Data path
+
+    /// The notifier's resolver reads the strap-first funnel, never NOOP's merged table. A WHOOP export
+    /// imported over last night lets the export win in `repo.days` (NOOP's precedence), while Home's ring
+    /// draws the strap's own row under `.strapFirst`; the banner must print the strap's number too, or the
+    /// notification and the screen behind it disagree on the same morning. `.merged` is the contrast.
+    @MainActor
+    func testNotifierSummary_readsTheStrapFirstFunnel_notTheMergedTable() async throws {
+        let store = try await WhoopStore.inMemory()
+        // What `Repository.ensureStore` does on a real open; the test seam bypasses it.
+        try await store.upsertDevice(id: "my-whoop", mac: nil, name: "WHOOP")
+        // Day keys relative to the machine's clock: `Repository.refresh` reads a window ending tomorrow.
+        let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+        let todayKey = Fixtures.dayKey(noon)
+        // Ten strap nights at 60 ms / 50 bpm, then last night: the strap scored 55 ms / 50 bpm, the export
+        // says 61 ms / 52 bpm for the same morning.
+        let strapRows = (1...10).reversed().map { Fixtures.metric(Fixtures.dayKey(noon, minus: $0), hrv: 60, rhr: 50) }
+            + [Fixtures.metric(todayKey, hrv: 55, rhr: 50)]
+        let exportRows = [Fixtures.metric(todayKey, hrv: 61, rhr: 52)]
+        _ = try await store.upsertDailyMetrics(strapRows, deviceId: "my-whoop-noop")
+        _ = try await store.upsertDailyMetrics(exportRows, deviceId: "my-whoop")
+
+        let repo = Repository(deviceId: "my-whoop")
+        repo.setStoreForTesting(store)
+        await repo.refresh()
+        XCTAssertTrue(repo.loaded)
+        XCTAssertEqual(repo.days.last?.avgHrv, 61, "precondition: NOOP's merged table lets the export win")
+        XCTAssertFalse(repo.vitalRows.isEmpty, "precondition: the per-source rows the funnel folds are published")
+
+        let strapFirstSummary = await MorningSummaryNotifier.summary(repo: repo, todayKey: todayKey, mode: .strapFirst)
+        let strapFirst = try XCTUnwrap(strapFirstSummary)
+        XCTAssertEqual(strapFirst.day, todayKey)
+        XCTAssertTrue(strapFirst.body.hasPrefix("HRV 55 ms"), "the strap's HRV, as Home's ring draws it: \(strapFirst.body)")
+        XCTAssertTrue(strapFirst.body.contains("Resting HR 50 bpm"), strapFirst.body)
+
+        let mergedSummary = await MorningSummaryNotifier.summary(repo: repo, todayKey: todayKey, mode: .merged)
+        let merged = try XCTUnwrap(mergedSummary)
+        XCTAssertTrue(merged.body.hasPrefix("HRV 61 ms"), "merged: the export's row, the disagreement this guards: \(merged.body)")
+        XCTAssertTrue(merged.body.contains("Resting HR 52 bpm"), merged.body)
+    }
 }

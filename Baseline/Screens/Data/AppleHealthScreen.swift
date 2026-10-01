@@ -1,9 +1,10 @@
 #if os(iOS)
 import SwiftUI
 
-/// Settings › Apple Health: the permission state in one pill and one sentence, what Baseline reads and
-/// writes, and the two actions (Allow, Sync now). The engine is NOOP's `HealthKitBridge`; a sync is
-/// always followed by the engine's own refresh, in the order `BaselineApp` uses on foreground.
+/// Settings › Apple Health: the permission state in one flat pill and one sentence, what Baseline reads
+/// and writes, and the two actions as in-card CTAs ("Allow" prominent, "Sync now" secondary). The
+/// engine is NOOP's `HealthKitBridge`; a sync is always followed by the engine's own refresh, in the
+/// order `BaselineApp` uses on foreground.
 struct AppleHealthScreen: View {
     @EnvironmentObject private var health: HealthKitBridge
     @EnvironmentObject private var model: AppModel
@@ -37,13 +38,8 @@ struct AppleHealthScreen: View {
     private var statusCard: some View {
         let pill = AppleHealthStatus.pill(for: health.auth)
         return BaselineCard {
-            HStack(spacing: 10) {
-                Image(systemName: "heart.text.square")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(BaselineTheme.accent)
-                    .frame(width: 30, height: 30)
-                    .background(BaselineTheme.accent.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            HStack(spacing: 14) {
+                SettingsIconTile(icon: "heart.text.square")
                 Text("Apple Health").font(BaselineTheme.headline).foregroundStyle(BaselineTheme.text)
                 Spacer()
                 BaselinePill(text: health.syncing ? "Syncing" : pill.text, color: pill.color)
@@ -67,38 +63,30 @@ struct AppleHealthScreen: View {
         }
     }
 
+    /// The in-card actions: flat capsules, never glass (a control inside content). What each one does
+    /// is the button's accessibility hint, so the card stays one sentence long.
     @ViewBuilder private var actions: some View {
         switch health.auth {
         case .unknown, .denied:
-            SettingsDivider()
-            Button(action: allow) {
-                SettingsRowLabel(icon: "checkmark.circle", title: requesting ? "Asking…" : "Allow",
-                                 subtitle: "iOS asks which types Baseline may read and write") {
-                    if requesting { ProgressView().tint(BaselineTheme.accent) }
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(requesting)
+            BaselineCTA(title: requesting ? "Asking…" : "Allow", action: allow)
+                .disabled(requesting)
+                .accessibilityHint("iOS asks which types Baseline may read and write")
             if health.auth == .denied, let url = URL(string: "x-apple-health://") {
                 SettingsDivider()
                 Link(destination: url) {
                     SettingsRowLabel(icon: "arrow.up.forward.app", title: "Open the Health app",
                                      subtitle: "Your profile › Apps › Baseline, then turn the types on") {
-                        EmptyView()
+                        Image(systemName: "arrow.up.right")
+                            .font(BaselineTheme.symbolSmall)
+                            .foregroundStyle(BaselineTheme.textTertiary)
+                            .accessibilityHidden(true)
                     }
                 }
             }
         case .authorized:
-            SettingsDivider()
-            Button(action: syncNow) {
-                SettingsRowLabel(icon: "arrow.triangle.2.circlepath",
-                                 title: health.syncing ? "Syncing…" : "Sync now",
-                                 subtitle: "Read the last 30 days and write back what Baseline computed") {
-                    if health.syncing { ProgressView().tint(BaselineTheme.accent) }
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(health.syncing)
+            BaselineCTA(title: health.syncing ? "Syncing…" : "Sync now", prominent: false, action: syncNow)
+                .disabled(health.syncing)
+                .accessibilityHint("Reads the last 30 days and writes back what Baseline computed")
         case .unavailable, .entitlementMissing:
             EmptyView()
         }

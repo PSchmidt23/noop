@@ -8,6 +8,9 @@ import UniformTypeIdentifiers
 struct ImportScreen: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var repo: Repository
+    /// The precedence Settings › Data persists, so the footer says what the tabs will show once the
+    /// import lands, and names the default as such.
+    @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
 
     var body: some View {
         BaselineScreen(title: "Import") {
@@ -37,7 +40,7 @@ struct ImportScreen: View {
                 .font(BaselineTheme.caption)
                 .foregroundStyle(BaselineTheme.textTertiary)
                 .padding(.horizontal, 4)
-            Text("Imports land in the same local store as your strap's nights, so Trends and Progress reach back as far as the export does. Importing the same file again changes nothing.")
+            Text(footer)
                 .font(BaselineTheme.caption)
                 .foregroundStyle(BaselineTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -45,12 +48,23 @@ struct ImportScreen: View {
         }
     }
 
+    /// The engine's merged table (`repo.days` / `repo.sleeps`) on purpose: this line counts what the
+    /// store holds, which is what an import adds to, whatever the Data source setting shows elsewhere.
     private var storedLine: String {
         "\(repo.days.count) days · \(repo.sleeps.count) nights stored"
     }
+
+    /// Where imports go, and which source a night both recorded shows, from the same resolver Compare's
+    /// footnote reads (`BaselineDataSource.shownOnTabs`): the default is named once, here, where a person
+    /// looks when an import did not change the numbers they expected it to.
+    private var footer: String {
+        "Imports land in the same local store as your strap's nights, so Trends and Progress reach back as far as the export does. \(BaselineDataSource.resolve(dataSourceRaw).shownOnTabs) Change that under Data source on the Data card. Importing the same file again changes nothing."
+    }
 }
 
-/// One import source: guidance, the picker button, a spinner while NOOP imports, and the last result.
+/// One import source: guidance, the picker CTA (flat, in-card), a spinner while NOOP imports, and the
+/// last result. The stored-history line below the cards describes the engine's merged table, which is
+/// what an import adds to; what Home shows is decided by the Data source setting.
 private struct ImportCard: View {
     let title: String
     let icon: String
@@ -67,12 +81,8 @@ private struct ImportCard: View {
     var body: some View {
         BaselineCard {
             HStack(spacing: 14) {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(BaselineTheme.accent)
-                    .frame(width: 30, height: 30)
-                    .background(BaselineTheme.accent.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                SettingsIconTile(icon: icon)
+                // The card's title ("WHOOP export") is a plain Text: the UI test's first-card anchor.
                 Text(title).font(BaselineTheme.headline).foregroundStyle(BaselineTheme.text)
                 Spacer()
                 if importing { ProgressView().tint(BaselineTheme.accent) }
@@ -84,24 +94,17 @@ private struct ImportCard: View {
             if let summary {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: failed ? "exclamationmark.circle" : "checkmark.circle")
-                        .font(.system(size: 13, weight: .semibold))
-                        .padding(.top, 1)
+                        .font(BaselineTheme.symbolSmall)
+                        .padding(.top, 2)
+                        .accessibilityHidden(true)
                     Text(summary)
                         .font(BaselineTheme.caption)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundStyle(failed ? BaselineTheme.watch : BaselineTheme.good)
             }
-            Button(action: pick) {
-                Text(importing ? "Importing…" : buttonTitle)
-                    .font(BaselineTheme.headline)
-                    .foregroundStyle(BaselineTheme.background)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 13)
-                    .background(BaselineTheme.accent.opacity(busy ? 0.3 : 1), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(busy)
+            BaselineCTA(title: importing ? "Importing…" : buttonTitle, systemImage: "doc", action: pick)
+                .disabled(busy)
         }
     }
 

@@ -1,7 +1,8 @@
 import UIKit
 import XCTest
 
-/// App Store marketing set: one test, six frames, each the top of a seeded screen, written as
+/// App Store marketing set: one test, six frames (01 Home, 02 Trends, 03 Progress, 04 Sleep, 05 Habits,
+/// 06 Workouts), each the top of a seeded screen, written as
 /// `<shots dir>/marketing/NN-<screen>.png` (and attached to the test result). Baseline/scripts/frame-shots.swift
 /// turns them into captioned 1320×2868 App Store frames.
 ///
@@ -22,44 +23,51 @@ final class MarketingShots: XCTestCase {
     static let requiredSize = CGSize(width: 1320, height: 2868)
 
     func testMarketingSet() throws {
-        // 01 Today: top of the screen (strap strip hidden by the marketing flag).
+        // 01 Home: the top of Home (strap status pill hidden by the marketing flag).
         do {
-            // `-baseline.marketing YES` hides the pair/status strip (DEBUG only), so the frame is the top
-            // of Today: date, readiness, hero tiles.
-            _ = launchTab("today", firstCard: NSPredicate(format: "label == %@", "HRV"))
-            Thread.sleep(forTimeInterval: 1.0)
-            try save(XCUIScreen.main.screenshot(), as: "01-today")
+            // `-baseline.marketing YES` hides the strap status pill in the bar (DEBUG only), so the frame
+            // is the top of Home: the "Today" title, the day switcher, readiness, the HRV and Resting HR rings.
+            let app = launchTab("home", firstCard: NSPredicate(format: "label == %@", "HRV"))
+            try settleAndSave(app, as: "01-home")
         }
 
-        // 02 Progress: Trends → the Progress toolbar button.
+        // 02 Trends: the top of the tab (the "Trends" segment, 30-day charts).
         do {
             let app = launchTab("trends", firstCard: NSPredicate(format: "label == %@", "HRV"))
-            let button = app.buttons["Progress"].firstMatch
-            XCTAssertTrue(button.waitForExistence(timeout: 20), "marketing: Progress toolbar button did not appear")
-            if button.exists {
-                tapUntilPushed(app, button, title: "Progress")
-                waitForPushed(app, title: "Progress", firstCard: NSPredicate(format: "label == %@", "HRV baseline"), screen: "02-progress")
+            try settleAndSave(app, as: "02-trends")
+        }
+
+        // 03 Progress: Trends → the "Progress" segment of the pinned section control. The section is
+        // embedded, so the bar still reads "Trends"; the segment's selected trait and the first card say
+        // the switch happened.
+        do {
+            let app = launchTab("trends", firstCard: NSPredicate(format: "label == %@", "HRV"))
+            if selectTrendsSection(app, "Progress") {
+                let card = app.staticTexts["HRV baseline"].firstMatch
+                XCTAssertTrue(card.waitForExistence(timeout: 20), "03-progress: first card (HRV baseline) did not appear")
             }
-            try save(XCUIScreen.main.screenshot(), as: "02-progress")
+            try settleAndSave(app, as: "03-progress")
         }
 
-        // 03 Trends, 04 Sleep, 05 Journal: the top of each tab.
-        do {
-            let app = launchTab("trends", firstCard: NSPredicate(format: "label == %@", "HRV"))
-            try settleAndSave(app, as: "03-trends")
-        }
+        // 04 Sleep: the top of the tab.
         do {
             let app = launchTab("sleep", firstCard: NSPredicate(format: "label == %@", "Stages"))
             try settleAndSave(app, as: "04-sleep")
         }
+
+        // 05 Habits: Trends → the "Habits" segment → the journal patterns ("What moves your HRV").
         do {
-            let app = launchTab("journal", firstCard: NSPredicate(format: "label == %@", "Habits"))
-            try settleAndSave(app, as: "05-journal")
+            let app = launchTab("trends", firstCard: NSPredicate(format: "label == %@", "HRV"))
+            if selectTrendsSection(app, "Habits") {
+                let card = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "What moves your")).firstMatch
+                XCTAssertTrue(card.waitForExistence(timeout: 20), "05-habits: first card (What moves your …) did not appear")
+            }
+            try settleAndSave(app, as: "05-habits")
         }
 
-        // 06 Workouts: Today → effort card's "All workouts" link.
+        // 06 Workouts: Home → effort card's "All workouts" link.
         do {
-            let app = launchTab("today", firstCard: NSPredicate(format: "label == %@", "HRV"))
+            let app = launchTab("home", firstCard: NSPredicate(format: "label == %@", "HRV"))
             let link = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "All workouts")).firstMatch
             XCTAssertTrue(scrollUntilHittable(app, link), "marketing: All workouts link did not appear")
             if link.exists && link.isHittable {
@@ -72,17 +80,47 @@ final class MarketingShots: XCTestCase {
 
     // MARK: - Drivers (mirrors ScreenshotTests; kept separate so the two files stay independent)
 
-    /// Launches the seeded app on `tab` with onboarding skipped, waits for the nav title and `firstCard`.
+    /// Launches the seeded app on `tab` with onboarding skipped (and `--ui-testing`, which pins the tab
+    /// bar), waits for the navigation title `--tab` lands on and for `firstCard`.
     private func launchTab(_ tab: String, firstCard: NSPredicate) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--tab", tab, "-baseline.marketing", "YES"]
+        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--tab", tab, "-baseline.marketing", "YES", "--ui-testing"]
         app.launch()
-        let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", tab)).firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 10), "marketing: \(tab) navigation title did not appear")
+        let expected = Self.launchTitle(for: tab)
+        let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", expected)).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 10), "marketing: \(tab) \"\(expected)\" navigation title did not appear")
         // The demo seed runs after launch; the first card can lag the title by a few seconds.
         let card = app.staticTexts.matching(firstCard).firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 20), "marketing: \(tab) first card (\(firstCard.predicateFormat)) did not appear")
         return app
+    }
+
+    /// The navigation-bar title `--tab <tab>` lands on: Home's title is the selected day, "Today" on a cold
+    /// launch, so `home` (and its `today` alias) waits for that word; `trends` and `sleep` are their own
+    /// titles. Matched case-insensitively.
+    private static func launchTitle(for tab: String) -> String {
+        switch tab {
+        case "today", "home": return "Today"
+        default: return tab
+        }
+    }
+
+    /// Trends' pinned section control: taps the segment named `label` until it carries the selected trait
+    /// (a tap that lands while the seeded screen is still settling can be swallowed; three tries).
+    @discardableResult
+    private func selectTrendsSection(_ app: XCUIApplication, _ label: String) -> Bool {
+        let segment = app.buttons[label].firstMatch
+        guard segment.waitForExistence(timeout: 20) else {
+            XCTFail("marketing: \(label) segment did not appear")
+            return false
+        }
+        for attempt in 1...3 {
+            segment.tap()
+            if segment.wait(for: \.isSelected, toEqual: true, timeout: 6) { return true }
+            print("marketing: \(label) segment not selected on tap \(attempt); retrying")
+        }
+        XCTFail("marketing: \(label) segment did not become selected")
+        return false
     }
 
     /// Taps `element` and waits for the pushed screen's title; a tap that lands while the seeded screen is
@@ -120,21 +158,15 @@ final class MarketingShots: XCTestCase {
         from.press(forDuration: 0.05, thenDragTo: to, withVelocity: velocity, thenHoldForDuration: 0.3)
     }
 
-    /// Points per second for a drag that must land where it points (no fling): the Today frame's loop.
-    private static let precise = XCUIGestureVelocity(300)
-
-    /// The reverse of `scroll`: content moves down by `fraction` of the screen (same gutter, same hold).
-    private func scrollBack(_ app: XCUIApplication, fraction: CGFloat, velocity: XCUIGestureVelocity = .fast) {
-        let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.34))
-        let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.34 + fraction))
-        from.press(forDuration: 0.05, thenDragTo: to, withVelocity: velocity, thenHoldForDuration: 0.3)
-    }
-
+    /// Scrolls until `element` is hittable and clear of Home's floating "Journal" bar (a row under the
+    /// bar reads as hittable but the tap lands on the bar; same rule as ScreenshotTests).
     @discardableResult
     private func scrollUntilHittable(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
         _ = element.waitForExistence(timeout: 10)
+        let bar = app.buttons["Journal"].firstMatch
         for _ in 0..<12 {
-            if element.exists && element.isHittable { return true }
+            let clear = !bar.exists || element.frame.maxY <= bar.frame.minY - 8
+            if element.exists && element.isHittable && clear { return true }
             scroll(app, fraction: 0.46)
             Thread.sleep(forTimeInterval: 0.6)
         }

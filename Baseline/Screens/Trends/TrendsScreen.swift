@@ -2,11 +2,35 @@
 import SwiftUI
 import StrandAnalytics
 
-/// Trends: HRV and resting HR against the personal baseline band, sleep and effort bars, and a 14-night
-/// readiness strip, over a 7 / 30 / 90 day window. Series are built once per (data, range) in `.task`.
+/// The three sections under the Trends tab's pinned glass control: the metric charts over 7 / 30 / 90
+/// days, the long-term baseline (Progress, embedded, not pushed) and the journal patterns (Habits).
+/// `label` is the segment text; "Progress" is also the UI tests' `buttons["Progress"]` anchor.
+enum TrendsSection: String, CaseIterable, Identifiable {
+    case trends, progress, habits
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .trends: return "Trends"
+        case .progress: return "Progress"
+        case .habits: return "Habits"
+        }
+    }
+}
+
+/// Trends: HRV and resting HR against the personal baseline band, sleep and effort bars over a
+/// 7 / 30 / 90 day window (the "Trends" section), the baseline over months ("Progress", `ProgressSection`)
+/// and the journal patterns ("Habits", `JournalPatternsView`). One pinned glass control picks the section;
+/// the range picker sits flat at the top of the Trends section's content. Series are built once per
+/// (data, range) in `.task`. Settings is the gear in the toolbar.
 struct TrendsScreen: View {
     @EnvironmentObject private var repo: Repository
     @AppStorage("baseline.trendsRange") private var rangeRaw: Int = TrendsRange.month.rawValue
+    /// Strap-first / merged / import-only precedence (Settings → Data); part of the reload key.
+    @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
+    /// Always opens on the charts (a `@State`, not persisted, so a launch is deterministic).
+    @State private var section: TrendsSection = .trends
     @State private var series: TrendsSeries?
     /// Held in state and rolled on `.NSCalendarDayChanged`, so the window's "today" end moves at midnight
     /// instead of waiting for the next store refresh.
@@ -17,43 +41,59 @@ struct TrendsScreen: View {
         let range: Int
         let loaded: Bool
         let day: String
+        let dataSource: String
     }
 
     private var range: TrendsRange { TrendsRange.resolve(rangeRaw) }
 
     var body: some View {
-        BaselineScreen(title: "Trends") {
-            if let series {
-                if series.totalNights < 2 {
-                    emptyState
-                } else {
-                    TrendRangePicker(selection: Binding(get: { range }, set: { rangeRaw = $0.rawValue }))
-                    cards(series)
-                }
-            } else {
-                // Until the store's first refresh lands (`loaded` and `refreshSeq` flip together).
-                ProgressView()
-                    .tint(BaselineTheme.accent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 48)
+        BaselineScreen(title: "Trends", titleMode: .inline, pinned: {
+            // Segment labels are the spoken labels too: `buttons["Progress"]` is a UI-test anchor.
+            BaselineSegmentedPicker(options: TrendsSection.allCases, selection: $section,
+                                    label: { $0.label }, style: .glass)
+        }) {
+            switch section {
+            case .trends:
+                trendsSection
+            case .progress:
+                ProgressSection()
+            case .habits:
+                JournalPatternsView()
             }
         }
-        .task(id: LoadKey(seq: repo.refreshSeq, range: rangeRaw, loaded: repo.loaded, day: todayKey)) {
+        .task(id: LoadKey(seq: repo.refreshSeq, range: rangeRaw, loaded: repo.loaded, day: todayKey,
+                          dataSource: dataSourceRaw)) {
             guard repo.loaded else { series = nil; return }
-            series = TrendsSeries.build(days: repo.days, range: range)
+            series = TrendsSeries.build(days: repo.baselineDays, range: range)
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             todayKey = Repository.localDayKey(Date())
         }
-        // A text label, not an icon, so the destination is named. Present in every state, including
-        // the empty one: Progress explains what it needs. The tab's NavigationStack pushes it.
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink { ProgressScreen() } label: {
-                    Text("Progress").font(BaselineTheme.label)
-                }
-                .accessibilityHint("Shows whether your baseline has moved over months")
+                BaselineToolbarLink(systemImage: "gearshape", accessibilityLabel: "Settings") { SettingsScreen() }
             }
+        }
+    }
+
+    // MARK: - Trends section
+
+    @ViewBuilder
+    private var trendsSection: some View {
+        if let series {
+            if series.totalNights < 2 {
+                emptyState
+            } else {
+                // Flat, inside the content: the pinned row is the section control (one pinned row per screen).
+                TrendRangePicker(selection: Binding(get: { range }, set: { rangeRaw = $0.rawValue }), style: .flat)
+                cards(series)
+            }
+        } else {
+            // Until the store's first refresh lands (`loaded` and `refreshSeq` flip together).
+            ProgressView()
+                .tint(BaselineTheme.accent)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 48)
         }
     }
 
@@ -65,13 +105,9 @@ struct TrendsScreen: View {
         TrendBandCard(title: "Resting HR", noun: "resting HR", unit: "bpm", color: BaselineTheme.rhr,
                       higherIsBetter: false, range: s.range, metric: s.restingHr)
 
-        if let readiness = s.readiness {
-            ReadinessStripCard(readiness: readiness)
-        }
-
+        // No "Last 30 days" caption on either bar card: the range picker a few points above says it.
         TrendBarCard(
             title: "Sleep",
-            subtitle: s.range.subtitle,
             color: BaselineTheme.sleep,
             bars: s.sleep.bars,
             average: s.sleep.average,
@@ -84,7 +120,6 @@ struct TrendsScreen: View {
 
         TrendBarCard(
             title: "Effort",
-            subtitle: s.range.subtitle,
             color: BaselineTheme.effort,
             bars: s.effort.bars,
             average: s.effort.average,
@@ -94,9 +129,7 @@ struct TrendsScreen: View {
                           unit: s.effortPeak.map { TrendsFormat.shortDate($0.date) })
             ],
             emptyText: "No effort recorded in the last \(s.range.days) days.",
-            link: TrendCardLink(label: "All workouts",
-                                hint: "Shows every recorded workout",
-                                destination: { AnyView(WorkoutsScreen()) }))
+            showsAllWorkouts: true)
     }
 
     private var emptyState: some View {

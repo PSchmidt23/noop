@@ -4,7 +4,8 @@ import SwiftUI
 /// Settings › Export: what the CSV zip holds, how much history it will carry, and the one button. The
 /// writer is NOOP's `CsvExport.run(repo:)`, which assembles the archive off the main actor and then
 /// presents the system document picker (`DocumentPicker.export`) so the file lands in Files or iCloud
-/// Drive; this screen only describes the file and shows what came back.
+/// Drive; this screen only describes the file and shows what came back. The stored-history line counts
+/// the engine's merged table (`repo.days` / `repo.sleeps`), which is exactly what `CsvExport` writes.
 struct ExportScreen: View {
     @EnvironmentObject private var repo: Repository
     @State private var exporting = false
@@ -14,12 +15,8 @@ struct ExportScreen: View {
         BaselineScreen(title: "Export") {
             BaselineCard {
                 HStack(spacing: 14) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(BaselineTheme.accent)
-                        .frame(width: 30, height: 30)
-                        .background(BaselineTheme.accent.opacity(0.12),
-                                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    SettingsIconTile(icon: "square.and.arrow.up")
+                    // A plain Text: the UI test's first-card anchor.
                     Text("CSV export").font(BaselineTheme.headline).foregroundStyle(BaselineTheme.text)
                     Spacer()
                     if exporting { ProgressView().tint(BaselineTheme.accent) }
@@ -47,24 +44,18 @@ struct ExportScreen: View {
                 if let outcome {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: outcome.failed ? "exclamationmark.circle" : "checkmark.circle")
-                            .font(.system(size: 13, weight: .semibold))
-                            .padding(.top, 1)
+                            .font(BaselineTheme.symbolSmall)
+                            .padding(.top, 2)
+                            .accessibilityHidden(true)
                         Text(outcome.text)
                             .font(BaselineTheme.caption)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .foregroundStyle(outcome.failed ? BaselineTheme.watch : BaselineTheme.good)
                 }
-                Button(action: export) {
-                    Text(exporting ? "Exporting\u{2026}" : "Export CSV\u{2026}")
-                        .font(BaselineTheme.headline)
-                        .foregroundStyle(BaselineTheme.background)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 13)
-                        .background(BaselineTheme.accent.opacity(canExport ? 1 : 0.3), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(!canExport)
+                BaselineCTA(title: exporting ? "Exporting\u{2026}" : "Export CSV\u{2026}",
+                            systemImage: "square.and.arrow.up", action: export)
+                    .disabled(!canExport)
             }
             Text(ExportFacts.footer)
                 .font(BaselineTheme.caption)

@@ -1,22 +1,26 @@
 #if os(iOS)
 import SwiftUI
 
-/// The Sleep tab: last night's hero, stages and vitals, the last 14 nights as bars, and a list of the
-/// last 30 nights that pushes `NightDetailScreen`.
+/// The Sleep tab: last night as a ring against the 30-night average, its stages, and the last 30
+/// nights as a list that pushes `NightDetailScreen` (where the night's vitals live). Nights come from
+/// the strap-first funnel (`repo.baselineNights()` / `repo.baselineDays`), never from `repo.days`.
 struct SleepScreen: View {
     @EnvironmentObject private var repo: Repository
+    @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
     @State private var nights: [SleepNight] = []
 
-    /// Reload key: `refreshSeq` for every changed refresh, plus `loaded` so the first publish is never
-    /// missed if the store finishes loading between two sequence values.
+    /// Reload key: `refreshSeq` for every changed refresh, `loaded` so the first publish is never missed
+    /// if the store finishes loading between two sequence values, and the data-source mode so a change
+    /// in Settings → Data rebuilds the nights without waiting for the next refresh.
     private struct LoadKey: Hashable {
         let seq: Int
         let loaded: Bool
+        let dataSource: String
     }
 
     /// ONE comparison average for the app: `BaselineReadouts.sleepAverage30(before:in:)`, the 30 nights
-    /// before the latest, which the Today tab's sleep card reads too, so the hero pill, the bar chart's
-    /// rule and Today's delta can never disagree. nil until three earlier nights exist.
+    /// before the latest, which the Home tab's sleep card reads too, so the ring's context line and
+    /// Home's delta can never disagree. nil until three earlier nights exist.
     private var average30: Double? {
         nights.first.flatMap { BaselineReadouts.sleepAverage30(before: $0.dayKey, in: nights) }
     }
@@ -28,12 +32,6 @@ struct SleepScreen: View {
             if let last = nights.first {
                 SleepHeroCard(title: heroTitle(for: last), night: last, average: average30)
                 SleepHypnogramCard(night: last)
-                if last.hasVitals {
-                    SleepVitalsCard(night: last)
-                }
-                if nights.count >= 2 {
-                    recentCard
-                }
                 nightsCard
             } else if repo.loaded {
                 BaselineCard {
@@ -49,7 +47,12 @@ struct SleepScreen: View {
                 }
             }
         }
-        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded)) { await reload() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                BaselineToolbarLink(systemImage: "gearshape", accessibilityLabel: "Settings") { SettingsScreen() }
+            }
+        }
+        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, dataSource: dataSourceRaw)) { await reload() }
     }
 
     private func heroTitle(for night: SleepNight) -> String {
@@ -57,21 +60,8 @@ struct SleepScreen: View {
         return (cal.isDateInToday(night.dayDate) || cal.isDateInYesterday(night.dayDate)) ? "Last night" : "Latest night"
     }
 
-    private var recentCard: some View {
-        let bars = nights.prefix(14).reversed().map { n in
-            BaselineBarChart.Bar(id: n.dayKey,
-                                 date: n.dayDate,
-                                 value: (n.hoursAsleep * 10).rounded() / 10)
-        }
-        return BaselineCard(title: "Last 14 nights",
-                            subtitle: average30 != nil ? "Hours asleep. The dashed line is your 30-night average."
-                                                       : "Hours asleep") {
-            BaselineBarChart(bars: bars, color: BaselineTheme.sleep, average: average30.map { $0 / 60.0 })
-        }
-    }
-
     private var nightsCard: some View {
-        BaselineCard(title: "Nights", subtitle: "Tap a night for its stages and vitals") {
+        BaselineCard(title: "Nights") {
             VStack(spacing: 0) {
                 ForEach(listed) { n in
                     NavigationLink {
@@ -92,7 +82,8 @@ struct SleepScreen: View {
     @MainActor
     private func reload() async {
         let habitual = await repo.habitualMidsleepSec()
-        nights = SleepNightBuilder.nights(sessions: repo.sleeps, days: repo.days, habitualMidsleepSec: habitual)
+        let sessions = await repo.baselineNights()
+        nights = SleepNightBuilder.nights(sessions: sessions, days: repo.baselineDays, habitualMidsleepSec: habitual)
     }
 }
 #endif

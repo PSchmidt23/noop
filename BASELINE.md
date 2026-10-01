@@ -28,8 +28,10 @@ support that story. Nothing clutters it.
 
 ## Tech stack
 
-- Native SwiftUI, iOS 17+ deployment (NOOP's floor), built with Xcode 26 / iOS 26 SDK. Liquid Glass
-  on chrome only (tab bar, toolbars, floating controls), content flat.
+- Native SwiftUI, iOS 26.0 deployment target for the Baseline, BaselineTests and BaselineUITests targets
+  (NOOP's own targets keep their 17.0 floor), built with Xcode 26 / iOS 26 SDK. Liquid Glass on chrome
+  only (tab bar, toolbars, the one pinned control under the bar, floating controls), content flat; no
+  availability checks anywhere in `Baseline/`.
 - Engine: NOOP packages `WhoopProtocol`, `WhoopStore`, `StrandAnalytics`, `StrandImport`,
   `StrandDesign` plus `Strand/` services (`AppModel`, `BLEManager`, `Repository`, `HealthKitBridge`).
 - Charts: Swift Charts. Design tokens in `Baseline/Components/BaselineTheme.swift`.
@@ -39,7 +41,12 @@ support that story. Nothing clutters it.
 
 ## How the engine is reached (see the API map in `Baseline/ENGINE_MAP.md`)
 
-- Daily rows: `repo.days: [DailyMetric]` (merged, oldest → newest). Reload on `repo.refreshSeq`.
+- Daily rows: `repo.baselineDays: [DailyMetric]` (oldest → newest), the strap-first funnel in
+  `Baseline/Components/BaselineDays.swift` over NOOP's merged `repo.days` / `repo.vitalRows`; nights from
+  `await repo.baselineNights()`, series from `repo.baselineSeries(key:)`. The precedence is the Settings →
+  Data "Data source" picker (`baseline.dataSource`: strap first / merged / imports only). Screens never
+  read `repo.days` directly (Import's stored-history count is the one deliberate exception). Reload on
+  `repo.refreshSeq` (`repo.baselineReloadID(dataSourceRaw:)` folds the setting in).
 - Baseline math: `Baselines.foldHistory(_:dayKeys:cfg:)` → `BaselineState`, then
   `Baselines.deviation(value, state:)`. Band = `baseline ± Baselines.sigma(state)`.
 - Readiness tier: `HRVReadiness.evaluate(avgHrv:)`. Sleep stages: `AnalyticsEngine.decodeStages`.
@@ -52,13 +59,13 @@ support that story. Nothing clutters it.
 
 ## Smaller pieces (what they are, where they live)
 
-- **Signals card** (Today, `Baseline/Screens/Today/TodaySignals.swift`, `SignalsCard` in `TodayCards.swift`):
-  shown only when a signal fires, below the hero tiles. Three kinds, each one calm sentence plus a "How
+- **Signals card** (Home, `Baseline/Screens/Today/TodaySignals.swift`, `SignalsCard` in `TodayCards.swift`):
+  shown only when a signal fires and only on today, under the readiness card. Three kinds, each one calm sentence plus a "How
   this is computed" entry: *illness watch* (resting HR up, HRV down, skin temperature or breathing rate
   up together over the last two nights, NOOP's `IllnessSignalEngine` with its confounder suppression),
   *overreaching* (7-day effort against 28, `ReadinessEngine`'s acute:chronic ratio and Foster monotony),
   *short nights* (three or more consecutive nights an hour under the 30-night average). Pure, built from
-  `repo.days`, the Sleep tab's nights, the `TodaySnapshot` and the last week of journal; `TodaySignalsTests`.
+  `repo.baselineDays`, the Sleep tab's nights, the `TodaySnapshot` and the last week of journal; `TodaySignalsTests`.
   Hidden under the demo seed, whose data never trips a signal.
 - **Compare sources** (Settings → Data, `Baseline/Screens/Data/CompareScreen.swift` + `CompareModel.swift`):
   the strap's own nights (`.noopComputed`) against an imported source (WHOOP export or Apple Health) from
@@ -74,47 +81,76 @@ support that story. Nothing clutters it.
 - **Evening check-in** (`Baseline/App/EveningCheckInScheduler.swift`, Settings → Notifications): opt-in,
   one repeating `UNCalendarNotificationTrigger` a day at the picked time (default 21:30), fixed request id so
   the center holds at most one; `sync()` is idempotent and runs on every activation, `cancel()` on toggle-off.
-  The morning summary stays event-driven (never scheduled). The time row appears only while the toggle is on.
-  A tap opens the Journal tab: `BaselineNotificationDelegate` (registered in `BaselineApp.init`, forwarding both
-  delegate callbacks to NOOP's `NotificationPresenter.shared`) writes `baseline.pendingTab = "journal"`, which
-  `BaselineRoot` consumes through `@AppStorage` (cold starts included). `EveningCheckInTests`.
+  The morning summary stays event-driven (never scheduled; `MorningSummaryNotifier` reads the same strap-first
+  funnel the screens show). The time row appears only while the toggle is on.
+  A tap opens Home with the journal sheet for today: `BaselineNotificationDelegate` (registered in
+  `BaselineApp.init`, forwarding both delegate callbacks to NOOP's `NotificationPresenter.shared`) writes
+  `baseline.pendingTab = "journal"`, which `BaselineRoot` consumes through `@AppStorage` (cold starts included)
+  by selecting Home and bumping its `journalRequest`. `EveningCheckInTests`.
 
 ### `baseline.*` UserDefaults keys (`.standard`; NOOP's own keys are `noop.*`)
 
 | Key | Set by | Meaning |
 |---|---|---|
 | `baseline.onboarded` | Welcome flow, `--skip-onboarding` / `--reset-onboarding` | welcome gate passed |
-| `baseline.trendsRange`, `baseline.progressHorizon` | Trends / Progress (and Today's Progress row) | last picked range |
+| `baseline.trendsRange`, `baseline.progressHorizon` | Trends › Trends / Trends › Progress (and the Progress screen pushed from Home's readiness card) | last picked range |
+| `baseline.dataSource` | Settings → Data (`BaselineDataSourceSetting`) | precedence of strap vs imported rows: `strapFirst` (default) / `merged` / `importOnly`; read by every screen through `repo.baselineDays` / `baselineNights()` |
 | `baseline.compareMetric`, `baseline.compareRange`, `baseline.compareSource` | Compare | last picked metric / window (days, 0 = all) / source |
 | `baseline.morningSummary.enabled`, `baseline.morningSummary.lastDay` | Settings → Notifications, `MorningSummaryNotifier` | morning summary opt-in; the last day one was sent |
 | `baseline.eveningCheckIn.enabled`, `baseline.eveningCheckIn.minutes` | Settings → Notifications | evening check-in opt-in; its time as minutes since midnight |
-| `baseline.pendingTab` | `BaselineNotificationDelegate` | tab to open on the next root read (`"journal"`), cleared once consumed |
+| `baseline.pendingTab` | `BaselineNotificationDelegate` | `"journal"` → Home with the journal sheet presented on the next root read, cleared once consumed |
 
 ## v1 scope (build this, nothing more)
 
+Three tabs — **Home**, **Trends**, **Sleep** — with Settings behind a gear in the top-right of every tab's
+bar. The journal is not a tab: it is a sheet from Home, and its patterns are a section of Trends.
+
 1. Welcome → pair strap (NOOP's `AddDeviceWizard`) → Apple Health permission → done. Three steps.
-2. **Today**: strap status strip; HRV and Resting HR hero tiles (value, delta vs baseline, in/out of
-   normal band, readiness tier); last night's sleep card; today's effort and workouts; journal prompt.
-3. **Trends**: 7 / 30 / 90 day segments; HRV and RHR lines with baseline band; sleep duration bars;
-   effort bars. Tap a point for the day's numbers.
-4. **Sleep**: last night hypnogram, stages, efficiency, duration vs 30-day average; list of nights.
-5. **Journal**: today's habit chips (from the catalog, plus custom); "What moves your HRV" ranked
-   effects with sample size and confidence; dose cards for alcohol and caffeine.
-6. **Settings**: Devices, Apple Health, Data (Import WHOOP CSV / Apple Health export, Compare sources,
-   Export CSV), Notifications (morning summary, evening check-in), Profile (age, max HR), Appearance
-   (accent), About + licenses + disclaimer.
+2. **Home** (`Baseline/Screens/Today/`, struct still `TodayScreen`): a day-by-day view. The nav title is the
+   selected day ("Today" / "Yesterday" / "Wednesday 1 October"), a pinned glass day switcher (chevrons, plus a
+   horizontal swipe on the content) walks back through stored days and forward to today, never a future day.
+   Every card shows that day: readiness (pill + sentence, chevron → Progress), HRV and Resting HR rings against
+   the baseline band, that night's sleep, that day's effort and workouts ("All workouts" → the list), signals
+   on today only, and a floating glass **Journal** button that opens `JournalSheet(day:)` for the selected day.
+   The strap status pill stays small, in the bar beside the gear.
+3. **Trends**: a pinned glass segmented control over three sections. *Trends*: 7 / 30 / 90-day HRV and RHR
+   lines with the baseline band, sleep-duration and effort bars, tap a point for the day's numbers. *Progress*:
+   the long-term baseline screen embedded (HRV / Resting HR / sleep over months, horizon picker). *Habits*:
+   `JournalPatternsView()` — "What moves your HRV / Resting HR" ranked effects with sample size and confidence,
+   and the alcohol / caffeine dose rows.
+4. **Sleep**: last night's ring against the 30-night average, hypnogram and stages, efficiency; list of nights,
+   each opening its detail.
+5. **Journal** (`JournalSheet(day:)`): that day's habit chips (catalog plus custom, yes / no / clear, numeric
+   steps), "Add habit", Done.
+6. **Settings** (gear): Devices, Apple Health, Data (Import WHOOP CSV / Apple Health export, Compare sources,
+   Export CSV, Data source), Notifications (morning summary, evening check-in), Profile (age, max HR, units),
+   About + licenses + disclaimer.
 
 ### Deferred
 AI coach, widgets, Apple Watch, Live Activities, lift log, hydration, caffeine, cycle tracking,
 breathing, Oura/Polar/Xiaomi devices, Siri Shortcuts, backups. All still compile in from NOOP and can
 be exposed later.
 
-## Design direction
+## Design direction (light Liquid Glass; the full system is `Baseline/Components/DESIGN.md`)
 
-- Dark-first, deep navy background, one teal accent for HRV, a warm secondary for RHR. Large rounded
-  numerals, generous whitespace, one idea per card. Oura-like calm, never a dashboard.
-- Every number shows its context: the baseline and whether today sits inside the normal band.
+- Light only (`.preferredColorScheme(.light)` at the app root; the launch background is the same off-white in
+  both appearances). Flat paper background `#F4F5F8` with opaque white cards (one soft shadow each, 28pt
+  radius) carrying the data. Ink text `#111827`, secondary `#4B5563`, every caption `#5F6B7B`; teal `#0D7A72`
+  is the one accent and the HRV colour, coral for Resting HR, indigo for Sleep, amber for Effort. Coloured
+  text only inside white cards, never on the page. SF Rounded everywhere, large rounded numerals, generous
+  whitespace, one idea per card. Oura-like calm, never a dashboard.
+- Liquid Glass only on the chrome that floats over content: the tab bar and navigation bars (system), the one
+  pinned control under the bar on a screen (Home's day switcher, Trends' section control), the floating Journal
+  button and Welcome's action column (`GlassCTA`), the Settings section headers. Cards, chips, charts, rows,
+  pills and in-card pickers are flat; never glass on glass; at most four custom glass regions on a screen.
+- Rings: one `MetricRing` per metric (HRV and Resting HR on Home, each in its own tile; Sleep's ring on the
+  Sleep tab). Readiness is a pill and a sentence. Never a three-ring triad (the trademark guardrail).
+- Every number keeps its context — the baseline, the band, the average — said once: a ring's context line,
+  a card's one caption, never a repeated subtitle.
 - Empty states explain what will appear after the first synced night.
+- Tokens, type and components live in `Baseline/Components/` (`BaselineTheme`, `BaselineCards`, `BaselineRing`,
+  `BaselineChip`, `BaselineButtons`, `BaselineDaySwitcher`, `BaselineRangePicker`, `BaselineBandChart`);
+  screens never spell a colour, font size or radius.
 
 ## Build, run, verify
 
@@ -135,7 +171,10 @@ alongside `ENGINE_MAP.md`, `PRIVACY.md` and `scripts`.
 
 DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch <udid> com.patrickschmidt.baseline …`):
 - `--demo-seed` — NOOP's seeder fills 120 days of synthetic, internally consistent data when the store is empty.
-- `--tab trends|sleep|journal|settings` — open on that tab (screenshots, quick checks).
+- `--tab home|trends|sleep` — open on that tab (screenshots, quick checks). Aliases: `today` → home;
+  `journal` → Home with the journal sheet presented; `settings` → Home with Settings pushed
+  (`BaselineRoot.LaunchRequest.parse`, unit-tested). `--ui-testing` pins the tab bar (no minimize-on-scroll)
+  so the screenshot harness' frame comparison is deterministic.
 - `--skip-onboarding` / `--reset-onboarding` — force `baseline.onboarded` true / false for that launch (the
   welcome gate hidden / shown), whatever an earlier run saved. `--welcome-step 0|1|2` opens the welcome
   flow on that page.
@@ -144,11 +183,14 @@ DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch
 ## Screenshot harness (BaselineUITests)
 
 `BaselineUITests/ScreenshotTests.swift` captures every screen headlessly so a scrolled screen can be
-checked without a person at the simulator. One test per tab (`today`, `trends`, `sleep`, `journal`,
-`settings`, seeded with `--demo-seed --skip-onboarding`), the pushed screens (`progress` via the Trends
-toolbar button; `workouts` and `workout-detail` via Today's "All workouts" link and the newest row),
-Settings' `devices` / `apple-health` / `import` / `compare` (the empty state under the demo seed) /
-`export`, `launch` and `welcome-0/1/2` (`--reset-onboarding --welcome-step n`). `testSettings` adds
+checked without a person at the simulator. One test per tab (`home`, `trends`, `sleep`, seeded with
+`--demo-seed --skip-onboarding --ui-testing`), `journal` (Home's floating "Journal" button → the sheet,
+captured at its medium detent then lifted to the large one and scrolled), `settings` (the gear on Home),
+Trends' embedded sections (`progress` and `habits` via the pinned segments; the bar still reads "Trends", the
+segment's selected trait is the signal), the pushed screens (`workouts` and `workout-detail` via Home's "All
+workouts" link and the newest row), Settings' `devices` / `apple-health` / `import` / `compare` (the empty
+state under the demo seed) / `export`, `launch` and `welcome-0/1/2` (`--reset-onboarding --welcome-step n`).
+`testSettings` adds
 `-baseline.eveningCheckIn.enabled YES` to the launch arguments (UserDefaults' argument domain, read by
 `@AppStorage`) so the Notifications card shows the evening toggle on with its time row, without the tap
 that would raise the notification-permission alert over the capture. Each test waits for the screen's first card, captures the top, then scrolls until
@@ -166,8 +208,10 @@ Baseline/scripts/ui-shots.sh [shots dir]                      # whole suite on t
 ONLY=ScreenshotTests/testTrends Baseline/scripts/ui-shots.sh  # one test
 ```
 
-The script (1) boots the simulator, (2) applies `xcrun simctl status_bar <udid> override --time 9:41
---batteryState charged --batteryLevel 100 --wifiBars 3 --cellularBars 4`, (3) runs `xcodebuild test` with
+The script (1) boots the simulator and pins it to the light appearance (`xcrun simctl ui <udid> appearance
+light`; the app is light-only but system sheets follow the device), (2) applies `xcrun simctl status_bar <udid>
+override --time 9:41 --batteryState charged --batteryLevel 100 --wifiBars 3 --cellularBars 4`, (3) runs
+`xcodebuild test` with
 `TEST_RUNNER_BASELINE_SHOTS_DIR`, (4) clears the override and (5) shuts the simulator down, the last two
 on any exit. XCUITest runs inside the simulator and cannot call `simctl`, which is why the override is
 not in the tests' `setUp` (that only says so). The script only ever touches `$SIM_UDID` (default
@@ -196,12 +240,11 @@ real import. Welcome steps are a page view, so they are captured once, not scrol
 ## Marketing screenshots (App Store)
 
 `BaselineUITests/MarketingShots.swift` has one test, `testMarketingSet`, that writes six frames to
-`<shots dir>/marketing/`: `01-today` (scrolled until the HRV / resting HR tiles sit 12pt under the bar, so the
-seeded "Pair your strap" card is fully above the frame: a feedback loop that measures the HRV tile against the
-bar after every step and drags at an explicit 300pt/s, because on the 6.9-inch device the `.fast` held gutter
-drag either moves nothing or flings ~470pt regardless of its length; the Progress and All-workouts taps retry
-when the push does not appear, which happens under load),
-`02-progress`, `03-trends`, `04-sleep`, `05-journal`, `06-workouts`, each the top of the seeded screen.
+`<shots dir>/marketing/`: `01-home` (the top of Home with `-baseline.marketing YES`, which hides the strap
+status pill: the "Today" title, the day switcher, readiness and the two rings), `02-trends`, `03-progress`
+(Trends › Progress segment), `04-sleep`, `05-habits` (Trends › Habits segment), `06-workouts` (Home's "All
+workouts" link; the segment and link taps retry when the switch does not appear, which happens under load),
+each the top of the seeded screen.
 Apple's required size for the 6.9-inch class is **1320 × 2868 px** (iPhone 17 Pro Max class). `XCUIScreen`
 captures at the simulator's native size and never rescales, so the test must run on a 6.9-inch device;
 on any other it still writes the frames and attaches a size warning to the result instead of failing.
@@ -217,11 +260,13 @@ iPhone 17 Pro Max on the newest installed iOS runtime (`xcrun simctl create`), r
 kept for the next run; the script prints the `simctl delete` line to remove it.
 
 `frame-shots.swift` (CoreGraphics / CoreText / ImageIO; AppKit only to find SF Rounded) renders each
-`NN-*.png` into an App Store frame in `<out dir>`: a 1320 × 2868 canvas with BaselineTheme's navy
-gradient, the screenshot at 86% width with a 44pt corner radius placed lower-centre (its bottom runs off
-the canvas), and a two-line caption at the top in SF Rounded, white 72pt headline over a 44pt secondary
-line, from the captions table at the top of the script (01 "Your morning, against your own baseline" …
-06 "Effort and workouts, kept simple"). Sizes are points at @2x (the canvas is 660 × 1434pt); a headline
+`NN-*.png` into an App Store frame in `<out dir>`: a 1320 × 2868 canvas with BaselineTheme's light paper
+wash (`backgroundTop` → `backgroundBottom`), the screenshot at 86% width with a 44pt corner radius placed
+lower-centre (its bottom runs off the canvas) over a soft ink shadow, and a two-line caption at the top in
+SF Rounded, ink (`#111827`) 72pt headline over a 44pt secondary line in `textSecondary`, from the captions
+table at the top of the script (01 "Your day, against your own baseline", 02 "Trends with your typical
+range", 03 "Is your baseline moving? Months at a glance", 04 "Sleep, stage by stage", 05 "Learn what moves
+your HRV", 06 "Effort and workouts, kept simple"). Sizes are points at @2x (the canvas is 660 × 1434pt); a headline
 that would overrun the gutters shrinks to fit. A PNG whose two-digit prefix has no caption still gets a
 frame. `FRAME_SCALE=3` renders the same layout at 1980 × 4302 for a proof print. Store copy, review
 notes, the privacy questionnaire and the submission checklist live in `Baseline/Store/`.

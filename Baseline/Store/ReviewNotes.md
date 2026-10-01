@@ -13,11 +13,10 @@ NO ACCOUNT, NO SERVER. There is nothing to sign in to and no demo credentials. T
 
 WITHOUT A STRAP. Pairing needs the physical strap, which the review device will not have. Every screen is still reachable and shows its empty state, which describes what appears after the first synced night:
 - Welcome (first launch): three pages. "Continue", then "Skip for now" on the pairing page, then "Not now" on the Apple Health page. No permission dialog is forced.
-- Today: the strap status strip ("Not connected", with a Pair button that opens the pairing wizard) and the empty state "Your first night fills this in".
-- Trends: the empty state for the HRV / resting heart rate / sleep / effort charts; the Progress button in the toolbar opens the Progress screen (baseline over months), also empty.
+- Home: the strap pill in the bar ("Pair", which opens the pairing wizard) and the empty state "Your first night fills this in" with a "Pair strap" button. The floating "Journal" button opens the journal sheet for the day: the habit chips work without data (tap to mark a habit; they are stored locally).
+- Trends: three sections under the segmented control. Trends: the empty state for the HRV / resting heart rate / sleep / effort charts. Progress (baseline over months): also empty. Habits: the "What moves your HRV" card explains that effects appear once enough nights are logged.
 - Sleep: the empty state for last night's stages and the list of nights.
-- Journal: the habit chips work without data (tap to mark a habit for today; they are stored locally); the "What moves your HRV" card explains that effects appear once enough nights are logged.
-- Settings: Devices (pairing wizard), Apple Health, Data (Import of a strap-app or Apple Health export via the Files picker; Compare, the strap's nights against the import; Export CSV through the Files picker), Profile, Appearance, Notifications (opt-in morning summary and evening check-in) and About (privacy policy, licence, notices, disclaimer).
+- Settings (the gear in the top-right of every tab): Devices (pairing wizard), Apple Health, Data (Import of a strap-app or Apple Health export via the Files picker; Compare, the strap's nights against the import; Export CSV through the Files picker; Data source, which source a night both recorded shows, the strap's own first by default), Profile, Notifications (opt-in morning summary and evening check-in) and About (privacy policy, licence, notices, disclaimer).
 To see the app with data, import an Apple Health export (Health app › profile › Export All Health Data) through Settings › Import: sleep and workouts from the export then fill the screens.
 
 PERMISSIONS. Bluetooth (NSBluetoothAlwaysUsageDescription) is requested when the user starts pairing a strap, and bluetooth-central background mode keeps a paired strap's sync running while the app is in the background. Apple Health read and write are requested only when the user taps "Allow" on the Welcome page or in Settings › Apple Health; the app reads sleep, workouts and heart-rate samples and writes back HRV, resting heart rate and sleep, on device. Notifications are requested only when the user turns on the morning summary or the evening check-in under Settings › Notifications; both are local notifications, each at most once a day (the summary after the first sync of the day, the check-in at the chosen time); there is no push.
@@ -73,17 +72,19 @@ permission flow on the way.
 - **Welcome:** intro (what the app shows, the compatibility line, "everything stays on your iPhone",
   "not medical advice"), pair strap (opens NOOP's pairing wizard for a 4.0 or a 5.0/MG; skippable),
   Apple Health (requests read/write; skippable). Can be re-run from Settings.
-- **Today:** strap status strip; HRV and resting-heart-rate tiles with delta against baseline, band
-  position and readiness tier; Progress row (one sentence about the baseline's direction); last night's
-  sleep; today's effort and workouts; journal prompt chips.
-- **Trends:** 7 / 30 / 90-day segments; HRV and resting heart rate lines with the baseline band; sleep
-  duration bars; effort bars; tap for a day's numbers; "All workouts" link; Progress toolbar button.
-- **Progress:** HRV baseline, resting-heart-rate baseline, sleep and sleep timing over months, each as a
-  sentence and a chart, with a horizon picker.
-- **Sleep:** last night's hypnogram and stages, efficiency, duration against the 30-day average, a list
+- **Home:** one day at a time (a day switcher under the bar walks back through stored days, never
+  forward past today); strap pill in the bar; readiness pill and sentence (opens Progress); HRV and
+  resting-heart-rate rings with delta against baseline and band position; that night's sleep; that day's
+  effort and workouts ("All workouts" opens the list); a floating "Journal" button opens the journal
+  sheet for the day: habit chips (catalogue plus custom), "Add habit", Done.
+- **Trends:** a segmented control over three sections. Trends: 7 / 30 / 90-day segments; HRV and
+  resting heart rate lines with the baseline band; sleep duration bars; effort bars; tap for a day's
+  numbers; "All workouts" link. Progress: HRV baseline, resting-heart-rate baseline, sleep and sleep
+  timing over months, each as a sentence and a chart, with a horizon picker. Habits: "What moves your
+  HRV / Resting HR" ranked effects with sample size and confidence; alcohol and caffeine dose rows.
+- **Sleep:** last night's ring against the 30-night average, hypnogram and stages, efficiency, a list
   of nights; a night opens its detail.
-- **Journal:** today's habit chips (catalogue plus custom); "What moves your HRV" ranked effects with
-  sample size and confidence; alcohol and caffeine dose cards.
 - **Workouts:** sessions with duration, average heart rate and zones; a session opens its detail.
-- **Settings:** Devices, Apple Health, Import, Profile, Appearance, Notifications, About (version, NOOP
-  and Baseline source links, privacy policy, licence, open-source notices, disclaimer).
+- **Settings (gear on every tab):** Devices, Apple Health, Data (Import, Compare, Export, Data source),
+  Notifications, Profile, About (version, NOOP and Baseline source links, privacy policy, licence,
+  open-source notices, disclaimer).

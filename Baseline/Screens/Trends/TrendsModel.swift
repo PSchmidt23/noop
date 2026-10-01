@@ -68,7 +68,7 @@ enum TrendsFormat {
 }
 
 /// Everything the Trends screen draws, computed once per (days, range) in `build`. Pure and synchronous:
-/// a few linear passes over `repo.days`, cheap enough for the main actor.
+/// a few linear passes over `repo.baselineDays`, cheap enough for the main actor.
 struct TrendsSeries {
     /// A nightly metric drawn over its time-varying personal band (HRV, resting HR).
     struct BandMetric {

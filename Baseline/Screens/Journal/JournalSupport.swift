@@ -1,46 +1,39 @@
 #if os(iOS)
 import SwiftUI
 
-// Small, view-free helpers shared by the Journal screen: day arithmetic for the picker, short chip
-// labels for the catalog's long question strings, and the wrapping chip layout.
+// Small, view-free helpers shared by the Journal sheet and the patterns view: day-key arithmetic, the
+// sheet's night label, short chip labels for the catalog's long question strings, and the wrapping
+// chip layout (which Home's journal prompt and the Workout detail screen share).
 
-/// Day keys and labels for the journal picker. Follows NOOP's convention: an answer stored under
-/// day D describes the evening and night leading into morning D, so today's key is "last night".
+/// Day keys and labels for the journal. Follows NOOP's convention: an answer stored under day D
+/// describes the evening and night leading into morning D, so today's key is "last night".
 enum JournalDay {
-    /// Oldest → newest, today at the trailing end.
-    static let offsets: [Int] = Array((0...6).reversed())
+    /// The engine's "yyyy-MM-dd" key for a calendar day (`Repository.localDayKey`).
+    static func key(for date: Date) -> String { Repository.localDayKey(date) }
 
-    /// `now` is the screen's held "today" (`JournalScreen.today`, rolled on `.NSCalendarDayChanged`), so
-    /// every chip, key and caption on one render agrees about which day is offset 0.
-    static func date(offset: Int, now: Date = Date()) -> Date {
-        Calendar.current.date(byAdding: .day, value: -offset, to: now) ?? now
-    }
+    /// The calendar day a "yyyy-MM-dd" key names, in the device's zone; nil for anything else.
+    static func date(key: String) -> Date? { parser.date(from: key) }
 
-    static func key(offset: Int, now: Date = Date()) -> String { Repository.localDayKey(date(offset: offset, now: now)) }
-
-    /// Chip headline: the weekday ("Tue"). The chips are equal-width, so the longer "Last night" /
-    /// "Yesterday" words live in `caption(offset:)` under the strip instead.
-    static func title(offset: Int, now: Date = Date()) -> String { weekday.string(from: date(offset: offset, now: now)) }
-
-    static func dayNumber(offset: Int, now: Date = Date()) -> String { dayOfMonth.string(from: date(offset: offset, now: now)) }
-
-    /// One line under the picker naming the selected night and the morning its answers lead into.
-    static func caption(offset: Int, now: Date = Date()) -> String {
-        let morning = long.string(from: date(offset: offset, now: now))
-        switch offset {
-        case 0: return "Last night \u{00B7} the evening and night leading into \(morning)."
-        case 1: return "Yesterday \u{00B7} the evening and night leading into \(morning)."
-        default: return "The evening and night leading into \(morning)."
+    /// The sheet's day label, naming the night the answers describe: "Last night" for today's key,
+    /// "The night before last" for yesterday's, else "The night into Mon 29 Sep". `now` is injectable.
+    static func label(key: String, now: Date = Date()) -> String {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: now)
+        guard let d = date(key: key).map({ cal.startOfDay(for: $0) }) else { return key }
+        if d == today { return "Last night" }
+        if let yesterday = cal.date(byAdding: .day, value: -1, to: today), d == yesterday {
+            return "The night before last"
         }
+        return "The night into \(short.string(from: d))"
     }
 
-    private static let weekday: DateFormatter = {
-        let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("EEE"); return f
+    private static let parser: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
     }()
-    private static let dayOfMonth: DateFormatter = {
-        let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("d"); return f
-    }()
-    private static let long: DateFormatter = {
+    private static let short: DateFormatter = {
         let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("EEE d MMM"); return f
     }()
 }

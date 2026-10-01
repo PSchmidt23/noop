@@ -3,25 +3,26 @@ import SwiftUI
 import StrandAnalytics
 
 /// "What moves your HRV": each logged habit compared on nights with and without it, ranked solid
-/// first then by the size of the shift. Association on your own nights, never a causal claim.
+/// first then by the size of the shift, with the dose-response rows (alcohol, caffeine timing) at the
+/// foot. Association on your own nights, never a causal claim.
 struct JournalEffectsCard: View {
     @ObservedObject var model: JournalScreenModel
     let label: (String) -> String
 
     var body: some View {
-        BaselineCard(title: "What moves your \(model.outcome.label)",
-                     subtitle: "Nights with a habit versus nights without. Patterns, not causes.") {
-            // The app's one segmented control, so this toggle matches the Trends and Progress range pills.
+        BaselineCard(title: "What moves your \(model.outcome.label)") {
+            // The app's one segmented control, flat inside a card.
             BaselineSegmentedPicker(options: JournalOutcome.allCases, selection: $model.outcome,
                                     label: { $0.label },
-                                    accessibilityLabel: { "What moves your \($0.label)" })
+                                    accessibilityLabel: { "What moves your \($0.label)" },
+                                    style: .flat)
 
             if !model.loaded {
                 BaselineEmptyState(icon: "hourglass", title: "Reading your journal", message: " ")
             } else if model.loggedDayCount < JournalScreenModel.minLoggedDays {
                 BaselineEmptyState(icon: "sparkles",
                                    title: "Patterns take a few nights",
-                                   message: "Log a few more days and Baseline will start finding patterns. \(model.loggedDayCount) of \(JournalScreenModel.minLoggedDays) logged so far.")
+                                   message: "Log a few more days and Baseline will compare nights with a habit against nights without. Patterns, not causes. \(model.loggedDayCount) of \(JournalScreenModel.minLoggedDays) logged so far.")
             } else if model.effects.isEmpty {
                 BaselineEmptyState(icon: "scale.3d",
                                    title: "Keep logging both ways",
@@ -35,11 +36,22 @@ struct JournalEffectsCard: View {
                     }
                 }
             }
+
+            if !model.doses.isEmpty {
+                Divider().overlay(BaselineTheme.hairline)
+                VStack(spacing: 0) {
+                    ForEach(Array(model.doses.enumerated()), id: \.element.id) { index, dose in
+                        if index > 0 { Divider().overlay(BaselineTheme.hairline) }
+                        JournalDoseRow(dose: dose)
+                            .padding(.vertical, 10)
+                    }
+                }
+            }
         }
     }
 }
 
-/// One ranked habit: name, signed shift, confidence pill, and the nights behind it.
+/// One ranked habit: name, confidence pill and the nights behind it, the signed shift trailing.
 struct JournalEffectRow: View {
     let effect: RankedEffect
     let label: String
@@ -69,7 +81,7 @@ struct JournalEffectRow: View {
             }
             Spacer(minLength: 12)
             Text(JournalLabels.signedDelta(delta, unit: outcome.unit))
-                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .font(BaselineTheme.stat)
                 .foregroundStyle(deltaColor)
                 .monospacedDigit()
                 .fixedSize()
@@ -96,32 +108,46 @@ struct JournalConfidencePill: View {
     }
 }
 
-/// A dose-response read for alcohol or caffeine timing: one sentence, nights, confidence, and for
-/// caffeine the per-step shift in ms. Alcohol shows no figure: its outcome is a score Baseline never
-/// renders (see `JournalDose`).
-struct JournalDoseCard: View {
+/// A dose-response read for alcohol or caffeine timing at the foot of the patterns card: glyph, title,
+/// the one sentence, the confidence pill, and for caffeine the per-step shift in ms. Alcohol shows no
+/// figure: its outcome is a score Baseline never renders (see `JournalDose`).
+struct JournalDoseRow: View {
     let dose: JournalDose
 
     var body: some View {
-        BaselineCard(title: dose.title, subtitle: dose.subtitle,
-                     accessory: AnyView(Image(systemName: dose.icon)
-                        .font(BaselineTheme.symbolAccessory)
-                        .foregroundStyle(BaselineTheme.textTertiary))) {
-            Text(dose.sentence)
-                .font(BaselineTheme.body)
-                .foregroundStyle(BaselineTheme.text)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(alignment: .bottom, spacing: 12) {
-                if let stat = dose.perUnitStat {
-                    StatCell(label: stat.label,
-                             value: dose.perUnitText,
-                             unit: stat.unit,
-                             color: stat.color)
-                }
-                StatCell(label: "Nights", value: "\(dose.response.nUser)")
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: dose.icon)
+                .font(BaselineTheme.symbol)
+                .foregroundStyle(BaselineTheme.textTertiary)
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(dose.title)
+                    .font(BaselineTheme.label)
+                    .foregroundStyle(BaselineTheme.text)
+                Text(dose.sentence)
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 JournalConfidencePill(confidence: dose.response.confidence)
             }
+            if let stat = dose.perUnitStat {
+                Spacer(minLength: 12)
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text(dose.perUnitText)
+                        .font(BaselineTheme.stat)
+                        .foregroundStyle(stat.color)
+                        .monospacedDigit()
+                    Text(stat.unit)
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textSecondary)
+                }
+                .fixedSize()
+                .layoutPriority(1)
+                .accessibilityLabel("\(dose.perUnitText) \(stat.unit) \(stat.label.lowercased())")
+            }
         }
+        .accessibilityElement(children: .combine)
     }
 }
 #endif

@@ -4,7 +4,7 @@ import WhoopStore
 import StrandAnalytics
 
 // Pure derivations for the Progress screen: is the personal baseline itself moving over months?
-// Everything here is a value type built from `repo.days` (through `BaselineReadouts.nightlyStates`,
+// Everything here is a value type built from `repo.baselineDays` (through `BaselineReadouts.nightlyStates`,
 // the one fold walk Trends draws its band from) and the Sleep tab's `SleepNight` list. Nothing touches
 // the store or SwiftUI.
 
@@ -455,7 +455,7 @@ struct ProgressSnapshot {
         }
     }
 
-    /// `days` is `repo.days` (oldest → newest); `nights` is `SleepNightBuilder.nights(…)` (newest first).
+    /// `days` is `repo.baselineDays` (oldest → newest); `nights` is `SleepNightBuilder.nights(…)` (newest first).
     static func build(days: [DailyMetric], nights: [SleepNight], horizon: ProgressHorizon, todayKey: String) -> ProgressSnapshot {
         let upToToday = days.filter { $0.day <= todayKey }
         let totalNights = upToToday.reduce(into: 0) { acc, d in
@@ -534,7 +534,7 @@ enum ProgressCopy {
         }
     }
 
-    /// The dot beside the sentence: `MetricHero.bandDot`'s rule with `higherIsBetter` (HRV up / resting
+    /// The dot beside the sentence: `TodayRingTile.tone`'s rule with `higherIsBetter` (HRV up / resting
     /// HR down = improving). The sentence text itself is never coloured.
     static func tone(status: ProgressMetricStatus, higherIsBetter: Bool) -> Tone {
         guard case .ready(let c, _, _) = status else { return .none }

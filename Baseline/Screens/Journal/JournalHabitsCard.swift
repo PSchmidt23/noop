@@ -1,9 +1,11 @@
 #if os(iOS)
 import SwiftUI
 
-/// The day's habits as a wrapping row of chips. Yes-no chips cycle yes → no → clear; numeric chips
-/// step a count. A "no" is a real answer here: it is the control night the effects engine compares
-/// against, so the card also offers "Mark the rest as no" once something is logged.
+/// The day's habits as a wrapping row of chips (`BaselineChip` / `JournalNumericChip`, Components).
+/// Yes-no chips cycle yes → no → clear; numeric chips step a count. A "no" is a real answer here: it
+/// is the control night the effects engine compares against, so the card also offers "Mark the rest
+/// as no" once something is logged. Hold a chip to hide or delete the habit. Title "Habits" is a
+/// UI-test anchor.
 struct JournalHabitsCard: View {
     @EnvironmentObject private var repo: Repository
     @ObservedObject var model: JournalScreenModel
@@ -17,13 +19,12 @@ struct JournalHabitsCard: View {
     private var unansweredCount: Int { items.count - answeredCount }
 
     var body: some View {
-        BaselineCard(title: "Habits", subtitle: items.isEmpty ? nil : "Tap for yes, again for no, once more to clear. Hold to hide.",
-                     accessory: items.isEmpty ? nil : AnyView(countPill)) {
+        BaselineCard(title: "Habits", accessory: items.isEmpty ? nil : AnyView(countText)) {
             if items.isEmpty {
                 BaselineEmptyState(icon: "checklist",
                                    title: "No habits yet",
-                                   message: "Add the things you want to test against your HRV: a late coffee, a drink, a sauna.")
-                addChip(wide: true)
+                                   message: "Add the things you want to test against your HRV: a late coffee, a drink, a sauna. Tap a chip for yes, again for no, once more to clear; hold one to hide it.")
+                BaselineCTA(title: "Add a habit", prominent: false, action: onAdd)
             } else {
                 BaselineFlowLayout(spacing: 8) {
                     ForEach(items) { item in
@@ -34,13 +35,14 @@ struct JournalHabitsCard: View {
                                                onChange: { v in step(item, to: v) })
                                 .contextMenu { hideButton(item) }
                         } else {
-                            JournalHabitChip(label: label(item.canonical),
-                                             state: model.answers[item.canonical],
-                                             action: { cycle(item) })
+                            BaselineChip(label: label(item.canonical),
+                                         state: model.answers[item.canonical],
+                                         action: { cycle(item) })
                                 .contextMenu { hideButton(item) }
                         }
                     }
-                    addChip(wide: false)
+                    BaselineAddChip(title: "Add habit", action: onAdd)
+                        .accessibilityLabel("Add a habit")
                 }
                 if answeredCount > 0 && unansweredCount > 0 {
                     Button {
@@ -57,27 +59,11 @@ struct JournalHabitsCard: View {
         }
     }
 
-    private var countPill: some View {
+    /// "3 of 7", good once every habit has an answer.
+    private var countText: some View {
         Text("\(answeredCount) of \(items.count)")
             .font(BaselineTheme.caption)
-            .foregroundStyle(answeredCount == items.count && !items.isEmpty ? BaselineTheme.good : BaselineTheme.textTertiary)
-    }
-
-    private func addChip(wide: Bool) -> some View {
-        Button(action: onAdd) {
-            HStack(spacing: 5) {
-                Image(systemName: "plus").font(BaselineTheme.symbolSmall)
-                Text(wide ? "Add a habit" : "Add")
-            }
-            .font(BaselineTheme.caption.weight(.semibold))
-            .foregroundStyle(BaselineTheme.accent)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .frame(maxWidth: wide ? CGFloat.infinity : nil)
-            .background(BaselineTheme.accent.opacity(0.10), in: Capsule())
-            .overlay(Capsule().strokeBorder(BaselineTheme.accent.opacity(0.35), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Add a habit")
+            .foregroundStyle(answeredCount == items.count ? BaselineTheme.good : BaselineTheme.textTertiary)
     }
 
     private func hideButton(_ item: JournalCatalogItem) -> some View {
@@ -122,135 +108,49 @@ struct JournalHabitsCard: View {
     }
 }
 
-/// A yes-no chip. `state` nil = unanswered, true = yes (accent), false = no (dim with a cross).
-struct JournalHabitChip: View {
-    let label: String
-    let state: Bool?
-    let action: () -> Void
+/// One day's habits card with its own model and the add-habit sheet: the body of `JournalSheet`, and
+/// of the thin `JournalScreen` wrapper. `day` is the engine's "yyyy-MM-dd" key; the card reloads when
+/// the store refreshes or the day changes.
+struct JournalDayHabits: View {
+    @EnvironmentObject private var repo: Repository
+    /// The app's one catalog store (injected by `BaselineApp`), shared with Home's journal prompt.
+    @EnvironmentObject private var catalog: JournalCatalogStore
+    @StateObject private var model = JournalScreenModel()
+    @State private var showAddHabit = false
+    let day: String
+
+    private struct LoadKey: Hashable {
+        let seq: Int
+        let day: String
+    }
+
+    /// The merged catalog (imported ∪ starter ∪ custom), hidden items dropped, grouped then ordered.
+    private var items: [JournalCatalogItem] {
+        let order = Dictionary(uniqueKeysWithValues: JournalGroup.displayOrder.enumerated().map { ($1, $0) })
+        return catalog.resolvedItems(imported: model.importedQuestions).sorted {
+            let ga = order[$0.group] ?? 99, gb = order[$1.group] ?? 99
+            if ga != gb { return ga < gb }
+            if $0.sortIndex != $1.sortIndex { return $0.sortIndex < $1.sortIndex }
+            return $0.display < $1.display
+        }
+    }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                if let state {
-                    Image(systemName: state ? "checkmark" : "xmark")
-                        .font(BaselineTheme.symbolSmall.weight(.bold))
-                        .foregroundStyle(state ? BaselineTheme.accent : BaselineTheme.textTertiary)
-                }
-                Text(label)
-                    .font(BaselineTheme.label)
-                    .foregroundStyle(textColor)
-                    .lineLimit(1)
+        JournalHabitsCard(model: model, items: items, dayKey: day,
+                          label: label(for:),
+                          onAdd: { showAddHabit = true },
+                          onHide: { catalog.remove($0.canonical) })
+            .task(id: LoadKey(seq: repo.refreshSeq, day: day)) { await model.loadDay(repo: repo, day: day) }
+            .sheet(isPresented: $showAddHabit) {
+                JournalAddHabitSheet(catalog: catalog, imported: model.importedQuestions)
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(fill, in: Capsule())
-            .overlay(Capsule().strokeBorder(stroke, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .animation(.easeOut(duration: 0.15), value: state)
-        .accessibilityLabel(label)
-        .accessibilityValue(accessibilityValueText)
     }
 
-    private var accessibilityValueText: String {
-        switch state {
-        case .some(true): return "yes"
-        case .some(false): return "no"
-        case nil: return "not answered"
-        }
-    }
-
-    private var fill: Color {
-        state == true ? BaselineTheme.accent.opacity(0.18) : BaselineTheme.card
-    }
-    private var stroke: Color {
-        state == true ? BaselineTheme.accent.opacity(0.55) : BaselineTheme.hairline
-    }
-    private var textColor: Color {
-        switch state {
-        case .some(true): return BaselineTheme.text
-        case .some(false): return BaselineTheme.textTertiary
-        case nil: return BaselineTheme.textSecondary
-        }
-    }
-}
-
-/// A stepper chip for a numeric habit: "Alcohol · 2" with − and + inside the capsule.
-struct JournalNumericChip: View {
-    enum Entry: Equatable { case unanswered, no, value(Double) }
-
-    let label: String
-    let unit: String?
-    let state: Entry
-    /// nil = clear, 0 = no, ≥ 1 = value.
-    let onChange: (Double?) -> Void
-
-    private var value: Double? { if case let .value(v) = state { return v } else { return nil } }
-    private var isYes: Bool { value != nil }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            if state != .unanswered {
-                stepButton("minus") {
-                    switch state {
-                    case .value(let v) where v > 1: onChange(v - 1)
-                    case .value: onChange(0)
-                    case .no: onChange(nil)
-                    case .unanswered: break
-                    }
-                }
-            }
-            Button {
-                if state == .unanswered { onChange(1) }
-            } label: {
-                HStack(spacing: 5) {
-                    if state == .no {
-                        Image(systemName: "xmark").font(BaselineTheme.symbolSmall.weight(.bold))
-                            .foregroundStyle(BaselineTheme.textTertiary)
-                    }
-                    Text(label).lineLimit(1)
-                    if let value {
-                        Text("·").foregroundStyle(BaselineTheme.textTertiary)
-                        Text(JournalLabels.magnitude(value))
-                            .foregroundStyle(BaselineTheme.accent)
-                            .contentTransition(.numericText())
-                        if let unit, !unit.isEmpty {
-                            Text(unit).font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textTertiary)
-                        }
-                    }
-                }
-                .font(BaselineTheme.label)
-                .foregroundStyle(textColor)
-                .padding(.horizontal, state == .unanswered ? 12 : 6)
-                .padding(.vertical, 8)
-            }
-            .buttonStyle(.plain)
-            stepButton("plus") { onChange((value ?? 0) + 1) }
-        }
-        .background(isYes ? BaselineTheme.accent.opacity(0.18) : BaselineTheme.card, in: Capsule())
-        .overlay(Capsule().strokeBorder(isYes ? BaselineTheme.accent.opacity(0.55) : BaselineTheme.hairline, lineWidth: 1))
-        .animation(.easeOut(duration: 0.15), value: state)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(label)
-    }
-
-    private var textColor: Color {
-        switch state {
-        case .value: return BaselineTheme.text
-        case .no: return BaselineTheme.textTertiary
-        case .unanswered: return BaselineTheme.textSecondary
-        }
-    }
-
-    private func stepButton(_ symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(BaselineTheme.symbolSmall)
-                .foregroundStyle(BaselineTheme.textSecondary)
-                .frame(width: 28, height: 32)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(symbol == "plus" ? "Increase \(label)" : "Decrease \(label)")
+    /// Short chip label for a canonical question: the user's rename, else the short form (the same
+    /// table Home's prompt reads, so a habit has one name everywhere).
+    private func label(for canonical: String) -> String {
+        if let n = catalog.item(for: canonical)?.displayName, !n.isEmpty { return n }
+        return JournalLabels.short(canonical)
     }
 }
 #endif

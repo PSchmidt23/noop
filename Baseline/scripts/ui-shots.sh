@@ -75,6 +75,9 @@ if [[ "$STATE" != "Booted" ]]; then
   xcrun simctl boot "$UDID" || { log "boot failed"; exit 1; }
 fi
 xcrun simctl bootstatus "$UDID" -b >/dev/null 2>&1 || true
+# Baseline is light-only (`.preferredColorScheme(.light)`); the system sheets and alerts it presents
+# follow the simulator's appearance, so pin it to light for the captures.
+xcrun simctl ui "$UDID" appearance light >/dev/null 2>&1 || log "could not set light appearance on $UDID"
 
 xcrun simctl status_bar "$UDID" override \
   --time 9:41 \

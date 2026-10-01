@@ -3,7 +3,7 @@ import Foundation
 import WhoopStore
 import StrandAnalytics
 
-// Pure derivations for the Today screen. Everything here is a value type built from `repo.days`, the
+// Pure derivations for the Today screen. Everything here is a value type built from `repo.baselineDays`, the
 // Sleep tab's `SleepNight` list and `repo.workoutRows(days:)`; nothing touches the store or SwiftUI.
 
 /// One metric (HRV or resting HR) read against the person's own baseline.
@@ -19,7 +19,7 @@ struct TodayMetricReading {
     let state: BaselineState
     /// nil until the baseline is usable (`Baselines.minNightsSeed` nights) or when the value is stale.
     let deviation: Deviation?
-    /// Up to the last 14 nights with a value, oldest to newest, for the sparkline. Empty when stale, so
+    /// Up to the last 14 nights with a value, oldest to newest (kept for the model tests; no card draws it now). Empty when stale, so
     /// an axis-free line never reads as "the last 14 nights".
     let recent: [(day: String, value: Double)]
 

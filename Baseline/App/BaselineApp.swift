@@ -84,7 +84,7 @@ struct BaselineApp: App {
                 .environment(\.locale, AppLanguage.activeLocale)
                 .chartStyle(chartStyleRaw)
                 .noopAccent(accentRaw, customHex: accentCustomHex)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(.light)
                 .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                 .onChange(of: health.auth) { _, auth in
                     HealthWritebackBackgroundScheduler.updateSchedule(isAuthorized: auth == .authorized)

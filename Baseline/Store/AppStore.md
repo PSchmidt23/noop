@@ -65,7 +65,7 @@ APPLE HEALTH
 If you allow it, Baseline reads sleep, workouts and heart data from Apple Health and writes back the metrics it computes, on this iPhone only.
 
 IMPORT
-Bring your history: an export from your strap's app or an Apple Health export lands in the same local store, so Trends and Progress reach back as far as the export does. Compare the strap's nights with the import, night by night, and take everything back out as CSV whenever you like.
+Bring your history: an export from your strap's app or an Apple Health export lands in the same local store, so Trends and Progress reach back as far as the export does. Your strap's own nights stay the record and the import fills the days it did not cover, unless you choose otherwise under Settings › Data. Compare the strap's nights with the import, night by night, and take everything back out as CSV whenever you like.
 
 FREE, PRIVATE, OPEN
 Baseline is free, with no account, no sign-in, no subscription, no ads and no in-app purchases. There is no server: your data lives in the app on your iPhone and, when you allow it, in Apple Health. The app contains no analytics, crash reporting or tracking and makes no network connections. Delete the app and the data is gone.

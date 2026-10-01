@@ -8,6 +8,11 @@ import StrandAnalytics
 /// cell both read `latestNight(…)`; the Today sleep card and the Sleep tab both read `sleepAverage30(before:in:)`;
 /// every span of minutes, asleep or in a workout, is spelled by `durationText(…)`.
 /// Pure and synchronous; nothing here touches the store or SwiftUI.
+///
+/// The daily rows every screen hands these resolvers come from ONE funnel, `BaselineReadouts.days(_ repo:)`
+/// (`BaselineDays.swift`, with `nights(_:)` and `series(_:key:)`): `repo.days` rebuilt under the persisted
+/// `baseline.dataSource` precedence, strap first by default. A Baseline screen reads `repo.baselineDays`,
+/// never `repo.days`, so an imported WHOOP export can be compared against the strap without replacing it.
 enum BaselineReadouts {
 
     /// The newest night with a metric and the baseline it is judged against.

@@ -33,8 +33,9 @@ struct SettingsAboutCard: View {
                 SettingsRowLabel(icon: "chevron.left.forwardslash.chevron.right", title: "NOOP on GitHub",
                                  subtitle: "github.com/ryanbr/noop") {
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(BaselineTheme.symbolSmall)
                         .foregroundStyle(BaselineTheme.textTertiary)
+                        .accessibilityHidden(true)
                 }
             }
             SettingsDivider()
@@ -42,8 +43,9 @@ struct SettingsAboutCard: View {
                 SettingsRowLabel(icon: "chevron.left.forwardslash.chevron.right", title: "Baseline source",
                                  subtitle: "github.com/PSchmidt23/noop") {
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(BaselineTheme.symbolSmall)
                         .foregroundStyle(BaselineTheme.textTertiary)
+                        .accessibilityHidden(true)
                 }
             }
             SettingsDivider()
@@ -90,11 +92,7 @@ struct SettingsAboutCard: View {
         }
     }
 
-    private var chevron: some View {
-        Image(systemName: "chevron.right")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(BaselineTheme.textTertiary)
-    }
+    private var chevron: some View { SettingsChevron() }
 
     private static var versionLine: String {
         let info = Bundle.main.infoDictionary
@@ -105,7 +103,8 @@ struct SettingsAboutCard: View {
 }
 
 /// A scrollable sheet of plain text with a Done button. `link` is the same text hosted online, offered
-/// under it; nil for texts that only live in the app.
+/// under it; nil for texts that only live in the app. System sheet chrome (its bar is the glass), a flat
+/// body on `BaselineBackground`; no colour-scheme override.
 struct SettingsTextSheet: View {
     let title: String
     let text: String
@@ -138,7 +137,6 @@ struct SettingsTextSheet: View {
             .background(BaselineBackground())
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }

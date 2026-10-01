@@ -30,13 +30,14 @@ struct JournalAddHabitSheet: View {
                             .submitLabel(.done)
                             .onSubmit(add)
                     }
-                    // The shared segmented pill carries its own capsule, so it sits under the caption
-                    // without `field`'s card around it.
+                    // The shared segmented control (flat: it sits inside content) carries its own
+                    // capsule, so it goes under the caption without `field`'s card around it.
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Type").font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textTertiary)
                         BaselineSegmentedPicker(options: [false, true], selection: $isNumeric,
                                                 label: { $0 ? "Count" : "Yes / No" },
-                                                accessibilityLabel: { $0 ? "A count, like drinks or minutes" : "A yes or no" })
+                                                accessibilityLabel: { $0 ? "A count, like drinks or minutes" : "A yes or no" },
+                                                style: .flat)
                     }
                     if isNumeric {
                         field("Unit (optional)") {
@@ -87,7 +88,6 @@ struct JournalAddHabitSheet: View {
             .scrollIndicators(.hidden)
             .navigationTitle("New habit")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }.foregroundStyle(BaselineTheme.textSecondary)
@@ -101,7 +101,6 @@ struct JournalAddHabitSheet: View {
             }
             .onAppear { nameFocused = true }
         }
-        .preferredColorScheme(.dark)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
@@ -114,7 +113,7 @@ struct JournalAddHabitSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(BaselineTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(BaselineTheme.cardStroke, lineWidth: 1))
+                    .strokeBorder(BaselineTheme.hairline, lineWidth: 1))
         }
     }
 

@@ -1,15 +1,17 @@
 #if os(iOS)
 import SwiftUI
 
-/// One night, pushed from the Nights list: the same hero, stages and vitals the tab shows for last night.
+/// One night, pushed from the Nights list: the same ring and stages the tab shows for last night,
+/// plus the night's vitals (resting HR, HRV, breathing, skin temperature), which live here only.
 struct NightDetailScreen: View {
     let night: SleepNight
-    /// Average asleep minutes over the latest 30 nights, for the hero's comparison pill.
+    /// `BaselineReadouts.sleepAverage30(before:in:)` for this night, for the ring's context line.
     let average: Double?
 
     var body: some View {
         BaselineScreen(title: SleepFormat.dayLabel(night.dayDate)) {
-            SleepHeroCard(title: "Night", night: night, average: average)
+            // The navigation title already names the day, so the hero does not repeat it.
+            SleepHeroCard(title: "Night", night: night, average: average, showsDayLabel: false)
             SleepHypnogramCard(night: night)
             if night.hasVitals {
                 SleepVitalsCard(night: night)

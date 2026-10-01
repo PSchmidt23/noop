@@ -6,6 +6,13 @@ import WhoopStore
 /// (opened on the chosen WHOOP model's prep step, past NOOP's device-type chooser), and the Apple Health
 /// permission. Every step can be skipped; the disclaimer is accepted implicitly through the footnote on
 /// the first page. Calls `onFinished` once, from the last step.
+///
+/// Light paper (`BaselineBackground`) with the copy centred above and a floating action column below.
+/// The column is the one place Baseline uses glass buttons (`GlassCTA`, inside one
+/// `GlassEffectContainer`): the buttons float over the background, not inside a card, so the HIG's
+/// "glass is for the layer above content" rule holds. Text actions ("Skip for now", "Not now") stay
+/// plain text. NOOP's pairing wizard keeps its own sheet chrome; `StrandPalette` resolves to its light
+/// values under the app's `.preferredColorScheme(.light)`, so no colour-scheme override is applied.
 struct WelcomeScreen: View {
     var onFinished: () -> Void
     @State private var step = WelcomeScreen.launchStep
@@ -65,8 +72,7 @@ private struct WelcomeIntroStep: View {
                 .foregroundStyle(BaselineTheme.textTertiary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Continue", action: onContinue)
-                .buttonStyle(WelcomeCapsuleButtonStyle(filled: true))
+            GlassCTA(title: "Continue", action: onContinue)
         }
     }
 }
@@ -112,6 +118,8 @@ private struct WelcomePairStep: View {
                 WelcomePairButtons(paired: live.bonded, onPair: { pairing = $0 }, onContinue: onContinue)
             }
         }
+        // NOOP's sheet, NOOP's chrome: the wizard's copy already names NOOP, and StrandPalette carries a
+        // light variant, so it inherits the app's light scheme untouched.
         .sheet(item: $pairing) { type in
             AddDeviceWizard(live: live, onClose: { pairing = nil }, startAt: (type: type, step: .prep))
         }
@@ -120,24 +128,22 @@ private struct WelcomePairStep: View {
 
 /// Observes the registry so the check and Continue flip the moment the wizard adopts a strap. The
 /// registry is seeded with a placeholder row that has no peripheral, so "non-empty" is not the test;
-/// an adopted device (a peripheral id) or a live bond is.
+/// an adopted device (a peripheral id) or a live bond is. Same test as `StrapStatusPill.isPaired`.
 private struct WelcomePairActions: View {
     @ObservedObject var registry: DeviceRegistry
     @EnvironmentObject private var live: LiveState
     var onPair: (AddDeviceWizard.DeviceType) -> Void
     var onContinue: () -> Void
 
-    private var paired: Bool {
-        live.bonded || registry.devices.contains { $0.peripheralId != nil && !$0.isImportSource }
-    }
-
     var body: some View {
-        WelcomePairButtons(paired: paired, onPair: onPair, onContinue: onContinue)
+        WelcomePairButtons(paired: StrapStatusPill.isPaired(live: live, registry: registry),
+                           onPair: onPair, onContinue: onContinue)
     }
 }
 
 /// One button per WHOOP model, so the wizard can open on that model's prep step instead of NOOP's
-/// device-type chooser. Nominative use of the WHOOP name only.
+/// device-type chooser. Nominative use of the WHOOP name only. Before pairing, "Pair WHOOP 4.0" is the
+/// prominent action; once a strap is adopted it steps back to plain glass and "Continue" takes over.
 private struct WelcomePairButtons: View {
     let paired: Bool
     var onPair: (AddDeviceWizard.DeviceType) -> Void
@@ -145,18 +151,11 @@ private struct WelcomePairButtons: View {
 
     var body: some View {
         if paired {
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(BaselineTheme.good)
-                Text("Strap paired").font(BaselineTheme.label).foregroundStyle(BaselineTheme.text)
-            }
-            .transition(.opacity)
+            WelcomeDoneRow(text: "Strap paired")
         }
-        Button("Pair WHOOP 4.0") { onPair(.whoop4) }
-            .buttonStyle(WelcomeCapsuleButtonStyle(filled: !paired))
-        Button("Pair WHOOP 5.0 / MG") { onPair(.whoop5mg) }
-            .buttonStyle(WelcomeCapsuleButtonStyle(filled: !paired))
-        Button("Continue", action: onContinue)
-            .buttonStyle(WelcomeCapsuleButtonStyle(filled: paired))
+        GlassCTA(title: "Pair WHOOP 4.0", prominent: !paired) { onPair(.whoop4) }
+        GlassCTA(title: "Pair WHOOP 5.0 / MG", prominent: false) { onPair(.whoop5mg) }
+        GlassCTA(title: "Continue", action: onContinue)
             .disabled(!paired)
         Button("Skip for now", action: onContinue)
             .buttonStyle(WelcomeTextButtonStyle())
@@ -187,14 +186,10 @@ private struct WelcomeHealthStep: View {
             }
         } actions: {
             if health.auth == .authorized {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(BaselineTheme.good)
-                    Text("Apple Health allowed").font(BaselineTheme.label).foregroundStyle(BaselineTheme.text)
-                }
-                Button("Finish", action: onFinished)
-                    .buttonStyle(WelcomeCapsuleButtonStyle(filled: true))
+                WelcomeDoneRow(text: "Apple Health allowed")
+                GlassCTA(title: "Finish", action: onFinished)
             } else {
-                Button(requesting ? "Asking…" : "Allow") {
+                GlassCTA(title: requesting ? "Asking…" : "Allow") {
                     guard !requesting else { return }
                     requesting = true
                     Task {
@@ -203,7 +198,6 @@ private struct WelcomeHealthStep: View {
                         onFinished()
                     }
                 }
-                .buttonStyle(WelcomeCapsuleButtonStyle(filled: true))
                 .disabled(requesting)
                 Button("Not now", action: onFinished)
                     .buttonStyle(WelcomeTextButtonStyle())
@@ -217,7 +211,8 @@ private struct WelcomeHealthStep: View {
 
 /// Centered copy above, a column of actions below. Keeps the three steps aligned. The column fills the
 /// page and centres when it fits; at accessibility Dynamic Type sizes or on short phones it scrolls
-/// instead of pushing the actions under the dots or off-screen.
+/// instead of pushing the actions under the dots or off-screen. The action column is the screen's one
+/// `GlassEffectContainer`, so neighbouring glass buttons share a sampling layer and blend correctly.
 private struct WelcomeStepLayout<Hero: View, Actions: View>: View {
     @ViewBuilder var hero: () -> Hero
     @ViewBuilder var actions: () -> Actions
@@ -230,9 +225,11 @@ private struct WelcomeStepLayout<Hero: View, Actions: View>: View {
                     hero()
                         .frame(maxWidth: 420)
                     Spacer(minLength: 24)
-                    VStack(spacing: 14) { actions() }
-                        .frame(maxWidth: 420)
-                        .padding(.bottom, 12)
+                    GlassEffectContainer(spacing: 12) {
+                        VStack(spacing: 12) { actions() }
+                    }
+                    .frame(maxWidth: 420)
+                    .padding(.bottom, 12)
                 }
                 .padding(.horizontal, 32)
                 .frame(maxWidth: .infinity, minHeight: geo.size.height)
@@ -242,6 +239,7 @@ private struct WelcomeStepLayout<Hero: View, Actions: View>: View {
     }
 }
 
+/// The step's flat glyph: a light accent symbol on an `accent @ 0.10` circle (the icon-tile fill), never glass.
 private struct WelcomeGlyph: View {
     let systemName: String
     var body: some View {
@@ -249,7 +247,25 @@ private struct WelcomeGlyph: View {
             .font(.system(size: 30, weight: .light))
             .foregroundStyle(BaselineTheme.accent)
             .frame(width: 72, height: 72)
-            .background(BaselineTheme.accent.opacity(0.12), in: Circle())
+            .background(BaselineTheme.accent.opacity(0.10), in: Circle())
+            .accessibilityHidden(true)
+    }
+}
+
+/// "Strap paired" / "Apple Health allowed": a `good` check beside ink text, one accessibility element.
+private struct WelcomeDoneRow: View {
+    let text: String
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(BaselineTheme.symbol)
+                .foregroundStyle(BaselineTheme.good)
+            Text(text)
+                .font(BaselineTheme.label)
+                .foregroundStyle(BaselineTheme.text)
+        }
+        .transition(.opacity)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -265,44 +281,22 @@ private struct WelcomeDots: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: index)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(index + 1) of \(count)")
     }
 }
 
 // MARK: - Buttons
 
-/// Capsule button: filled accent for the step's main action, a quiet card surface otherwise. One type,
-/// so a step can flip which of two buttons is primary without changing view identity.
-private struct WelcomeCapsuleButtonStyle: ButtonStyle {
-    let filled: Bool
+/// Text-only tertiary action under the glass column ("Skip for now", "Not now"): plain, `textSecondary`,
+/// never glass. The primary and secondary actions are `GlassCTA` (Components/BaselineButtons.swift).
+private struct WelcomeTextButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(BaselineTheme.headline)
-            .foregroundStyle(foreground)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 15)
-            .background(background, in: Capsule())
-            .overlay(Capsule().strokeBorder(filled ? Color.clear : BaselineTheme.cardStroke, lineWidth: 1))
-            .opacity(configuration.isPressed ? 0.85 : 1)
-    }
-
-    private var foreground: Color {
-        if filled { return BaselineTheme.background }
-        return isEnabled ? BaselineTheme.text : BaselineTheme.textTertiary
-    }
-
-    private var background: Color {
-        filled ? BaselineTheme.accent.opacity(isEnabled ? 1 : 0.3) : BaselineTheme.card
-    }
-}
-
-private struct WelcomeTextButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
             .font(BaselineTheme.label)
-            .foregroundStyle(BaselineTheme.textSecondary)
+            .foregroundStyle(isEnabled ? BaselineTheme.textSecondary : BaselineTheme.textTertiary)
             .padding(.vertical, 6)
             .opacity(configuration.isPressed ? 0.6 : 1)
     }
