@@ -74,3 +74,19 @@ be exposed later.
   numerals, generous whitespace, one idea per card. Oura-like calm, never a dashboard.
 - Every number shows its context: the baseline and whether today sits inside the normal band.
 - Empty states explain what will appear after the first synced night.
+
+## Build, run, verify
+
+```bash
+Baseline/scripts/build.sh            # xcodegen generate + simulator build (prints errors + result only)
+```
+Open `Strand.xcodeproj`, scheme **Baseline**, run on a device for real strap testing (automatic signing,
+team 25RC553RGP; Xcode registers the HealthKit and App Group capabilities on first device run).
+
+DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch <udid> com.patrickschmidt.baseline …`):
+- `--demo-seed` — NOOP's seeder fills 120 days of synthetic, internally consistent data when the store is empty.
+- `--tab trends|sleep|journal|settings` — open on that tab (screenshots, quick checks).
+- `defaults write com.patrickschmidt.baseline baseline.onboarded -bool true` (via `simctl spawn`) skips the welcome flow.
+
+Upstream sync: `git fetch upstream && git merge upstream/main`, then `xcodegen generate` and build. Conflicts
+should only ever touch `project.yml`'s Baseline block.

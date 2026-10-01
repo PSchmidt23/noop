@@ -400,6 +400,9 @@ targets:
           - "App/StrandiOSApp.swift"
       - path: StrandiOSShared
       - path: Baseline
+      # Full license text for Settings → About (PolyForm Noncommercial requires passing the terms along).
+      - path: LICENSE
+        buildPhase: resources
     # Same tracked wrapper as the macOS target (Strand/Oura/ is shared, not per-platform).
     configFiles:
       Debug: Strand/Oura/OuraConfig.xcconfig
