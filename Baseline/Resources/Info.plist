@@ -6,8 +6,6 @@
 	<string>$(APP_GROUP_ID)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER).debugexport</string>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER).coachbrief</string>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).healthwriteback</string>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).rescore</string>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).stalebattery</string>
@@ -18,19 +16,6 @@
 	<string>Baseline</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIcons</key>
-	<dict>
-		<key>CFBundleAlternateIcons</key>
-		<dict>
-			<key>AppIcon-Navy</key>
-			<dict>
-				<key>CFBundleIconFiles</key>
-				<array/>
-				<key>UIPrerenderedIcon</key>
-				<false/>
-			</dict>
-		</dict>
-	</dict>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -41,48 +26,26 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>baseline</string>
-			</array>
-		</dict>
-	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.healthcare-fitness</string>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<true/>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Baseline connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your device.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Baseline reads your own Apple Health data on-device to compute recovery, strain, and sleep. Nothing leaves your device.</string>
+	<string>Baseline reads your sleep, workouts and heart data from Apple Health on this iPhone to show HRV, resting heart rate, readiness, sleep and effort against your baseline. Nothing leaves your device.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Baseline writes the metrics it computes from your strap back into Apple Health, on-device and only when you allow it.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Baseline records your route during an outdoor workout to show distance, pace, and a map, and keeps recording while the screen is off. The route stays on your device. Nothing leaves it.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Baseline uses the microphone to let you ask the coach a question by voice. The audio is transcribed on-device and never leaves your iPhone.</string>
+	<string>Baseline does not currently use the microphone. If a voice feature is added, audio is transcribed on this iPhone and never leaves it.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Baseline reads your iPhone's step count for a walking or running workout to show steps in the activity summary. It stays on your device. Nothing leaves it.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Baseline transcribes your question on-device so you can ask the coach out loud instead of typing. Audio never leaves your iPhone.</string>
-	<key>NSSupportsLiveActivities</key>
-	<true/>
-	<key>OURA_CLIENT_ID</key>
-	<string>$(OURA_CLIENT_ID)</string>
-	<key>OURA_CLIENT_SECRET</key>
-	<string>$(OURA_CLIENT_SECRET)</string>
-	<key>OURA_REDIRECT_URI</key>
-	<string>$(OURA_REDIRECT_URI)</string>
+	<string>Baseline does not currently record audio. If a voice feature is added, speech is transcribed on this iPhone and never leaves it.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
@@ -90,8 +53,6 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
-	<key>UIFileSharingEnabled</key>
-	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

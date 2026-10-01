@@ -399,9 +399,22 @@ targets:
           # NOOP's @main — Baseline ships its own entry point in Baseline/App/BaselineApp.swift.
           - "App/StrandiOSApp.swift"
       - path: StrandiOSShared
+      # Everything under Baseline/ is swept: Swift into Sources, the rest (Assets.xcassets, the privacy
+      # manifest Resources/PrivacyInfo.xcprivacy) into Copy Bundle Resources, which is where XcodeGen
+      # puts an extension it does not special-case. Repo documents and the build script are excluded
+      # so they do not ship inside the app bundle.
       - path: Baseline
-      # Full license text for Settings → About (PolyForm Noncommercial requires passing the terms along).
+        excludes:
+          - "ENGINE_MAP.md"
+          - "PRIVACY.md"
+          - "scripts"
+      # Legal texts for Settings → About. PolyForm Noncommercial requires passing the terms along;
+      # the MIT/BSD notices in NOTICE and the credits in ATTRIBUTION.md must accompany the binary too.
       - path: LICENSE
+        buildPhase: resources
+      - path: NOTICE
+        buildPhase: resources
+      - path: ATTRIBUTION.md
         buildPhase: resources
     # Same tracked wrapper as the macOS target (Strand/Oura/ is shared, not per-platform).
     configFiles:
@@ -419,17 +432,23 @@ targets:
         AppGroupIdentifier: "$(APP_GROUP_ID)"
         LSApplicationCategoryType: public.app-category.healthcare-fitness
         UILaunchScreen: {}
-        # Alternate app icons (v3 "Titanium & Gold"). The primary icon stays the asset-catalog
-        # AppIcon (machined titanium); the alternate "AppIcon-Navy" (blued titanium) is declared
-        # here so UIApplication.setAlternateIconName("AppIcon-Navy") can switch to it at runtime.
-        # CFBundleIconFiles is intentionally empty — the artwork lives in the asset catalog, shipped
-        # via ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS, so no loose PNGs are listed here.
-        CFBundleIcons:
-          CFBundleAlternateIcons:
-            AppIcon-Navy:
-              CFBundleIconFiles: []
-              UIPrerenderedIcon: false
-        NSSupportsLiveActivities: true
+        # Export compliance, answered once here so App Store Connect never parks a build on "Missing
+        # Compliance". Baseline ships no non-exempt encryption: the only cipher in the binary is the
+        # AES-128 challenge/response in Packages/OuraProtocol/Auth.swift, which goes through Apple's
+        # CommonCrypto and serves device authentication only (an exempt use), and any HTTPS is the
+        # OS's own TLS via URLSession. Re-check this answer if a cipher is ever added for data at rest
+        # or in transit.
+        ITSAppUsesNonExemptEncryption: false
+        # Not carried over from NOOP's block: CFBundleIcons (the alternate "AppIcon-Navy" set is switched
+        # only from NOOP's Settings screen, which Baseline does not host), NSSupportsLiveActivities
+        # (deferred; LiveActivityController gates on areActivitiesEnabled, false without the key),
+        # NSAppTransportSecurity's local-networking exemption (the AI coach is deferred and Baseline
+        # makes no network connections), UIFileSharingEnabled / LSSupportsOpeningDocumentsInPlace (the
+        # Siri Shortcut drop file and folder backups are deferred, so Documents stays private), the
+        # OURA_* OAuth keys and the URL scheme (every reader is under #if OURA_CLOUD_IMPORT, which no
+        # tracked build sets, and OuraCredentials.fromBundle returns nil on absent keys, disabling the
+        # lane cleanly). Every NS*UsageDescription for a framework the binary links stays: a missing
+        # one is a hard crash the moment that NOOP code path runs.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UISupportedInterfaceOrientations~ipad:
@@ -443,11 +462,7 @@ targets:
           # matching Android's foreground-service capture. Required by GpsWorkoutRecorder's
           # allowsBackgroundLocationUpdates; without this mode iOS crashes when background updates start.
           - location
-          # #510: the scheduled debug auto-export submits a BGAppRefreshTaskRequest so iOS can wake the
-          # backgrounded app near the user's chosen time to write the overnight strap-log drop. BGAppRefresh
-          # needs the "fetch" background mode; the task id below must also be permitted (and registered at
-          # launch in StrandiOSApp.init) or the submit fails gracefully and only the foreground/"Run now"
-          # paths run.
+          # BGAppRefresh tasks (healthwriteback, stalebattery) need the "fetch" background mode.
           - fetch
           # #1538: the re-score continuation submits a BGProcessingTaskRequest, which needs the
           # "processing" mode — "fetch" only covers the metered BGAppRefresh kind. A strap offload
@@ -455,11 +470,10 @@ targets:
           # reporter's install, which no bluetooth-central wake survives; a processing task is the long,
           # deferrable kind that can finish it.
           - processing
-        # Permit every background-task identifier. Each derives from Bundle.main at runtime so it
-        # tracks BUNDLE_ID_PREFIX, and each is registered from StrandiOSApp.init before launch finishes.
+        # The background-task identifiers BaselineApp.init registers (each derives from Bundle.main at
+        # runtime). NOOP's debugexport and coachbrief tasks are not registered by Baseline's entry point,
+        # so they are not permitted here; a submit for an unpermitted id throws and is caught.
         BGTaskSchedulerPermittedIdentifiers:
-          - $(PRODUCT_BUNDLE_IDENTIFIER).debugexport
-          - $(PRODUCT_BUNDLE_IDENTIFIER).coachbrief
           # Best-effort fallback that writes already-banked WHOOP data to HealthKit when iOS grants
           # background time. Fresh offloads also write immediately from their completion hook.
           - $(PRODUCT_BUNDLE_IDENTIFIER).healthwriteback
@@ -470,37 +484,19 @@ targets:
           # the re-score task, which is submitted only when a re-score is OWED, and a missing strap owes
           # none, so that task would never run in the one case the warning exists for.
           - $(PRODUCT_BUNDLE_IDENTIFIER).stalebattery
+        # Permission strings. iOS shows these verbatim, so they use Baseline's vocabulary (HRV, resting
+        # heart rate, readiness, sleep, effort) and describe only what the hosted screens do.
         NSBluetoothAlwaysUsageDescription: "Baseline connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your device."
         NSLocationWhenInUseUsageDescription: "Baseline records your route during an outdoor workout to show distance, pace, and a map, and keeps recording while the screen is off. The route stays on your device. Nothing leaves it."
-        NSHealthShareUsageDescription: "Baseline reads your own Apple Health data on-device to compute recovery, strain, and sleep. Nothing leaves your device."
+        NSHealthShareUsageDescription: "Baseline reads your sleep, workouts and heart data from Apple Health on this iPhone to show HRV, resting heart rate, readiness, sleep and effort against your baseline. Nothing leaves your device."
         NSHealthUpdateUsageDescription: "Baseline writes the metrics it computes from your strap back into Apple Health, on-device and only when you allow it."
         NSMotionUsageDescription: "Baseline reads your iPhone's step count for a walking or running workout to show steps in the activity summary. It stays on your device. Nothing leaves it."
-        # K4: Coach voice input. Speech is transcribed ON-DEVICE ONLY (requiresOnDeviceRecognition);
-        # the mic button is disabled where the locale doesn't support that, never falls back to
-        # server transcription. Only the resulting TEXT reaches the provider, via the same channel
-        # a typed question already uses.
-        NSSpeechRecognitionUsageDescription: "Baseline transcribes your question on-device so you can ask the coach out loud instead of typing. Audio never leaves your iPhone."
-        NSMicrophoneUsageDescription: "Baseline uses the microphone to let you ask the coach a question by voice. The audio is transcribed on-device and never leaves your iPhone."
-        # #187: the opt-in AI Coach's "Custom (OpenAI-compatible)" provider can point at a LOCAL LLM on
-        # the LAN (Ollama / LM Studio at http://192.168.x.x:11434). ATS blocks cleartext by default;
-        # NSAllowsLocalNetworking exempts loopback/.local/private-LAN hosts ONLY — public HTTPS endpoints
-        # are unaffected, so cloud providers stay TLS. Mirrors the macOS target.
-        NSAppTransportSecurity:
-          NSAllowsLocalNetworking: true
-        # #155: expose the app's Documents folder to Files/Shortcuts so the user's Siri Shortcut can
-        # read the opt-in noop_sync.txt drop file (Apple-Health-free export for sideloaded installs).
-        # Both keys are required for the folder to actually appear in Files.
-        UIFileSharingEnabled: true
-        LSSupportsOpeningDocumentsInPlace: true
-        # Oura BYO-app OAuth credentials (values come from configFiles above); read at runtime via
-        # OuraCredentials.fromBundle. Absent/blank values cleanly disable the Connect-Oura lane.
-        OURA_CLIENT_ID: $(OURA_CLIENT_ID)
-        OURA_CLIENT_SECRET: $(OURA_CLIENT_SECRET)
-        OURA_REDIRECT_URI: $(OURA_REDIRECT_URI)
-        # Registers the noop:// URL scheme so ASWebAuthenticationSession's OAuth redirect
-        # (noop://oura/callback) reaches OuraOAuthProvider instead of bouncing off the OS.
-        CFBundleURLTypes:
-          - CFBundleURLSchemes: [baseline]
+        # Speech and AVFAudio are linked through compiled-in NOOP code (CoachVoiceInput), so the
+        # purpose strings must exist for the ITMS-90683 scan, but no Baseline screen records audio.
+        # The wording stays true if a voice feature is exposed later: transcription is on-device only
+        # (requiresOnDeviceRecognition) and never falls back to server transcription.
+        NSSpeechRecognitionUsageDescription: "Baseline does not currently record audio. If a voice feature is added, speech is transcribed on this iPhone and never leaves it."
+        NSMicrophoneUsageDescription: "Baseline does not currently use the microphone. If a voice feature is added, audio is transcribed on this iPhone and never leaves it."
     entitlements:
       path: Baseline/Resources/Baseline.entitlements
       properties:
@@ -516,10 +512,15 @@ targets:
         PRODUCT_NAME: "Baseline"
         APP_GROUP_ID: group.com.patrickschmidt.baseline
         DEVELOPMENT_TEAM: 25RC553RGP
+        # Baseline's own version line, independent of NOOP's project-level 11.8.0 (429). Target-level
+        # settings win, so the first store build is 1.0 (1); Settings → About reads these two keys.
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: BaselineIcon
-        # Ship every *.appiconset (not just the primary AppIcon) so the alternate "AppIcon-Navy"
-        # set is compiled into the bundle and is available to UIApplication.setAlternateIconName.
-        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
+        # Only the primary BaselineIcon set is compiled in. StrandiOS/Resources/Assets.xcassets (swept
+        # above) also carries NOOP's AppIcon and AppIcon-Navy sets, which Baseline never shows; with
+        # INCLUDE_ALL off they stay out of the bundle.
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: NO
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_EMIT_LOC_STRINGS: YES

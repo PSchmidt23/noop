@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Baseline's privacy manifest. The app is local-only: no account, no server, no analytics, no
+  tracking, so nothing is collected and no tracking domains exist. The accessed-API section lists
+  the required-reason categories that NOOP's engine, compiled into this binary, actually calls.
+  GRDB.swift ships its own manifest inside the package.
+
+  Sources in the binary (re-check these when NOOP is merged):
+    UserDefaults      UserDefaults/@AppStorage across Strand/, StrandiOS/, StrandiOSShared/ and
+                      Baseline/ (CA92.1, app-only), plus UserDefaults(suiteName:) on the app's own
+                      App Group in StrandiOSShared/WidgetSnapshot.swift and
+                      StrandiOS/System/NOOPAppIntents.swift (1C8F.1).
+    FileTimestamp     .contentModificationDateKey in Strand/App/AppModel.swift (Inbox pruning) and
+                      Strand/System/NoopScratch.swift (temp sweep); FileManager.attributesOfItem for
+                      sizes in Strand/Collect, Strand/Data and Packages/WhoopStore. All inside the
+                      app container (C617.1).
+    SystemBootTime    ProcessInfo.systemUptime in Strand/BLE/LiveState.swift, used only to space
+                      log publishes within the app (35F9.1).
+-->
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+				<string>1C8F.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
