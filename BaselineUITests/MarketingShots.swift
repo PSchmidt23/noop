@@ -22,31 +22,12 @@ final class MarketingShots: XCTestCase {
     static let requiredSize = CGSize(width: 1320, height: 2868)
 
     func testMarketingSet() throws {
-        // 01 Today: scrolled until the hero tiles sit just under the navigation bar. The seeded sim has no
-        // strap, so the "Pair your strap" card opens the screen; it is the right first thing for a person
-        // without a strap and the wrong one for a store frame, and any part of it left under the
-        // translucent bar ghosts through. The held gutter drag delivers an unpredictable share of its
-        // length at the fast velocity (a 115pt drag moved nothing, the next one flung 476pt), so this
-        // frame's drags run slowly (300pt/s, no fling) and the position is reached by feedback: measure
-        // the HRV tile against the bar after every step, steps at most 12% of the screen, either
-        // direction, until the tile's top is 12pt under the bar (±14pt) or ten steps have been taken.
+        // 01 Today: top of the screen (strap strip hidden by the marketing flag).
         do {
-            let app = launchTab("today", firstCard: NSPredicate(format: "label == %@", "HRV"))
-            let hrv = app.staticTexts["HRV"].firstMatch
-            let bar = app.navigationBars.firstMatch
-            let height = app.frame.height
-            for step in 0..<10 {
-                guard hrv.exists, bar.exists, height > 0 else { break }
-                let tileTop = hrv.frame.minY - 24          // the tile's padding above its label
-                let target = bar.frame.maxY + 12
-                let delta = tileTop - target               // > 0: content must move up by delta
-                print("marketing: 01-today step \(step) tileTop=\(tileTop) target=\(target) delta=\(delta)")
-                if abs(delta) <= 14 { break }
-                let fraction = min(abs(delta) / height, 0.12)
-                if delta > 0 { scroll(app, fraction: fraction, velocity: Self.precise) }
-                else { scrollBack(app, fraction: fraction, velocity: Self.precise) }
-                Thread.sleep(forTimeInterval: 0.8)
-            }
+            // `-baseline.marketing YES` hides the pair/status strip (DEBUG only), so the frame is the top
+            // of Today: date, readiness, hero tiles.
+            _ = launchTab("today", firstCard: NSPredicate(format: "label == %@", "HRV"))
+            Thread.sleep(forTimeInterval: 1.0)
             try save(XCUIScreen.main.screenshot(), as: "01-today")
         }
 
@@ -94,7 +75,7 @@ final class MarketingShots: XCTestCase {
     /// Launches the seeded app on `tab` with onboarding skipped, waits for the nav title and `firstCard`.
     private func launchTab(_ tab: String, firstCard: NSPredicate) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--tab", tab]
+        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--tab", tab, "-baseline.marketing", "YES"]
         app.launch()
         let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", tab)).firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 10), "marketing: \(tab) navigation title did not appear")

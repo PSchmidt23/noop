@@ -93,8 +93,20 @@ struct TodayScreen: View {
 
     // MARK: Sections
 
+    /// DEBUG-only: `-baseline.marketing YES` (argument domain) hides the strap status / pair card so the
+    /// App Store frame of Today starts with the date and hero tiles. Never true in Release.
+    private static var hidesStrapStatusForMarketing: Bool {
+        #if DEBUG
+        return UserDefaults.standard.bool(forKey: "baseline.marketing")
+        #else
+        return false
+        #endif
+    }
+
     @ViewBuilder private var strapStatus: some View {
-        if let registry = model.deviceRegistry {
+        if TodayScreen.hidesStrapStatusForMarketing {
+            EmptyView()
+        } else if let registry = model.deviceRegistry {
             StrapStatusSection(registry: registry) { showPair = true }
         } else {
             PairStrapCard { showPair = true }
