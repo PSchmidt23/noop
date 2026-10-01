@@ -12,5 +12,5 @@ rmdir "$LOCK" 2>/dev/null
 [ $GEN -ne 0 ] && { echo "xcodegen failed"; exit 1; }
 xcodebuild -project Strand.xcodeproj -scheme Baseline \
   -destination "platform=iOS Simulator,id=149DD9EE-8D7D-4CC2-B5E8-07DBA768C046" \
-  -configuration Debug -derivedDataPath "$DD" CODE_SIGNING_ALLOWED=NO build 2>&1 \
+  -configuration Debug -derivedDataPath "$DD" build 2>&1 \
   | grep -E "error:|warning: .*Baseline/|BUILD (SUCCEEDED|FAILED)" | sort -u

@@ -7,7 +7,16 @@ import WhoopStore
 /// through the footnote on the first page. Calls `onFinished` once, from the last step.
 struct WelcomeScreen: View {
     var onFinished: () -> Void
-    @State private var step = 0
+    @State private var step = WelcomeScreen.launchStep
+
+    /// DEBUG-only: `--welcome-step 1|2` opens the flow on that page for screenshots.
+    private static var launchStep: Int {
+        #if DEBUG
+        let a = CommandLine.arguments
+        if let i = a.firstIndex(of: "--welcome-step"), i + 1 < a.count, let n = Int(a[i + 1]), (0...2).contains(n) { return n }
+        #endif
+        return 0
+    }
 
     var body: some View {
         VStack(spacing: 0) {
