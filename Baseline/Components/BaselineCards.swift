@@ -43,7 +43,20 @@ struct BaselineSectionLabel: View {
 }
 
 /// Status of a value against the person's own baseline.
-enum BaselineBand { case above, inside, below, calibrating }
+enum BaselineBand {
+    case above, inside, below, calibrating
+
+    /// The one phrase for a band position wherever a screen or notification names it ("inside your
+    /// band"); nil while calibrating, when there is no band to be inside of.
+    var positionPhrase: String? {
+        switch self {
+        case .inside: return "inside your band"
+        case .above: return "above your band"
+        case .below: return "below your band"
+        case .calibrating: return nil
+        }
+    }
+}
 
 /// The hero number: value, unit, and where it sits versus baseline.
 struct MetricHero: View {

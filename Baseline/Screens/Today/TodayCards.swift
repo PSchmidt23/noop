@@ -177,18 +177,9 @@ struct TodayHeroTile: View {
         }
         let delta = abs(d.delta) < 0.5 ? "On your baseline"
                                        : "\(TodayFormat.signed(d.delta, unit: unit)) vs baseline"
-        guard let position = bandPosition(r.band) else { return delta }
+        // `BaselineBand.positionPhrase`: the same words Trends and the morning summary use.
+        guard let position = r.band.positionPhrase else { return delta }
         return "\(delta) · \(position)"
-    }
-
-    /// Same words Trends uses for a selected night, so the two screens agree.
-    private func bandPosition(_ band: BaselineBand) -> String? {
-        switch band {
-        case .inside: return "inside your band"
-        case .above: return "above your band"
-        case .below: return "below your band"
-        case .calibrating: return nil
-        }
     }
 
     /// Only for a carried (still fresh) value from an earlier morning.
@@ -257,7 +248,7 @@ struct LastNightCard: View {
         BaselineCard(title: "Last night", subtitle: subtitle) {
             if let s = sleep {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(TodayFormat.hoursMinutes(s.totalMin))
+                    Text(BaselineReadouts.durationText(minutes: s.totalMin))
                         .font(BaselineTheme.hero(40))
                         .foregroundStyle(BaselineTheme.text)
                         .contentTransition(.numericText())
@@ -283,7 +274,7 @@ struct LastNightCard: View {
                         ForEach(s.stages) { st in
                             HStack(spacing: 5) {
                                 Circle().fill(BaselineTheme.stageColor(st.id)).frame(width: 6, height: 6)
-                                Text("\(stageLabel(st.id)) \(TodayFormat.hoursMinutes(st.minutes))")
+                                Text("\(stageLabel(st.id)) \(BaselineReadouts.durationText(minutes: st.minutes))")
                                     .font(BaselineTheme.caption)
                                     .foregroundStyle(BaselineTheme.textSecondary)
                             }
@@ -321,7 +312,9 @@ struct LastNightCard: View {
         guard let avg = s.avg30Min else {
             return "Your 30-night average appears after \(BaselineReadouts.sleepAverageMinNights) nights"
         }
-        if let delta = TodayFormat.signedMinutes(s.totalMin - avg) { return "\(delta) vs your 30-night average" }
+        if let delta = BaselineReadouts.signedDurationText(minutes: s.totalMin - avg) {
+            return "\(delta) vs your 30-night average"
+        }
         return "On your 30-night average"
     }
 }
@@ -350,6 +343,10 @@ struct TodayStageBar: View {
 
 // MARK: - Effort
 
+/// Today's effort and its workouts. Each workout row pushes `WorkoutDetailScreen` (resolved by the
+/// row's start, the only key `TodayWorkout` carries), and the quiet link at the foot opens the
+/// year's list. The effort number is `BaselineReadouts.effortText`, the same rendering the Workouts
+/// screens use.
 struct EffortCard: View {
     let effort: Double?
     let workouts: [TodayWorkout]
@@ -357,8 +354,8 @@ struct EffortCard: View {
     var body: some View {
         BaselineCard(title: "Today's effort") {
             HStack(alignment: .top, spacing: 12) {
-                StatCell(label: "Effort", value: effort.map { "\(Int($0.rounded()))" } ?? "–",
-                         unit: "/ 100", color: BaselineTheme.effort)
+                StatCell(label: "Effort", value: BaselineReadouts.effortText(effort),
+                         unit: BaselineReadouts.effortUnit, color: BaselineTheme.effort)
                 StatCell(label: "Workouts", value: "\(workouts.count)")
             }
             if workouts.isEmpty {
@@ -368,9 +365,29 @@ struct EffortCard: View {
                     .foregroundStyle(BaselineTheme.textSecondary)
             } else {
                 VStack(spacing: 10) {
-                    ForEach(workouts) { w in TodayWorkoutRow(workout: w) }
+                    ForEach(workouts) { w in
+                        NavigationLink {
+                            WorkoutDetailScreen(startTs: w.id)
+                        } label: {
+                            TodayWorkoutRow(workout: w)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
+            NavigationLink {
+                WorkoutsScreen()
+            } label: {
+                HStack(spacing: 4) {
+                    Text("All workouts")
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(BaselineTheme.accent)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 2)
         }
     }
 }
@@ -384,12 +401,13 @@ struct TodayWorkoutRow: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(BaselineTheme.effort)
                 .frame(width: 18)
+                .accessibilityHidden(true)
             Text(WorkoutSource.displaySport(workout.sport))
                 .font(BaselineTheme.label)
                 .foregroundStyle(BaselineTheme.text)
                 .lineLimit(1)
             Spacer()
-            Text(TodayFormat.duration(workout.durationS))
+            Text(BaselineReadouts.durationText(seconds: workout.durationS))
                 .font(BaselineTheme.caption)
                 .foregroundStyle(BaselineTheme.textSecondary)
             if let hr = workout.avgHr {
@@ -397,7 +415,12 @@ struct TodayWorkoutRow: View {
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.rhr)
             }
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(BaselineTheme.textTertiary)
+                .accessibilityHidden(true)
         }
+        .contentShape(Rectangle())
     }
 }
 

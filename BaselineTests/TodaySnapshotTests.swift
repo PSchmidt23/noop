@@ -140,7 +140,7 @@ final class TodaySnapshotTests: BaselineEngineTestCase {
         XCTAssertEqual(try XCTUnwrap(sleep.efficiencyPct), 89, accuracy: 1e-9)
         XCTAssertFalse(sleep.hasStages)
         XCTAssertEqual(try XCTUnwrap(sleep.avg30Min), 450, accuracy: 1e-9)
-        XCTAssertEqual(TodayFormat.signedMinutes(sleep.totalMin - sleep.avg30Min!), "+30 min")
+        XCTAssertEqual(BaselineReadouts.signedDurationText(minutes: sleep.totalMin - sleep.avg30Min!), "+30 min")
 
         // Below BaselineReadouts.sleepAverageMinNights the delta has nothing to compare against.
         let thin = TodaySnapshot.build(days: [], nights: [n0, n1], todayKey: today)
@@ -159,14 +159,32 @@ final class TodaySnapshotTests: BaselineEngineTestCase {
     // MARK: Formatting
 
     func testFormatters() {
-        XCTAssertEqual(TodayFormat.hoursMinutes(462), "7:42")
-        XCTAssertNil(TodayFormat.signedMinutes(3), "inside ±5 min reads as on average")
-        XCTAssertEqual(TodayFormat.signedMinutes(22), "+22 min")
-        XCTAssertEqual(TodayFormat.signedMinutes(-65), "\u{2212}1 h 05")
         XCTAssertEqual(TodayFormat.signed(-2.4, unit: "bpm"), "\u{2212}2 bpm")
-        XCTAssertEqual(TodayFormat.duration(2_700), "45 min")
-        XCTAssertEqual(TodayFormat.duration(3_900), "1 h 05")
         XCTAssertNil(TodayFormat.wokeStamp(day: today, todayKey: today))
         XCTAssertEqual(TodayFormat.wokeStamp(day: Fixtures.key(today, minus: 1), todayKey: today)?.hasPrefix("Woke "), true)
+    }
+
+    /// One spelling for every span of minutes the app prints. The Today hero and stage legend, the Sleep
+    /// hero, rows and stage cells, Trends' average, Progress's cells and sentence, the morning summary and
+    /// the Workouts list all call these three, so no screen can spell a duration its own way.
+    func testDurationText_isOneSpellingForEveryTab() {
+        XCTAssertEqual(BaselineReadouts.durationText(minutes: 462), "7h 42m")
+        XCTAssertEqual(BaselineReadouts.durationText(minutes: 480), "8h 00m")
+        XCTAssertEqual(BaselineReadouts.durationText(minutes: 59.4), "59 min")
+        XCTAssertEqual(BaselineReadouts.durationText(minutes: 59.5), "1h 00m")
+        XCTAssertEqual(BaselineReadouts.durationText(minutes: 0), "0 min")
+        XCTAssertEqual(BaselineReadouts.durationText(minutes: -3), "0 min", "a negative span never prints a sign")
+
+        XCTAssertEqual(BaselineReadouts.durationText(seconds: 2_700), "45 min")
+        XCTAssertEqual(BaselineReadouts.durationText(seconds: 3_900), "1h 05m")
+        XCTAssertEqual(BaselineReadouts.durationText(seconds: 0), "–", "a session with no recorded length")
+        XCTAssertEqual(BaselineReadouts.durationText(seconds: nil), "–")
+
+        XCTAssertEqual(BaselineReadouts.durationSteadyMin, 5)
+        XCTAssertNil(BaselineReadouts.signedDurationText(minutes: 3), "inside ±5 min reads as on average")
+        XCTAssertNil(BaselineReadouts.signedDurationText(minutes: -4.4))
+        XCTAssertEqual(BaselineReadouts.signedDurationText(minutes: 4.5), "+5 min")
+        XCTAssertEqual(BaselineReadouts.signedDurationText(minutes: 22), "+22 min")
+        XCTAssertEqual(BaselineReadouts.signedDurationText(minutes: -65), "\u{2212}1h 05m")
     }
 }

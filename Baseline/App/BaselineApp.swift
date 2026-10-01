@@ -18,6 +18,8 @@ struct BaselineApp: App {
     /// notification, so Today and Journal must share this instance or an edit on one tab reaches the
     /// other only at the next launch.
     @StateObject private var journalCatalog = JournalCatalogStore()
+    /// Opt-in morning summary notification; observes `model.repo` for the life of the process.
+    @StateObject private var morningSummary: MorningSummaryNotifier
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(ChartStyle.storageKey) private var chartStyleRaw = ChartStyle.titanium.rawValue
@@ -55,6 +57,9 @@ struct BaselineApp: App {
             return succeeded
         }
         model.healthWriteBack = { [weak bridge] in _ = await bridge?.writeBackAfterNewData() }
+        let morningSummary = MorningSummaryNotifier(repo: model.repo)
+        morningSummary.attach()
+        _morningSummary = StateObject(wrappedValue: morningSummary)
     }
 
     var body: some Scene {

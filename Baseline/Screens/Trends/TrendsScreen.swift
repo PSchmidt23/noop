@@ -38,6 +38,16 @@ struct TrendsScreen: View {
             guard repo.loaded else { series = nil; return }
             series = TrendsSeries.build(days: repo.days, range: range)
         }
+        // A text label, not an icon, so the destination is named. Present in every state, including
+        // the empty one: Progress explains what it needs. The tab's NavigationStack pushes it.
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink { ProgressScreen() } label: {
+                    Text("Progress").font(BaselineTheme.label)
+                }
+                .accessibilityHint("Shows whether your baseline has moved over months")
+            }
+        }
     }
 
     @ViewBuilder
@@ -59,7 +69,7 @@ struct TrendsScreen: View {
             bars: s.sleep.bars,
             average: s.sleep.average,
             stats: [
-                TrendStat(label: "Average", value: s.sleep.average.map { TrendsFormat.hoursMinutes($0 * 60) } ?? "—"),
+                TrendStat(label: "Average", value: s.sleep.average.map { BaselineReadouts.durationText(minutes: $0 * 60) } ?? "—"),
                 TrendStat(label: "7h or more", value: String(s.sleepNights7h),
                           unit: "of \(s.sleepNights) night\(s.sleepNights == 1 ? "" : "s")")
             ],
@@ -76,7 +86,10 @@ struct TrendsScreen: View {
                 TrendStat(label: "Highest", value: s.effortPeak.map { TrendsFormat.whole($0.value) } ?? "—",
                           unit: s.effortPeak.map { TrendsFormat.shortDate($0.date) })
             ],
-            emptyText: "No effort recorded in the last \(s.range.days) days.")
+            emptyText: "No effort recorded in the last \(s.range.days) days.",
+            link: TrendCardLink(label: "All workouts",
+                                hint: "Shows every recorded workout",
+                                destination: { AnyView(WorkoutsScreen()) }))
     }
 
     private var emptyState: some View {

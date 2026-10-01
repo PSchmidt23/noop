@@ -564,6 +564,26 @@ targets:
         DEVELOPMENT_TEAM: 25RC553RGP
         TARGETED_DEVICE_FAMILY: "1,2"
 
+  # Screenshot harness for Baseline's screens (BaselineUITests/ScreenshotTests.swift). Launches the app
+  # with its DEBUG launch arguments (--demo-seed, --skip-onboarding / --reset-onboarding, --tab,
+  # --welcome-step), scrolls each screen and writes PNGs to $BASELINE_SHOTS_DIR so a scrolled screen can
+  # be verified headlessly. Run with `-only-testing:BaselineUITests`; see BASELINE.md.
+  BaselineUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - BaselineUITests
+    dependencies:
+      - target: Baseline
+    settings:
+      base:
+        TEST_TARGET_NAME: Baseline
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.patrickschmidt.baseline.uitests
+        DEVELOPMENT_TEAM: 25RC553RGP
+        TARGETED_DEVICE_FAMILY: "1,2"
+
   # WidgetKit + Live Activity extension — the iOS analogue of the macOS menu-bar
   # extra. Reads a tiny snapshot the app publishes into the shared App Group.
   NOOPiOSWidgets:
@@ -743,6 +763,7 @@ schemes:
       config: Debug
       targets:
         - BaselineTests
+        - BaselineUITests
   # `xcodebuild -scheme NOOPWatch …` compile-verifies the watchOS app + its embedded complication
   # extension (M3). Name matches the app-build CI matrix entry the verify script adds.
   NOOPWatch:

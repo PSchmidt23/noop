@@ -23,11 +23,16 @@ struct TodayScreen: View {
     /// (`pairing`), past NOOP's device-type chooser and its Experimental tier.
     @State private var showPair = false
     @State private var pairing: AddDeviceWizard.DeviceType?
+    /// The Progress row under the hero tiles: the HRV sentence the Progress screen prints for the same
+    /// persisted horizon (`ProgressSnapshot.hrvHeadline`); nil until the HRV baseline has settled once.
+    @AppStorage("baseline.progressHorizon") private var progressHorizonRaw: Int = ProgressHorizon.quarter.rawValue
+    @State private var progressHeadline: String?
 
     private struct LoadKey: Hashable {
         let seq: Int
         let loaded: Bool
         let day: String
+        let horizon: Int
     }
 
     var body: some View {
@@ -47,6 +52,9 @@ struct TodayScreen: View {
             } else if let s = snapshot {
                 headline(s)
                 heroes(s)
+                if let progressHeadline {
+                    TodayProgressRow(sentence: progressHeadline)
+                }
                 LastNightCard(sleep: s.sleep, todayKey: s.todayKey)
                 EffortCard(effort: s.effort, workouts: workouts)
                 JournalPromptCard(items: journalItems, label: label(_:), answers: answers, onCycle: cycle)
@@ -56,7 +64,7 @@ struct TodayScreen: View {
             model.ble.syncNow()
             await repo.refresh()
         }
-        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, day: todayKey)) { await load() }
+        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, day: todayKey, horizon: progressHorizonRaw)) { await load() }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             todayKey = Repository.localDayKey(Date())
         }
@@ -180,6 +188,8 @@ struct TodayScreen: View {
         let habitual = await repo.habitualMidsleepSec()
         let nights = SleepNightBuilder.nights(sessions: repo.sleeps, days: repo.days, habitualMidsleepSec: habitual)
         snapshot = TodaySnapshot.build(days: repo.days, nights: nights, todayKey: key)
+        progressHeadline = ProgressSnapshot.hrvHeadline(days: repo.days, horizon: ProgressHorizon.resolve(progressHorizonRaw),
+                                                        todayKey: key)
         let rows = await repo.workoutRows(days: 2)
         workouts = rows
             .filter { Repository.localDayKey(Date(timeIntervalSince1970: TimeInterval($0.startTs))) == key }

@@ -86,7 +86,35 @@ team 25RC553RGP; Xcode registers the HealthKit and App Group capabilities on fir
 DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch <udid> com.patrickschmidt.baseline …`):
 - `--demo-seed` — NOOP's seeder fills 120 days of synthetic, internally consistent data when the store is empty.
 - `--tab trends|sleep|journal|settings` — open on that tab (screenshots, quick checks).
+- `--skip-onboarding` / `--reset-onboarding` — force `baseline.onboarded` true / false for that launch (the
+  welcome gate hidden / shown), whatever an earlier run saved. `--welcome-step 0|1|2` opens the welcome
+  flow on that page.
 - `defaults write com.patrickschmidt.baseline baseline.onboarded -bool true` (via `simctl spawn`) skips the welcome flow.
+
+## Screenshot harness (BaselineUITests)
+
+`BaselineUITests/ScreenshotTests.swift` captures every screen headlessly so a scrolled screen can be
+checked without a person at the simulator. One test per tab (`today`, `trends`, `sleep`, `journal`,
+`settings`, seeded with `--demo-seed --skip-onboarding`), the pushed screens (`progress` via the Trends
+toolbar button; `workouts` and `workout-detail` via Today's "All workouts" link and the newest row) plus
+`welcome-0/1/2` (`--reset-onboarding --welcome-step n`). Each test waits for the screen's first card,
+captures the top, then scrolls until the content stops moving (at most 12 steps), capturing after each.
+A scroll step is a held drag in the 20pt left gutter (about 45% of the screen, no fling): a centre swipe
+would land on a chart (Trends scrubs instead of scrolling) and decelerate by an unpredictable distance.
+PNGs land as `<screen>-<n>.png`
+in `$BASELINE_SHOTS_DIR` (default `/private/tmp/baseline-shots`; the `TEST_RUNNER_` prefix passes the
+variable through to the test runner) and are attached to the `.xcresult` as well.
+
+```bash
+TEST_RUNNER_BASELINE_SHOTS_DIR=/private/tmp/baseline-shots xcodebuild -project Strand.xcodeproj -scheme Baseline \
+  -destination "platform=iOS Simulator,id=149DD9EE-8D7D-4CC2-B5E8-07DBA768C046" \
+  -derivedDataPath /private/tmp/claude-501/-Users-patrickschmidt-Documents-Noop-health/18f90538-fcd5-4d35-b1cc-d936dff23d74/scratchpad/dd \
+  -only-testing:BaselineUITests test
+```
+
+Add `-only-testing:BaselineUITests/ScreenshotTests/testTrends` for one screen. The demo seed only fills an
+empty store, so erase the simulator's app (or the simulator) when the shots should show seeded data after a
+real import. Welcome steps are a page view, so they are captured once, not scrolled.
 
 Upstream sync: `git fetch upstream && git merge upstream/main`, then `xcodegen generate` and build. Conflicts
 should only ever touch `project.yml`'s Baseline block.

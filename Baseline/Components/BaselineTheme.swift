@@ -43,6 +43,18 @@ enum BaselineTheme {
         }
     }
 
+    // Heart-rate zones (Z1 easy → Z5 maximal), a ramp over the existing metric colours so a zone bar
+    // reads warmer as intensity rises.
+    static func zoneColor(_ zone: Int) -> Color {
+        switch zone {
+        case 1: return stageLight
+        case 2: return accent
+        case 3: return good
+        case 4: return effort
+        default: return low
+        }
+    }
+
     // Type
     static func hero(_ size: CGFloat = 56) -> Font { .system(size: size, weight: .semibold, design: .rounded) }
     static let title = Font.system(.title2, design: .rounded).weight(.semibold)

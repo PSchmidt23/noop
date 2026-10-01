@@ -163,29 +163,9 @@ struct TodaySnapshot {
 
 // MARK: - Formatting shared by the Today cards
 
+/// Spans of minutes (a night, a stage, a workout) are not spelled here: `BaselineReadouts.durationText`
+/// and `signedDurationText` print them for every tab.
 enum TodayFormat {
-    /// "7:42" from minutes.
-    static func hoursMinutes(_ minutes: Double) -> String {
-        let m = max(0, Int(minutes.rounded()))
-        return "\(m / 60):" + String(format: "%02d", m % 60)
-    }
-
-    /// "+22 min" / "−1 h 05" for a minutes delta; nil inside ±5 min.
-    static func signedMinutes(_ delta: Double) -> String? {
-        let m = Int(delta.rounded())
-        guard abs(m) >= 5 else { return nil }
-        let sign = m < 0 ? "−" : "+"
-        let a = abs(m)
-        return a < 60 ? "\(sign)\(a) min" : "\(sign)\(a / 60) h " + String(format: "%02d", a % 60)
-    }
-
-    /// "42 min" / "1 h 05" from seconds.
-    static func duration(_ seconds: Double?) -> String {
-        guard let s = seconds, s > 0 else { return "–" }
-        let m = Int((s / 60).rounded())
-        return m < 60 ? "\(m) min" : "\(m / 60) h " + String(format: "%02d", m % 60)
-    }
-
     /// Signed whole-number delta with a unit: "+6 ms", "−2 bpm".
     static func signed(_ delta: Double, unit: String) -> String {
         let v = Int(delta.rounded())

@@ -1,0 +1,304 @@
+#if os(iOS)
+import SwiftUI
+import Charts
+import StrandDesign
+import WhoopStore
+
+/// One session, pushed from the Workouts list or Today's effort card: when it happened, duration and
+/// heart rate, its effort, calories when recorded, the heart-rate zone split, and the heart-rate trace
+/// over the session window.
+///
+/// The zone split prefers the row's imported percentages and otherwise bins the strap's own samples
+/// with the profile's zones (`repo.workoutZoneMinutes`), as NOOP's `WorkoutDetailView` does, because
+/// only a CSV import writes `zonesJSON`; the card is hidden only when neither exists.
+///
+/// Today only knows a workout by its start (`TodayWorkout.id`), so `init(startTs:)` resolves the row
+/// from the same `repo.workoutRows` query Today runs; the list already holds the row and passes it.
+struct WorkoutDetailScreen: View {
+    private enum Source {
+        case row(WorkoutRow)
+        case startTs(Int)
+    }
+
+    private let source: Source
+    @EnvironmentObject private var repo: Repository
+    @EnvironmentObject private var profile: ProfileStore
+    @State private var row: WorkoutRow?
+    @State private var resolved = false
+    @State private var zones: WorkoutZoneSplit?
+    @State private var buckets: [HRBucket] = []
+    @State private var traceLoaded = false
+
+    /// Reload key: every changed refresh, plus the profile fields `hrZoneSet` reads, so a max-HR or
+    /// zone change in Settings re-bins a derived split when the person comes back to this screen.
+    private struct LoadKey: Hashable {
+        let seq: Int
+        let hrMax: Int
+        let zoneThresholds: [Int]
+    }
+
+    init(row: WorkoutRow) {
+        source = .row(row)
+        _row = State(initialValue: row)
+    }
+
+    init(startTs: Int) {
+        source = .startTs(startTs)
+    }
+
+    var body: some View {
+        BaselineScreen(title: row.map { WorkoutSource.displaySport($0.sport) } ?? "Workout") {
+            if let row {
+                let item = WorkoutItem(row: row)
+                WorkoutHeaderCard(item: item)
+                WorkoutSessionCard(item: item)
+                if let zones {
+                    WorkoutZonesCard(split: zones)
+                }
+                WorkoutTraceCard(item: item, buckets: buckets, loaded: traceLoaded)
+            } else if resolved {
+                BaselineCard {
+                    BaselineEmptyState(icon: "figure.run",
+                                       title: "Workout not found",
+                                       message: "This session is no longer in the store. Pull down on Today to refresh.")
+                }
+            } else {
+                ProgressView()
+                    .tint(BaselineTheme.textTertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+            }
+        }
+        .task(id: LoadKey(seq: repo.refreshSeq, hrMax: profile.hrMax, zoneThresholds: profile.hrZoneThresholds)) {
+            await load()
+        }
+    }
+
+    @MainActor
+    private func load() async {
+        if case .startTs(let ts) = source {
+            // Today lists workouts started today from `workoutRows(days: 2)`; a day wider still finds
+            // the row after midnight has passed while the detail was open.
+            row = await repo.workoutRows(days: 3).first { $0.startTs == ts }
+        }
+        resolved = true
+        guard let row else { return }
+        zones = await zoneSplit(for: row)
+        buckets = await repo.workoutHrBuckets(from: row.startTs, to: row.endTs, source: row.source)
+        traceLoaded = true
+    }
+
+    /// The imported split when the row carries one, else the strap's samples over the window binned
+    /// with the profile's zones; nil when the window has no heart rate either, which hides the card.
+    /// Reads the same device ids as `workoutHrBuckets`, so the split and the trace describe one strap.
+    @MainActor
+    private func zoneSplit(for row: WorkoutRow) async -> WorkoutZoneSplit? {
+        if let imported = WorkoutsModel.zoneMinutes(row) {
+            return WorkoutZoneSplit(minutes: imported, origin: .imported)
+        }
+        guard let derived = await repo.workoutZoneMinutes(from: row.startTs, to: row.endTs,
+                                                          zoneSet: profile.hrZoneSet, source: row.source),
+              derived.count == 5 else { return nil }
+        let basis = WorkoutsModel.zoneBasis(hasCustomZones: profile.hasCustomHRZones,
+                                            hrMaxOverride: profile.hrMaxOverride,
+                                            hrMax: profile.hrMax)
+        return WorkoutZoneSplit(minutes: derived, origin: .derived(basis))
+    }
+}
+
+// MARK: - Cards
+
+/// Sport, date and the session's time window.
+struct WorkoutHeaderCard: View {
+    let item: WorkoutItem
+
+    var body: some View {
+        BaselineCard {
+            HStack(spacing: 14) {
+                Image(systemName: sportSymbol(item.row.sport))
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(BaselineTheme.effort)
+                    .frame(width: 44, height: 44)
+                    .background(BaselineTheme.effort.opacity(0.14),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(WorkoutSource.displaySport(item.row.sport))
+                        .font(BaselineTheme.headline)
+                        .foregroundStyle(BaselineTheme.text)
+                        .lineLimit(1)
+                    Text("\(WorkoutsFormat.dayLabel(item.start)) · \(WorkoutsFormat.timeRange(item.start, item.end))")
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+}
+
+/// Duration, average and peak heart rate, effort out of 100, and calories when the row carries them.
+struct WorkoutSessionCard: View {
+    let item: WorkoutItem
+
+    var body: some View {
+        BaselineCard(title: "Session") {
+            HStack(alignment: .top, spacing: 12) {
+                StatCell(label: "Duration", value: BaselineReadouts.durationText(seconds: item.durationS), color: BaselineTheme.text)
+                StatCell(label: "Avg HR", value: item.row.avgHr.map { "\($0)" } ?? "–",
+                         unit: item.row.avgHr != nil ? "bpm" : nil, color: BaselineTheme.rhr)
+                StatCell(label: "Max HR", value: item.row.maxHr.map { "\($0)" } ?? "–",
+                         unit: item.row.maxHr != nil ? "bpm" : nil, color: BaselineTheme.rhr)
+            }
+            HStack(alignment: .top, spacing: 12) {
+                StatCell(label: "Effort", value: BaselineReadouts.effortText(item.row.strain),
+                         unit: BaselineReadouts.effortUnit, color: BaselineTheme.effort)
+                if let kcal = item.row.energyKcal, kcal > 0 {
+                    StatCell(label: "Calories", value: WorkoutsFormat.grouped(kcal), unit: "kcal")
+                } else {
+                    Spacer().frame(maxWidth: .infinity)
+                }
+                Spacer().frame(maxWidth: .infinity)
+            }
+            Text(item.row.strain == nil
+                 ? "Effort is this session's share of the day's 0–100 effort. Not every source records one."
+                 : "Effort is this session's share of the day's 0–100 effort.")
+                .font(BaselineTheme.caption)
+                .foregroundStyle(BaselineTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// Five-segment zone bar with a legend: share of the session and minutes in each zone, and a line
+/// saying where the split came from (imported, or derived and approximate).
+struct WorkoutZonesCard: View {
+    /// Minutes in Z1…Z5 and their origin (`WorkoutDetailScreen.zoneSplit`).
+    let split: WorkoutZoneSplit
+
+    private var minutes: [Double] { split.minutes }
+    private var total: Double { minutes.reduce(0, +) }
+
+    var body: some View {
+        BaselineCard(title: "Heart-rate zones",
+                     subtitle: "Share of the session in each zone, Z1 easy to Z5 maximal") {
+            WorkoutZoneBar(minutes: minutes)
+            BaselineFlowLayout(spacing: 12) {
+                ForEach(0..<5, id: \.self) { i in
+                    HStack(spacing: 5) {
+                        Circle().fill(BaselineTheme.zoneColor(i + 1)).frame(width: 6, height: 6)
+                        Text(WorkoutsFormat.zoneLegend(zone: i + 1, minutes: minutes[i], total: total))
+                            .font(BaselineTheme.caption)
+                            .foregroundStyle(BaselineTheme.textSecondary)
+                    }
+                }
+            }
+            Text(WorkoutsModel.zoneCaption(split.origin))
+                .font(BaselineTheme.caption)
+                .foregroundStyle(BaselineTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Heart-rate zones: " + (1...5).map {
+            WorkoutsFormat.zoneLegend(zone: $0, minutes: minutes[$0 - 1], total: total)
+        }.joined(separator: ", "))
+    }
+}
+
+/// Slim proportional bar of Z1…Z5, the sleep card's stage bar in zone colours.
+struct WorkoutZoneBar: View {
+    let minutes: [Double]
+
+    var body: some View {
+        let total = minutes.reduce(0, +)
+        GeometryReader { geo in
+            HStack(spacing: 2) {
+                ForEach(0..<5, id: \.self) { i in
+                    if total > 0, minutes[i] > 0 {
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(BaselineTheme.zoneColor(i + 1))
+                            .frame(width: max(2, geo.size.width * minutes[i] / total - 2))
+                    }
+                }
+            }
+        }
+        .frame(height: 10)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The strap's heart rate across the session as a small line, with the average as a dashed rule.
+struct WorkoutTraceCard: View {
+    let item: WorkoutItem
+    /// `repo.workoutHrBuckets(from:to:source:)`: bucket means over the window, oldest first.
+    let buckets: [HRBucket]
+    let loaded: Bool
+
+    var body: some View {
+        BaselineCard(title: "Heart rate", subtitle: subtitle) {
+            if buckets.count > 1 {
+                chart
+            } else if loaded {
+                Text("No heart-rate samples were recorded over this session's window.")
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+            } else {
+                ProgressView()
+                    .tint(BaselineTheme.textTertiary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 120)
+            }
+        }
+    }
+
+    private var subtitle: String? {
+        guard buckets.count > 1 else { return nil }
+        var parts = ["Beats per minute across the session"]
+        if let avg = item.row.avgHr { parts.append("the dashed line is your average, \(avg) bpm") }
+        return parts.joined(separator: "; ")
+    }
+
+    private var chart: some View {
+        let values = buckets.map(\.bpm)
+        let lo = max(0, (values.min() ?? 60) - 8)
+        let hi = (values.max() ?? 180) + 8
+        let points = buckets.map { (t: Date(timeIntervalSince1970: TimeInterval($0.ts)), bpm: $0.bpm) }
+        return Chart {
+            ForEach(points, id: \.t) { p in
+                AreaMark(x: .value("Time", p.t), yStart: .value("Low", lo), yEnd: .value("bpm", p.bpm))
+                    .foregroundStyle(BaselineTheme.rhr.opacity(0.12))
+                    .interpolationMethod(.monotone)
+                LineMark(x: .value("Time", p.t), y: .value("bpm", p.bpm))
+                    .foregroundStyle(BaselineTheme.rhr)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .interpolationMethod(.monotone)
+            }
+            if let avg = item.row.avgHr {
+                RuleMark(y: .value("Average", Double(avg)))
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            }
+        }
+        .chartXScale(domain: item.start...max(item.end, item.start.addingTimeInterval(60)))
+        .chartYScale(domain: lo...hi)
+        .chartYAxis {
+            AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { _ in
+                AxisGridLine().foregroundStyle(BaselineTheme.hairline)
+                AxisValueLabel().foregroundStyle(BaselineTheme.textTertiary).font(BaselineTheme.caption)
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                AxisValueLabel(format: .dateTime.hour().minute())
+                    .foregroundStyle(BaselineTheme.textTertiary).font(BaselineTheme.caption)
+            }
+        }
+        .chartLegend(.hidden)
+        .frame(height: 140)
+        // One element for VoiceOver: without `.ignore` every bucket's area and line mark stays
+        // navigable and the summary below labels a container instead of replacing them.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Heart rate during \(WorkoutSource.displaySport(item.row.sport)), from \(Int((values.min() ?? 0).rounded())) to \(Int((values.max() ?? 0).rounded())) beats per minute")
+    }
+}
+#endif

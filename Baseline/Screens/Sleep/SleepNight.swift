@@ -236,12 +236,6 @@ enum SleepFormat {
         dayKeyParser.date(from: key) ?? Calendar.current.startOfDay(for: Date())
     }
 
-    /// "7:24" for 444 minutes.
-    static func hhmm(_ minutes: Double) -> String {
-        let m = max(0, Int(minutes.rounded()))
-        return "\(m / 60):" + String(format: "%02d", m % 60)
-    }
-
     /// "11:42 PM" / "23:42" in the device locale.
     static func clock(_ date: Date) -> String {
         date.formatted(date: .omitted, time: .shortened)
@@ -257,12 +251,13 @@ enum SleepFormat {
         return "\(Int((fraction * 100).rounded()))%"
     }
 
-    /// "+32 min vs average" / "−18 min vs average" / "On your average".
+    /// "+32 min vs average" / "−1h 05m vs average" / "On your average". The number and the steady
+    /// threshold are `BaselineReadouts.signedDurationText`'s, the ones Today's sleep card prints.
     static func deltaText(asleepMin: Double, average: Double) -> String {
-        let delta = Int((asleepMin - average).rounded())
-        if abs(delta) < 5 { return "On your average" }
-        let sign = delta > 0 ? "+" : "\u{2212}"
-        return "\(sign)\(abs(delta)) min vs average"
+        guard let delta = BaselineReadouts.signedDurationText(minutes: asleepMin - average) else {
+            return "On your average"
+        }
+        return "\(delta) vs average"
     }
 }
 #endif

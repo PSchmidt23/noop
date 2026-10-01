@@ -1,5 +1,6 @@
 #if os(iOS)
 import SwiftUI
+import UserNotifications
 
 /// Settings: grouped cards, one idea each. Strap, Apple Health and Import push NOOP's own screens;
 /// Profile is Baseline's small form over `ProfileStore`; About carries attribution, the privacy policy,
@@ -12,6 +13,7 @@ struct SettingsScreen: View {
             SettingsSection(label: "Apple Health") { SettingsHealthCard() }
             SettingsSection(label: "Data") { SettingsImportCard() }
             SettingsSection(label: "Profile") { SettingsProfileCard() }
+            SettingsSection(label: "Notifications") { SettingsNotificationsCard() }
             #if DEBUG
             SettingsSection(label: "Developer") { SettingsDeveloperCard() }
             #endif
@@ -155,6 +157,57 @@ private struct SettingsProfileCard: View {
             UnitFormatter.massFromKilograms(profile.weightKg, system: system),
             "max HR \(profile.hrMax)"
         ].joined(separator: " · ")
+    }
+}
+
+// MARK: - Notifications
+
+/// The opt-in morning summary (`MorningSummaryNotifier`). Turning it on asks for notification permission
+/// right here, at a predictable moment; a refusal leaves the toggle on (that is still what the person
+/// wants) and points at iOS Settings, re-checking whenever the app comes back to the foreground.
+private struct SettingsNotificationsCard: View {
+    @AppStorage(MorningSummaryNotifier.enabledKey) private var enabled = false
+    @State private var status: UNAuthorizationStatus?
+
+    private var denied: Bool { enabled && status == .denied }
+
+    var body: some View {
+        BaselineCard {
+            Toggle(isOn: $enabled) {
+                SettingsRowLabel(icon: "sun.max", title: "Morning summary",
+                                 subtitle: "One notification when the first sync of the day lands: HRV, resting HR and sleep against your baseline. Never on a schedule.") {
+                    EmptyView()
+                }
+            }
+            .tint(BaselineTheme.accent)
+            if denied {
+                SettingsDivider()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Notifications are turned off for Baseline in iOS Settings, so the summary cannot arrive.")
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.watch)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+                        Link(destination: url) {
+                            Label("Open iOS Settings", systemImage: "arrow.up.forward.app")
+                                .font(BaselineTheme.label)
+                                .foregroundStyle(BaselineTheme.accent)
+                        }
+                    }
+                }
+            }
+        }
+        .task { status = await MorningSummaryNotifier.authorizationStatus() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            Task { status = await MorningSummaryNotifier.authorizationStatus() }
+        }
+        .onChange(of: enabled) { _, on in
+            if on {
+                Task { status = await MorningSummaryNotifier.requestAuthorization() }
+            } else {
+                MorningSummaryNotifier.removeDelivered()
+            }
+        }
     }
 }
 

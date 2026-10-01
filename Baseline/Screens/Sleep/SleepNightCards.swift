@@ -5,7 +5,7 @@ import StrandAnalytics
 
 // MARK: - Hero
 
-/// The night's headline: big h:mm asleep, bedtime / wake / efficiency, and the night versus the
+/// The night's headline: big "7h 24m" asleep, bedtime / wake / efficiency, and the night versus the
 /// 30-night average as a pill.
 struct SleepHeroCard: View {
     let title: String
@@ -16,7 +16,7 @@ struct SleepHeroCard: View {
     var body: some View {
         BaselineCard(title: title, subtitle: SleepFormat.dayLabel(night.dayDate), accessory: pill) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(SleepFormat.hhmm(night.asleepMin))
+                Text(BaselineReadouts.durationText(minutes: night.asleepMin))
                     .font(BaselineTheme.hero())
                     .foregroundStyle(BaselineTheme.text)
                     .contentTransition(.numericText())
@@ -72,7 +72,7 @@ struct SleepHypnogramCard: View {
             if night.hasStageTotals {
                 SleepStageBar(night: night)
                     .frame(height: 6)
-                // Four cells in a row while their h:mm values fit; at larger type a 2 × 2 grid, so a
+                // Four cells in a row while their "1h 12m" values fit; at larger type a 2 × 2 grid, so a
                 // value never character-wraps inside a ~70pt cell.
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) { stageCells }
@@ -84,10 +84,10 @@ struct SleepHypnogramCard: View {
     }
 
     @ViewBuilder private var stageCells: some View {
-        StatCell(label: "Deep", value: SleepFormat.hhmm(night.deepMin), color: BaselineTheme.stageColor("deep"))
-        StatCell(label: "REM", value: SleepFormat.hhmm(night.remMin), color: BaselineTheme.stageColor("rem"))
-        StatCell(label: "Light", value: SleepFormat.hhmm(night.lightMin), color: BaselineTheme.stageColor("light"))
-        StatCell(label: "Awake", value: SleepFormat.hhmm(night.awakeMin), color: BaselineTheme.stageColor("wake"))
+        StatCell(label: "Deep", value: BaselineReadouts.durationText(minutes: night.deepMin), color: BaselineTheme.stageColor("deep"))
+        StatCell(label: "REM", value: BaselineReadouts.durationText(minutes: night.remMin), color: BaselineTheme.stageColor("rem"))
+        StatCell(label: "Light", value: BaselineReadouts.durationText(minutes: night.lightMin), color: BaselineTheme.stageColor("light"))
+        StatCell(label: "Awake", value: BaselineReadouts.durationText(minutes: night.awakeMin), color: BaselineTheme.stageColor("wake"))
     }
 
     private func note(_ text: String) -> some View {
@@ -198,7 +198,7 @@ struct SleepVitalsCard: View {
 
 // MARK: - Night row
 
-/// Compact list row: date, h:mm asleep, efficiency, and a thin stage-proportion bar.
+/// Compact list row: date, "7h 24m" asleep, efficiency, and a thin stage-proportion bar.
 struct SleepNightRow: View {
     let night: SleepNight
 
@@ -212,7 +212,7 @@ struct SleepNightRow: View {
                     .frame(height: 4)
             }
             Spacer(minLength: 8)
-            Text(SleepFormat.hhmm(night.asleepMin))
+            Text(BaselineReadouts.durationText(minutes: night.asleepMin))
                 .font(.system(.body, design: .rounded).weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(BaselineTheme.text)

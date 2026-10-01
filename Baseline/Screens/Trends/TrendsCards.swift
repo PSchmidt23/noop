@@ -2,41 +2,10 @@
 import SwiftUI
 import StrandAnalytics
 
-/// 7D / 30D / 90D segmented pill with a sliding teal selection.
-struct TrendRangePicker: View {
-    @Binding var selection: TrendsRange
-    @Namespace private var selectionSpace
+extension TrendsRange: BaselineRangeOption {}
 
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(TrendsRange.allCases) { range in
-                Button {
-                    withAnimation(.snappy(duration: 0.25)) { selection = range }
-                } label: {
-                    Text(range.label)
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(selection == range ? BaselineTheme.accent : BaselineTheme.textSecondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background {
-                            if selection == range {
-                                Capsule()
-                                    .fill(BaselineTheme.accent.opacity(0.16))
-                                    .matchedGeometryEffect(id: "selection", in: selectionSpace)
-                            }
-                        }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(range.subtitle)
-                .accessibilityAddTraits(selection == range ? .isSelected : [])
-            }
-        }
-        .padding(4)
-        .background(BaselineTheme.card, in: Capsule())
-        .overlay(Capsule().strokeBorder(BaselineTheme.cardStroke, lineWidth: 1))
-    }
-}
+/// 7D / 30D / 90D segmented pill: the shared `BaselineRangePicker`, the same control Progress uses.
+typealias TrendRangePicker = BaselineRangePicker<TrendsRange>
 
 /// HRV / Resting HR: baseline and average, the nightly line over its band, and a one-line footnote.
 /// Dragging the chart shows that night in the header; tapping the numbers clears it.
@@ -91,8 +60,9 @@ struct TrendBandCard: View {
                 guard let lo = s.low, let hi = s.high else { return true }
                 return s.value >= lo && s.value <= hi
             }()
-            let position = inside ? "inside your band" : (delta > 0 ? "above your band" : "below your band")
-            return "\(TrendsFormat.signed(delta, unit: unit)) vs baseline · \(position)"
+            // `BaselineBand.positionPhrase`: the same words Today and the morning summary use.
+            let band: BaselineBand = inside ? .inside : (delta > 0 ? .above : .below)
+            return "\(TrendsFormat.signed(delta, unit: unit)) vs baseline · \(band.positionPhrase ?? "")"
         }
         return "\(range.subtitle) · \(higherIsBetter ? "higher" : "lower") is better"
     }
@@ -140,7 +110,14 @@ struct TrendStat {
     var unit: String? = nil
 }
 
-/// Sleep / Effort: two stats over bars with a dashed average rule.
+/// A quiet text link under a card's chart that pushes another screen ("All workouts").
+struct TrendCardLink {
+    let label: String
+    let hint: String
+    let destination: () -> AnyView
+}
+
+/// Sleep / Effort: two stats over bars with a dashed average rule, and an optional link row beneath.
 struct TrendBarCard: View {
     let title: String
     let subtitle: String
@@ -149,6 +126,7 @@ struct TrendBarCard: View {
     let average: Double?
     let stats: [TrendStat]
     let emptyText: String
+    var link: TrendCardLink? = nil
 
     var body: some View {
         BaselineCard(title: title, subtitle: subtitle) {
@@ -163,6 +141,20 @@ struct TrendBarCard: View {
                     }
                 }
                 TrendsBarChart(bars: bars, color: color, average: average)
+            }
+            if let link {
+                NavigationLink { link.destination() } label: {
+                    HStack(spacing: 4) {
+                        Text(link.label)
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(BaselineTheme.accent)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(link.hint)
             }
         }
     }

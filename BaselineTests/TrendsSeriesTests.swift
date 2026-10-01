@@ -118,6 +118,5 @@ final class TrendsSeriesTests: BaselineEngineTestCase {
         XCTAssertEqual(TrendsRange.week.trendWindow, 3)
         XCTAssertEqual(TrendsRange.quarter.trendWindow, 7)
         XCTAssertEqual(TrendsFormat.signed(-3.4, unit: "bpm"), "\u{2212}3 bpm")
-        XCTAssertEqual(TrendsFormat.hoursMinutes(432), "7h 12m")
     }
 }

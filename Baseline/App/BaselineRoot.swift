@@ -8,6 +8,29 @@ struct BaselineRoot: View {
     @AppStorage("baseline.onboarded") private var onboarded = false
     @State private var tab: Tab = BaselineRoot.launchTab ?? .today
 
+    init() {
+        // Touching the static runs the launch-argument override exactly once per process, before the
+        // first @AppStorage read, however many times SwiftUI re-creates this value.
+        _ = BaselineRoot.onboardingOverrideApplied
+    }
+
+    /// DEBUG-only: `--skip-onboarding` forces `baseline.onboarded` to true for this launch (tab
+    /// screenshots land on the tab, not the welcome gate); `--reset-onboarding` forces it to false so
+    /// the welcome flow shows regardless of what an earlier run saved. The write goes to the same
+    /// UserDefaults key `@AppStorage` reads, so no view code knows about the override. Applied once per
+    /// process (a static `let`), so finishing the welcome flow in that launch is not undone by a later
+    /// re-init of this view. Both flags are no-ops in Release.
+    private static let onboardingOverrideApplied: Void = {
+        #if DEBUG
+        let args = CommandLine.arguments
+        if args.contains("--reset-onboarding") {
+            UserDefaults.standard.set(false, forKey: "baseline.onboarded")
+        } else if args.contains("--skip-onboarding") {
+            UserDefaults.standard.set(true, forKey: "baseline.onboarded")
+        }
+        #endif
+    }()
+
     /// DEBUG-only: `--tab trends` opens the app on that tab (used for screenshots and verification).
     private static var launchTab: Tab? {
         #if DEBUG

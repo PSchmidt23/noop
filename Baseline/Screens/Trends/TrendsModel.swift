@@ -41,6 +41,14 @@ enum TrendsDayKey {
     }()
 
     static func date(_ key: String) -> Date? { local.date(from: key) }
+
+    /// True when `day` is dated before the recalibration `epoch` (seconds), by the same UTC day-start
+    /// parse and strict `<` the engine's `foldHistory(_:dayKeys:cfg:baselineEpoch:)` applies. An
+    /// epoch of 0 (no recalibration) or an unparseable key never drops a night.
+    static func isBeforeEpoch(_ day: String, epoch: Double) -> Bool {
+        guard epoch > 0, let d = utc.date(from: day) else { return false }
+        return d.timeIntervalSince1970 < epoch
+    }
 }
 
 /// Small formatting helpers shared by the Trends cards.
@@ -52,12 +60,6 @@ enum TrendsFormat {
         let n = Int(abs(delta).rounded())
         let sign = delta < 0 ? "−" : "+"
         return "\(sign)\(n) \(unit)"
-    }
-
-    /// 432 → "7h 12m"
-    static func hoursMinutes(_ minutes: Double) -> String {
-        let total = Int(minutes.rounded())
-        return "\(total / 60)h \(String(format: "%02d", total % 60))m"
     }
 
     static func shortDate(_ date: Date) -> String {
@@ -120,21 +122,19 @@ struct TrendsSeries {
         let todayKey = Repository.localDayKey(now)
         let startDate = cal.date(byAdding: .day, value: -(range.days - 1), to: now) ?? now
         let startKey = Repository.localDayKey(startDate)
-        let epoch = Baselines.hrvBaselineEpoch()
 
         // `days` is oldest → newest; ISO keys compare chronologically.
         let upToToday = days.filter { $0.day <= todayKey }
-        let history = upToToday.filter { $0.day < startKey }
         let inRange = upToToday.filter { $0.day >= startKey }
 
         let totalNights = upToToday.reduce(into: 0) { acc, d in
             if d.avgHrv != nil || d.restingHr != nil || d.totalSleepMin != nil { acc += 1 }
         }
 
-        let hrv = bandMetric(history: history, inRange: inRange, upToToday: upToToday,
-                             cfg: Baselines.hrvCfg, epoch: epoch, window: range.trendWindow, step: 5) { $0.avgHrv }
-        let rhr = bandMetric(history: history, inRange: inRange, upToToday: upToToday,
-                             cfg: Baselines.restingHRCfg, epoch: epoch, window: range.trendWindow, step: 2) {
+        let hrv = bandMetric(upToToday: upToToday, startKey: startKey,
+                             cfg: Baselines.hrvCfg, window: range.trendWindow, step: 5) { $0.avgHrv }
+        let rhr = bandMetric(upToToday: upToToday, startKey: startKey,
+                             cfg: Baselines.restingHRCfg, window: range.trendWindow, step: 2) {
             $0.restingHr.map { Double($0) }
         }
 
@@ -166,35 +166,32 @@ struct TrendsSeries {
 
     // MARK: - Band metrics
 
-    /// Folds history night by night. The band drawn at night N is the baseline ± σ *going into* that night
-    /// (the state after folding every night before it), so "inside / outside the band" matches what the
-    /// Today screen said that morning. Nights dated before the recalibration epoch are dropped exactly as
-    /// `Baselines.foldHistory(_:dayKeys:cfg:)` drops them.
-    private static func bandMetric(history: [DailyMetric], inRange: [DailyMetric], upToToday: [DailyMetric],
-                                   cfg: MetricCfg, epoch: Double, window: Int, step: Double,
+    /// The band drawn at night N is the baseline ± σ *going into* that night (the state after folding
+    /// every night before it), so "inside / outside the band" matches what the Today screen said that
+    /// morning. The fold itself is `BaselineReadouts.nightlyStates`, the one walk the Progress screen
+    /// draws its baseline line from, so the two screens cannot disagree about a night's band. Nights
+    /// dated before the recalibration epoch are dropped exactly as `Baselines.foldHistory(_:dayKeys:cfg:)`
+    /// drops them.
+    private static func bandMetric(upToToday: [DailyMetric], startKey: String,
+                                   cfg: MetricCfg, window: Int, step: Double,
                                    value: (DailyMetric) -> Double?) -> BandMetric {
-        var state: BaselineState? = history.isEmpty ? nil
-            : Baselines.foldHistory(history.map(value), dayKeys: history.map(\.day), cfg: cfg, baselineEpoch: epoch)
+        let walk = BaselineReadouts.nightlyStates(upToToday: upToToday, cfg: cfg, value: value)
 
         var points: [BandPoint] = []
         var values: [Double] = []
-        for d in inRange {
-            if dropped(d.day, epoch: epoch) { continue }
-            let raw = value(d)
-            if let v = raw, cfg.minVal <= v, v <= cfg.maxVal, let date = TrendsDayKey.date(d.day) {
-                var baseline: Double? = nil
-                var low: Double? = nil
-                var high: Double? = nil
-                if let s = state, s.usable {
-                    let sigma = Baselines.sigma(s)
-                    baseline = s.baseline
-                    low = s.baseline - sigma
-                    high = s.baseline + sigma
-                }
-                points.append(BandPoint(id: d.day, date: date, value: v, baseline: baseline, low: low, high: high))
-                values.append(v)
+        for n in walk where n.day >= startKey {
+            guard let v = n.validValue, let date = TrendsDayKey.date(n.day) else { continue }
+            var baseline: Double? = nil
+            var low: Double? = nil
+            var high: Double? = nil
+            if let s = n.stateGoingIn, s.usable {
+                let sigma = Baselines.sigma(s)
+                baseline = s.baseline
+                low = s.baseline - sigma
+                high = s.baseline + sigma
             }
-            state = Baselines.update(state, value: raw, cfg: cfg)
+            points.append(BandPoint(id: n.day, date: date, value: v, baseline: baseline, low: low, high: high))
+            values.append(v)
         }
 
         let current = BaselineReadouts.latestNight(upToToday: upToToday, cfg: cfg, value: value).state
@@ -216,11 +213,6 @@ struct TrendsSeries {
         let floorLo = max(0, (lo - pad) / step).rounded(.down) * step
         let ceilHi = ((hi + pad) / step).rounded(.up) * step
         return floorLo...max(ceilHi, floorLo + step)
-    }
-
-    private static func dropped(_ day: String, epoch: Double) -> Bool {
-        guard epoch > 0, let d = TrendsDayKey.utc.date(from: day) else { return false }
-        return d.timeIntervalSince1970 < epoch
     }
 
     static func mean(_ values: [Double]) -> Double? {

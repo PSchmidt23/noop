@@ -127,7 +127,8 @@ final class SleepNightBuilderTests: XCTestCase {
         XCTAssertEqual(SleepFormat.deltaText(asleepMin: 452, average: 420), "+32 min vs average")
         XCTAssertEqual(SleepFormat.deltaText(asleepMin: 402, average: 420), "\u{2212}18 min vs average")
         XCTAssertEqual(SleepFormat.deltaText(asleepMin: 423, average: 420), "On your average")
-        XCTAssertEqual(SleepFormat.hhmm(444), "7:24")
+        XCTAssertEqual(SleepFormat.deltaText(asleepMin: 500, average: 420), "+1h 20m vs average",
+                       "an hour or more is spelled as every other duration, not as 80 min")
         XCTAssertEqual(SleepFormat.percent(0.894), "89%")
     }
 }
