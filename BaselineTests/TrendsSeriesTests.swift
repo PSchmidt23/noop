@@ -119,4 +119,101 @@ final class TrendsSeriesTests: BaselineEngineTestCase {
         XCTAssertEqual(TrendsRange.quarter.trendWindow, 7)
         XCTAssertEqual(TrendsFormat.signed(-3.4, unit: "bpm"), "\u{2212}3 bpm")
     }
+
+    // MARK: Effort and Readiness
+
+    /// A row carrying a step count (the funnel's `steps` column); `Fixtures.metric` has no such argument.
+    private func stepsRow(_ day: String, steps: Int) -> DailyMetric {
+        DailyMetric(day: day, totalSleepMin: nil, efficiency: nil, deepMin: nil, remMin: nil, lightMin: nil,
+                    disturbances: nil, restingHr: nil, avgHrv: nil, recovery: nil, strain: nil,
+                    exerciseCount: nil, steps: steps)
+    }
+
+    func testEffortReadinessPointsAveragesAndOutranCount() throws {
+        let days = [Fixtures.metric(key(3), strain: 30, recovery: 60),   // paired, readiness ahead
+                    Fixtures.metric(key(2), strain: 80, recovery: 50),   // paired, effort outran
+                    Fixtures.metric(key(1), recovery: 70),               // readiness only
+                    Fixtures.metric(key(0), hrv: 60, strain: 40)]        // effort only
+        let s = TrendsSeries.build(days: days, range: .week, now: now)
+        let m = s.effortReadiness
+
+        XCTAssertEqual(m.points.map(\.id), [key(3), key(2), key(1), key(0)])
+        XCTAssertEqual(m.points.map(\.effort), [30, 80, nil, 40])
+        XCTAssertEqual(m.points.map(\.readiness), [60, 50, 70, nil])
+        XCTAssertEqual(try XCTUnwrap(m.effortAverage), 50, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(m.readinessAverage), 60, accuracy: 1e-9)
+        XCTAssertEqual(m.effortDays, 3)
+        XCTAssertEqual(m.readinessDays, 3)
+        XCTAssertEqual(m.pairedDays, 2)
+        XCTAssertEqual(m.outranDays, 1)
+        // The merged card prints one average effort: the same number the effort bars carry.
+        XCTAssertEqual(m.effortAverage, s.effort.average)
+    }
+
+    func testEffortReadinessIgnoresDaysOutsideTheRangeAndEqualValues() {
+        let days = [Fixtures.metric(key(10), strain: 90, recovery: 20),   // before the 7-day window
+                    Fixtures.metric(key(1), strain: 55, recovery: 55),    // equal: not outran
+                    Fixtures.metric(key(0), hrv: 60)]                     // neither column
+        let s = TrendsSeries.build(days: days, range: .week, now: now)
+        XCTAssertEqual(s.effortReadiness.points.map(\.id), [key(1)])
+        XCTAssertEqual(s.effortReadiness.pairedDays, 1)
+        XCTAssertEqual(s.effortReadiness.outranDays, 0)
+
+        let none = TrendsSeries.build(days: [Fixtures.metric(key(10), strain: 90, recovery: 20)], range: .week, now: now)
+        XCTAssertTrue(none.effortReadiness.points.isEmpty)
+        XCTAssertNil(none.effortReadiness.effortAverage)
+        XCTAssertNil(none.effortReadiness.readinessAverage)
+    }
+
+    // MARK: Steps
+
+    func testStepsFromResolvedReadings() throws {
+        let tomorrow = Baselines.cutoffKey(todayKey: key(0), carryDays: -1)
+        let readings: [(day: String, value: Double)] = [
+            (key(40), 5_000),      // outside the week, inside the quarter: keeps the card
+            (key(2), 8_000),
+            (key(1), 10_000),
+            (key(0), 0),           // a counted zero is a bar
+            (tomorrow, 9_000),     // never a bar
+            (key(3), -1)           // not a count
+        ]
+        let s = TrendsSeries.build(days: [Fixtures.metric(key(0), hrv: 60)], range: .week,
+                                   stepReadings: readings, now: now)
+        XCTAssertEqual(s.steps.bars.map(\.id), [key(2), key(1), key(0)])
+        XCTAssertEqual(s.steps.bars.map(\.value), [8_000, 10_000, 0])
+        XCTAssertEqual(try XCTUnwrap(s.steps.average), 6_000, accuracy: 1e-9)
+        XCTAssertEqual(s.stepsDays, 3)
+        XCTAssertEqual(s.stepsAboveAverage, 2, "8,000 and 10,000 beat a 6,000 mean")
+        XCTAssertTrue(s.hasSteps)
+    }
+
+    func testStepsFallBackToTheFunnelColumnAndGateOnTheQuarter() throws {
+        // No readings passed: the rows' own `steps` column draws the bars.
+        let days = [stepsRow(key(1), steps: 7_000), stepsRow(key(0), steps: 9_000)]
+        let s = TrendsSeries.build(days: days, range: .week, now: now)
+        XCTAssertEqual(s.steps.bars.map(\.value), [7_000, 9_000])
+        XCTAssertEqual(try XCTUnwrap(s.steps.average), 8_000, accuracy: 1e-9)
+        XCTAssertEqual(s.stepsAboveAverage, 1)
+        XCTAssertTrue(s.hasSteps)
+
+        // Readings given but empty: nothing in the quarter, so the card is left out.
+        let empty = TrendsSeries.build(days: days, range: .week, stepReadings: [], now: now)
+        XCTAssertTrue(empty.steps.bars.isEmpty)
+        XCTAssertFalse(empty.hasSteps)
+
+        // A count 89 days back is inside the lookback (card stays, empty text); 90 back is not.
+        let edge = TrendsSeries.build(days: [], range: .week, stepReadings: [(day: key(89), value: 4_000)], now: now)
+        XCTAssertTrue(edge.hasSteps)
+        XCTAssertTrue(edge.steps.bars.isEmpty)
+        let past = TrendsSeries.build(days: [], range: .week, stepReadings: [(day: key(90), value: 4_000)], now: now)
+        XCTAssertFalse(past.hasSteps)
+    }
+
+    func testWindowKeysAndStepsLookback() {
+        let w = TrendsSeries.window(range: .week, now: now)
+        XCTAssertEqual(w.startKey, key(6))
+        XCTAssertEqual(w.todayKey, key(0))
+        XCTAssertEqual(TrendsSeries.window(range: .quarter, now: now).startKey, key(89))
+        XCTAssertEqual(TrendsSeries.stepsLookbackDays, 90)
+    }
 }

@@ -19,8 +19,9 @@ enum TrendsSection: String, CaseIterable, Identifiable {
     }
 }
 
-/// Trends: HRV and resting HR against the personal baseline band, sleep and effort bars over a
-/// 7 / 30 / 90 day window (the "Trends" section), the baseline over months ("Progress", `ProgressSection`)
+/// Trends: HRV and resting HR against the personal baseline band, effort bars under the readiness
+/// line, sleep and steps bars over a 7 / 30 / 90 day window (the "Trends" section; order HRV, Resting
+/// HR, Effort & Readiness, Sleep, Steps), the baseline over months ("Progress", `ProgressSection`)
 /// and the journal patterns ("Habits", `JournalPatternsView`). One pinned glass control picks the section;
 /// the range picker sits flat at the top of the Trends section's content. Series are built once per
 /// (data, range) in `.task`. Settings is the gear in the toolbar.
@@ -64,7 +65,14 @@ struct TrendsScreen: View {
         .task(id: LoadKey(seq: repo.refreshSeq, range: rangeRaw, loaded: repo.loaded, day: todayKey,
                           dataSource: dataSourceRaw)) {
             guard repo.loaded else { series = nil; return }
-            series = TrendsSeries.build(days: repo.baselineDays, range: range)
+            // Steps resolve outside the funnel table (strap counter → phone → strap estimate), over the
+            // longest range so the Steps card's "any steps at all" gate does not flip with the picker.
+            let now = Date()
+            let (_, today) = TrendsSeries.window(range: range, now: now)
+            let from = Baselines.cutoffKey(todayKey: today, carryDays: TrendsSeries.stepsLookbackDays - 1)
+            let steps = await BaselineReadouts.stepReadings(repo, from: from, to: today)
+            guard !Task.isCancelled else { return }
+            series = TrendsSeries.build(days: repo.baselineDays, range: range, stepReadings: steps, now: now)
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             todayKey = Repository.localDayKey(Date())
@@ -105,6 +113,9 @@ struct TrendsScreen: View {
         TrendBandCard(title: "Resting HR", noun: "resting HR", unit: "bpm", color: BaselineTheme.rhr,
                       higherIsBetter: false, range: s.range, metric: s.restingHr)
 
+        // Effort bars under the Readiness line; the "All workouts" row closes this card.
+        TrendEffortReadinessCard(range: s.range, metric: s.effortReadiness, peak: s.effortPeak)
+
         // No "Last 30 days" caption on either bar card: the range picker a few points above says it.
         TrendBarCard(
             title: "Sleep",
@@ -118,18 +129,22 @@ struct TrendsScreen: View {
             ],
             emptyText: "No nights of sleep in the last \(s.range.days) days.")
 
-        TrendBarCard(
-            title: "Effort",
-            color: BaselineTheme.effort,
-            bars: s.effort.bars,
-            average: s.effort.average,
-            stats: [
-                TrendStat(label: "Average", value: s.effort.average.map(TrendsFormat.whole) ?? "—"),
-                TrendStat(label: "Highest", value: s.effortPeak.map { TrendsFormat.whole($0.value) } ?? "—",
-                          unit: s.effortPeak.map { TrendsFormat.shortDate($0.date) })
-            ],
-            emptyText: "No effort recorded in the last \(s.range.days) days.",
-            showsAllWorkouts: true)
+        // Only once some day in the last quarter counted steps: a strap without a counter and no phone
+        // steps would otherwise show an empty card forever. The badge says what a step count is worth.
+        if s.hasSteps {
+            TrendBarCard(
+                title: "Steps",
+                accessory: AccuracyBadge(metric: "steps").map { AnyView($0) },
+                color: BaselineTheme.steps,
+                bars: s.steps.bars,
+                average: s.steps.average,
+                stats: [
+                    TrendStat(label: "Average", value: s.steps.average.map { BaselineReadouts.stepsText(Int($0.rounded())) } ?? "—"),
+                    TrendStat(label: "Above average", value: String(s.stepsAboveAverage),
+                              unit: "of \(s.stepsDays) day\(s.stepsDays == 1 ? "" : "s")")
+                ],
+                emptyText: "No steps recorded in the last \(s.range.days) days.")
+        }
     }
 
     private var emptyState: some View {

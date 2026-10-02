@@ -165,14 +165,18 @@ struct TrendStat {
     var unit: String? = nil
 }
 
-/// Sleep / Effort: two stats over bars with a dashed average rule. On the Trends tab the window is the
+/// Sleep / Steps: two stats over bars with a dashed average rule. On the Trends tab the window is the
 /// 7D / 30D / 90D picker just above the cards, so the header carries no "Last 30 days" of its own (the
-/// "of 28 nights" cell already counts the window). The Effort card closes with the "All workouts" row
-/// (`showsAllWorkouts`), the Trends tab's path to the Workouts list.
+/// "of 28 nights" cell already counts the window). `accessory` takes the header's trailing slot (the
+/// Steps card's `AccuracyBadge`); `caption` is the plain-text form for a host whose range is not on
+/// screen. `showsAllWorkouts` closes the card with the "All workouts" row (kept for any host that still
+/// draws an Effort-only card; on Trends that row lives in `TrendEffortReadinessCard`).
 struct TrendBarCard: View {
     let title: String
     /// Trailing caption in the header, for a host whose range is not already on screen; nil omits it.
     var caption: String? = nil
+    /// A trailing header view (a pill or badge); wins over `caption` when both are given.
+    var accessory: AnyView? = nil
     let color: Color
     let bars: [BaselineBarChart.Bar]
     let average: Double?
@@ -181,7 +185,7 @@ struct TrendBarCard: View {
     var showsAllWorkouts: Bool = false
 
     var body: some View {
-        BaselineCard(title: title, accessory: caption.map { AnyView(captionView($0)) }) {
+        BaselineCard(title: title, accessory: accessory ?? caption.map { AnyView(captionView($0)) }) {
             if bars.isEmpty {
                 Text(emptyText)
                     .font(BaselineTheme.caption)
@@ -218,6 +222,67 @@ struct TrendBarCard: View {
             stat.unit.map { "\(stat.label) \(stat.value) \($0)" } ?? "\(stat.label) \(stat.value)"
         }
         return "\(title): " + parts.joined(separator: ", ")
+    }
+}
+
+/// Effort bars under the Readiness line over the picked range: did the day's effort show up in the next
+/// morning's readiness? Two stats (the mean of each series over the days that have it), the chart, and
+/// ONE sentence counting the days effort outran readiness. Closes with the "All workouts" row, the
+/// Trends tab's path to the Workouts list (the standalone Effort card folded into this one: the same
+/// bars and the same average would otherwise appear twice on the screen).
+struct TrendEffortReadinessCard: View {
+    let range: TrendsRange
+    let metric: TrendsSeries.EffortReadiness
+    /// The range's highest effort day, said in the chart's VoiceOver sentence rather than printed.
+    let peak: BaselineBarChart.Bar?
+
+    var body: some View {
+        BaselineCard(title: "Effort & Readiness") {
+            if metric.points.isEmpty {
+                Text("No effort or readiness in the last \(range.days) days.")
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+            } else {
+                HStack(spacing: 12) {
+                    StatCell(label: "Average effort", value: effortText, dot: BaselineTheme.effort)
+                    StatCell(label: "Average readiness", value: readinessText, dot: BaselineTheme.accent)
+                }
+                EffortReadinessChart(points: metric.points, accessibilitySummary: chartSummary)
+                Text(sentence)
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider().overlay(BaselineTheme.hairline)
+            BaselineChevronRow(text: "All workouts", accessibilityHint: "Shows every recorded workout") {
+                WorkoutsScreen()
+            }
+        }
+    }
+
+    private var effortText: String { metric.effortAverage.map(TrendsFormat.whole) ?? "—" }
+    private var readinessText: String { metric.readinessAverage.map(TrendsFormat.whole) ?? "—" }
+
+    /// The one line under the chart. With both series: the count of days effort outran readiness.
+    /// With effort alone: why the line is missing (no score yet, or none from this source).
+    private var sentence: String {
+        if metric.pairedDays > 0 {
+            return "Days where effort outran readiness: \(metric.outranDays) of \(metric.pairedDays)"
+        }
+        if metric.readinessDays == 0 {
+            return "No readiness score in the last \(range.days) days; it starts after \(BaselineReadouts.readinessSeedNights) nights of HRV."
+        }
+        return "No day in the last \(range.days) days has both an effort and a readiness score."
+    }
+
+    /// What VoiceOver reads for the chart: the two averages the header prints, the peak day and the
+    /// outran count, so nothing the bars and the line show is lost to the touch-only view.
+    private var chartSummary: String {
+        var s = "Effort and Readiness, last \(range.days) days: average effort \(effortText) of 100"
+        if let peak { s += ", highest \(TrendsFormat.whole(peak.value)) on \(TrendsFormat.shortDate(peak.date))" }
+        s += "; average readiness \(readinessText) of 100"
+        if metric.pairedDays > 0 { s += "; effort outran readiness on \(metric.outranDays) of \(metric.pairedDays) days" }
+        return s
     }
 }
 #endif
