@@ -1,12 +1,17 @@
 #if os(iOS)
 import SwiftUI
 
-/// The Sleep tab: last night as a ring against the 30-night average, its stages, and the last 30
+/// The Sleep tab: last night as a ring against the 30-night average, its timing (the last 14 nights
+/// against the target window, the averages, regularity and tonight's aim), its stages, and the last 30
 /// nights as a list that pushes `NightDetailScreen` (where the night's vitals live). Nights come from
 /// the strap-first funnel (`repo.baselineNights()` / `repo.baselineDays`), never from `repo.days`.
 struct SleepScreen: View {
     @EnvironmentObject private var repo: Repository
     @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
+    /// The target window's keys, observed so a change made in Settings redraws the timing card on the
+    /// way back; `window` validates them exactly as `SleepWindow.stored()` does.
+    @AppStorage(BaselineReadouts.SleepWindow.bedKey) private var windowBed = BaselineReadouts.SleepWindow.default.bedMinutes
+    @AppStorage(BaselineReadouts.SleepWindow.wakeKey) private var windowWake = BaselineReadouts.SleepWindow.default.wakeMinutes
     @State private var nights: [SleepNight] = []
 
     /// Reload key: `refreshSeq` for every changed refresh, `loaded` so the first publish is never missed
@@ -27,10 +32,22 @@ struct SleepScreen: View {
 
     private var listed: [SleepNight] { Array(nights.prefix(30)) }
 
+    private var window: BaselineReadouts.SleepWindow {
+        func valid(_ v: Int, _ fallback: Int) -> Int { (0..<1440).contains(v) ? v : fallback }
+        return BaselineReadouts.SleepWindow(bedMinutes: valid(windowBed, BaselineReadouts.SleepWindow.default.bedMinutes),
+                                            wakeMinutes: valid(windowWake, BaselineReadouts.SleepWindow.default.wakeMinutes))
+    }
+
+    /// ONE timing readout for the tab, for the latest night, over the same nights the hero and list use.
+    private func timing(for last: SleepNight) -> BaselineReadouts.SleepTiming {
+        BaselineReadouts.sleepTiming(for: last.dayKey, nights: nights, window: window)
+    }
+
     var body: some View {
         BaselineScreen(title: "Sleep") {
             if let last = nights.first {
                 SleepHeroCard(title: heroTitle(for: last), night: last, average: average30)
+                SleepTimingCard(timing: timing(for: last))
                 SleepHypnogramCard(night: last)
                 nightsCard
             } else if repo.loaded {

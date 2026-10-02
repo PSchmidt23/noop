@@ -9,6 +9,8 @@ import StrandAnalytics
 /// ring's baseline tick and band) beside bedtime / wake / efficiency cells. The ring's context line is
 /// the one place the night is compared with the average; nothing else on the card repeats it.
 /// The only ring on the Sleep tab (trademark guardrail: never three circular gauges together).
+/// The header's accessory slot carries the day label and `AccuracyBadge(metric: "sleepDuration")`
+/// (`BaselineCard` has no view-typed subtitle, so the badge sits beside the title rather than under it).
 struct SleepHeroCard: View {
     let title: String
     let night: SleepNight
@@ -39,13 +41,25 @@ struct SleepHeroCard: View {
         }
     }
 
+    /// The day label and the duration badge side by side; stacked (trailing-aligned) at accessibility
+    /// sizes, where "Medium accuracy" and "Mon, Sep 29" would not share a line beside the title.
     private var dayAccessory: AnyView? {
-        guard showsDayLabel else { return nil }
-        return AnyView(
+        AnyView(Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .trailing, spacing: 6) { accessoryItems }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) { accessoryItems }
+            }
+        })
+    }
+
+    @ViewBuilder private var accessoryItems: some View {
+        if showsDayLabel {
             Text(SleepFormat.dayLabel(night.dayDate))
                 .font(BaselineTheme.caption)
                 .foregroundStyle(BaselineTheme.textTertiary)
-        )
+        }
+        if let badge = AccuracyBadge(metric: "sleepDuration") { badge }
     }
 
     private var ring: some View {
@@ -102,20 +116,22 @@ struct SleepHeroCard: View {
 
 // MARK: - Hypnogram
 
-/// Stage timeline plus minutes per stage. The chart's slot carries a quiet note instead when the night has
-/// no timeline (daily-row or imported nights), and beneath the chart when the strap's staging ran on
-/// sparse motion. The stage cells and the proportional bar stay whenever totals exist. Stage colours are
-/// fills and dots only: the cell values are ink (light and wake fail as text).
+/// Stage timeline plus minutes per stage, titled "Stages (approximate)" with `AccuracyBadge(metric:
+/// "sleepStages")` (Low: deep and REM are misread a third to half of the time) and ONE caveat line under
+/// the chart, so the stages read as a sketch of the night, not a goal. The chart's slot carries a quiet
+/// note instead when the night has no timeline (daily-row or imported nights). The stage cells and the
+/// proportional bar stay whenever totals exist. Stage colours are fills and dots only: the cell values
+/// are ink (light and wake fail as text).
 struct SleepHypnogramCard: View {
     let night: SleepNight
 
     var body: some View {
-        BaselineCard(title: "Stages") {
+        BaselineCard(title: "Stages (approximate)", accessory: AccuracyBadge(metric: "sleepStages").map { AnyView($0) }) {
             if let onset = night.onset, let wake = night.wake, night.hasTimeline {
                 BaselineHypnogram(segments: night.segments, onset: onset, wake: wake)
-                if night.stagingSparse { note("Stages are approximate on this strap") }
+                SleepCardNote(text: caveat)
             } else {
-                note("Stage timeline not available for this night")
+                SleepCardNote(text: "Stage timeline not available for this night")
             }
             if night.hasStageTotals {
                 SleepStageBar(night: night)
@@ -138,10 +154,22 @@ struct SleepHypnogramCard: View {
         StatCell(label: "Awake", value: BaselineReadouts.durationText(minutes: night.awakeMin), dot: BaselineTheme.stageColor("wake"))
     }
 
-    private func note(_ text: String) -> some View {
-        HStack(spacing: 6) {
+    /// The one caveat: sparse motion folds into it rather than adding a second line.
+    private var caveat: String {
+        night.stagingSparse
+            ? "Staged on sparse motion this night; read deep and REM as a sketch, not a goal"
+            : "Wearables often misread deep and REM; read them as a sketch, not a goal"
+    }
+}
+
+/// A quiet one-line note inside a Sleep card (an info glyph and tertiary caption).
+struct SleepCardNote: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "info.circle").font(BaselineTheme.symbol).accessibilityHidden(true)
-            Text(text).font(BaselineTheme.caption)
+            Text(text).font(BaselineTheme.caption).fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(BaselineTheme.textTertiary)
         .padding(.vertical, 4)
