@@ -16,12 +16,14 @@ struct ProgressScreen: View {
 }
 
 /// The Progress content: horizon picker (flat, in the content — the pinned row belongs to the screen
-/// that embeds this), the HRV / resting HR / sleep cards and, only after a recalibration, the closing
-/// caption. Built once per (data, horizon, data source) in `.task`, exactly Trends' pattern: two fold
-/// walks and one sleep pass, sub-millisecond at 4000 rows. One `VStack`, so a `LazyVStack` host sees a
-/// single item and the task runs once.
+/// that embeds this), the HRV / resting HR / sleep / fitness cards and, only after a recalibration, the
+/// closing caption. Built once per (data, horizon, data source, profile) in `.task`, exactly Trends'
+/// pattern: two fold walks, one sleep pass and one weekly fitness pass, sub-millisecond at 4000 rows.
+/// One `VStack`, so a `LazyVStack` host sees a single item and the task runs once.
 struct ProgressSection: View {
     @EnvironmentObject private var repo: Repository
+    /// Age, sex and body fields for the fitness estimate (Settings › Profile); part of the reload key.
+    @EnvironmentObject private var profile: ProfileStore
     @AppStorage("baseline.progressHorizon") private var horizonRaw: Int = ProgressHorizon.quarter.rawValue
     /// Strap-first / merged / import-only precedence (Settings → Data); part of the reload key.
     @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
@@ -32,9 +34,17 @@ struct ProgressSection: View {
         let loaded: Bool
         let horizon: Int
         let dataSource: String
+        let profile: ProgressProfile
     }
 
     private var horizon: ProgressHorizon { ProgressHorizon.resolve(horizonRaw) }
+
+    /// The profile as the pure model takes it: a waist of 0 is "none".
+    private var profileInputs: ProgressProfile {
+        ProgressProfile(age: profile.age, sex: profile.sex,
+                        waistCm: profile.waistCm > 0 ? profile.waistCm : nil,
+                        hasHeightWeight: profile.heightCm > 0 && profile.weightKg > 0)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: BaselineTheme.cardSpacing) {
@@ -65,7 +75,8 @@ struct ProgressSection: View {
                     .padding(.top, 48)
             }
         }
-        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, horizon: horizonRaw, dataSource: dataSourceRaw)) {
+        .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, horizon: horizonRaw, dataSource: dataSourceRaw,
+                          profile: profileInputs)) {
             guard repo.loaded else { snapshot = nil; return }
             // The same night list Today and Sleep build, so the 30-night average is one number everywhere.
             let days = repo.baselineDays
@@ -73,7 +84,7 @@ struct ProgressSection: View {
             let sessions = await repo.baselineNights()
             let nights = SleepNightBuilder.nights(sessions: sessions, days: days, habitualMidsleepSec: habitual)
             snapshot = ProgressSnapshot.build(days: days, nights: nights, horizon: horizon,
-                                              todayKey: Repository.localDayKey(Date()))
+                                              todayKey: Repository.localDayKey(Date()), profile: profileInputs)
         }
     }
 
@@ -86,6 +97,8 @@ struct ProgressSection: View {
                            higherIsBetter: false, status: s.restingHr, horizon: s.horizon, todayKey: s.todayKey, step: 2)
 
         ProgressSleepCard(duration: s.sleep.duration, regularity: s.sleep.regularity, horizon: s.horizon)
+
+        ProgressFitnessCard(status: s.fitness, horizon: s.horizon, todayKey: s.todayKey)
     }
 
     private var emptyState: some View {

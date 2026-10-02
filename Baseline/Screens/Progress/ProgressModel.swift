@@ -5,8 +5,18 @@ import StrandAnalytics
 
 // Pure derivations for the Progress screen: is the personal baseline itself moving over months?
 // Everything here is a value type built from `repo.baselineDays` (through `BaselineReadouts.nightlyStates`,
-// the one fold walk Trends draws its band from) and the Sleep tab's `SleepNight` list. Nothing touches
-// the store or SwiftUI.
+// the one fold walk Trends draws its band from), the Sleep tab's `SleepNight` list (through
+// `BaselineReadouts.sleepTiming`, the readout the Sleep tab prints) and NOOP's weekly fitness read
+// (through `BaselineReadouts.fitness`). Nothing touches the store or SwiftUI.
+//
+// Not drawn, on purpose: a "Readiness baseline" card. The Readiness score (`DailyMetric.recovery`) is
+// NOOP's weighted z-score of each night AGAINST the person's moving HRV / resting HR baselines, mapped so
+// z = 0 reads 58. Its long-run level is therefore pinned near 58 by construction: a baseline that climbs
+// for three months shows up in the HRV card and vanishes from Readiness, which only ever says how last
+// night compared with the weeks before it. A trajectory of it over a horizon would read as "no progress"
+// for everyone, and a mixed history changes formula at the import boundary (imported days carry the
+// vendor's own score verbatim; strap days NOOP's). The literature table rates composite scores Low
+// (no outcome validation). So Progress keeps Readiness where it is honest: one morning at a time, on Home.
 
 // MARK: - Horizon
 
@@ -246,9 +256,11 @@ enum ProgressSleep {
     static let allTimeMinNights = 60
     /// Minutes below which a duration change is never called a change.
     static let durationFloorMin = 5.0
-    static let timingMinNights = 7
-    /// Minutes of bedtime-spread change below which timing is "about as regular".
-    static let timingSteadyMin = 5.0
+    /// Timed nights the averages need (the readout's own floor), and the change in the regularity index,
+    /// in points, below which timing is "about as regular" (a 14-night index moves about that much when
+    /// a single night lands an hour off).
+    static let timingMinNights = BaselineReadouts.sleepAverageMinNights
+    static let timingSteadyPoints = 5
 
     struct Window: Equatable {
         let avgMin: Double
@@ -268,23 +280,29 @@ enum ProgressSleep {
         case ready(now: Window, then: Window, deltaMin: Double, noiseMin: Double)
     }
 
-    /// Circular mean (seconds of local day) and spread (minutes) of bed and wake times.
+    /// One window's average bedtime and wake (circular means, minutes after local midnight) and its
+    /// regularity index, lifted off `BaselineReadouts.sleepTiming(for:nights:)`: the same readout the
+    /// Sleep tab's timing card prints, so Progress and Sleep never disagree on an average bedtime.
     struct Timing: Equatable {
-        let bedMeanSec: Int
-        let bedSpreadMin: Double
-        let wakeMeanSec: Int
-        let wakeSpreadMin: Double
+        let bedMeanMin: Double
+        let wakeMeanMin: Double
+        /// 0–100 over the window's newest 14 nights; nil under 5 consecutive-night pairs.
+        let regularity: Int?
+        /// Timed nights the averages cover (at most 30) and the days they span.
         let nights: Int
+        let newestDay: String
+        let oldestDay: String
     }
 
     enum Regularity: Equatable {
         /// Every night is `.dailyMetric` (imported totals only).
         case noTimedNights
-        /// 1…6 timed nights.
+        /// Fewer than `timingMinNights` timed nights.
         case building(timed: Int)
         case nowOnly(now: Timing, compareFromDay: String?)
-        /// `bedDeltaMin` = now.bedSpreadMin − then.bedSpreadMin (negative = steadier).
-        case ready(now: Timing, then: Timing, bedDeltaMin: Double)
+        /// `delta` = now.regularity − then.regularity (positive = more regular); nil when either window
+        /// is short of the index, in which case the sentence states the bedtimes alone.
+        case ready(now: Timing, then: Timing, delta: Int?)
     }
 
     struct Reading: Equatable {
@@ -292,12 +310,15 @@ enum ProgressSleep {
         let regularity: Regularity
     }
 
-    /// `nights` is `SleepNightBuilder.nights(…)`, newest first.
-    static func reading(nights: [SleepNight], todayKey: String, horizon: ProgressHorizon) -> Reading {
+    /// `nights` is `SleepNightBuilder.nights(…)`, newest first. `calendar` places bed and wake on the
+    /// clock (the device's; tests pass their own).
+    static func reading(nights: [SleepNight], todayKey: String, horizon: ProgressHorizon,
+                        calendar: Calendar = .current) -> Reading {
         let scoped = nights.filter { $0.dayKey <= todayKey }
         let cutoff = horizon.cutoff(todayKey: todayKey)
         return Reading(duration: duration(scoped, cutoff: cutoff, horizon: horizon),
-                       regularity: regularity(scoped, cutoff: cutoff, horizon: horizon))
+                       regularity: regularity(scoped, todayKey: todayKey, cutoff: cutoff, horizon: horizon,
+                                              calendar: calendar))
     }
 
     // MARK: Duration
@@ -337,25 +358,25 @@ enum ProgressSleep {
 
     // MARK: Timing
 
+    /// A night the readout can place on the clock: strap-recorded, with a bed and a later wake.
     private static func timed(_ night: SleepNight) -> Bool {
-        night.source == .session && night.onsetTs != nil && night.wakeTs != nil
+        guard night.source == .session, let onset = night.onsetTs, let wake = night.wakeTs else { return false }
+        return wake > onset
     }
 
-    private static func regularity(_ scoped: [SleepNight], cutoff: String?, horizon: ProgressHorizon) -> Regularity {
+    private static func regularity(_ scoped: [SleepNight], todayKey: String, cutoff: String?,
+                                   horizon: ProgressHorizon, calendar: Calendar) -> Regularity {
         let timedAll = scoped.filter(timed)
         guard !timedAll.isEmpty else { return .noTimedNights }
-        let nowNights = Array(timedAll.prefix(windowNights))
-        guard let now = timing(nowNights) else { return .building(timed: timedAll.count) }
-
-        let thenNights: [SleepNight]
-        if let cutoff {
-            thenNights = Array(timedAll.filter { $0.dayKey <= cutoff }.prefix(windowNights))
-        } else {
-            thenNights = Array(timedAll.suffix(windowNights))
+        guard let now = timing(timedAll, for: todayKey, calendar: calendar) else {
+            return .building(timed: timedAll.count)
         }
-        if let then = timing(thenNights), let thenNewest = thenNights.first?.dayKey,
-           let nowOldest = nowNights.last?.dayKey, thenNewest < nowOldest {
-            return .ready(now: now, then: then, bedDeltaMin: now.bedSpreadMin - then.bedSpreadMin)
+        // The far end: the newest 30 timed nights on or before the cutoff; for `.all`, the first 30.
+        let thenDay = cutoff ?? timedAll.suffix(windowNights).first?.dayKey
+        if let thenDay, let then = timing(timedAll, for: thenDay, calendar: calendar), then.newestDay < now.oldestDay {
+            var delta: Int? = nil
+            if let a = now.regularity, let b = then.regularity { delta = a - b }
+            return .ready(now: now, then: then, delta: delta)
         }
         var compareFrom: String? = nil
         if let days = horizon.days, timedAll.count >= timingMinNights {
@@ -364,60 +385,179 @@ enum ProgressSleep {
         return .nowOnly(now: now, compareFromDay: compareFrom)
     }
 
-    /// Over the strap-recorded nights in `nights` (first 30 of them); nil below `timingMinNights`.
-    /// Mean is circular (so 23:30 and 00:30 average to midnight, not noon); spread is the RMS of the
-    /// wrapped distance to the mean, in minutes.
-    static func timing(_ nights: [SleepNight], calendar: Calendar = .current) -> Timing? {
-        let used = nights.filter(timed).prefix(windowNights)
-        guard used.count >= timingMinNights else { return nil }
-        var bed: [Double] = []
-        var wake: [Double] = []
-        for n in used {
-            guard let onset = n.onset, let wakeDate = n.wake else { continue }
-            bed.append(secondsOfDay(onset, calendar: calendar))
-            wake.append(secondsOfDay(wakeDate, calendar: calendar))
+    /// The readout's window ending on `day` (its newest 30 timed nights on or before it), nil below
+    /// `timingMinNights`. The target window plays no part here, so the default one is passed and the
+    /// call stays pure (no UserDefaults).
+    static func timing(_ nights: [SleepNight], for day: String, calendar: Calendar = .current) -> Timing? {
+        let t = BaselineReadouts.sleepTiming(for: day, nights: nights, window: .default, calendar: calendar)
+        guard let bed = t.averageBedMinutes, let wake = t.averageWakeMinutes,
+              let newest = t.nights.first, let oldest = t.nights.last else { return nil }
+        return Timing(bedMeanMin: bed, wakeMeanMin: wake, regularity: t.regularity,
+                      nights: t.nights.count, newestDay: newest.day, oldestDay: oldest.day)
+    }
+}
+
+// MARK: - Fitness (estimated VO2 max, fitness age)
+
+/// The profile fields the fitness estimate needs, lifted off `ProfileStore` by the screen so the model
+/// stays pure. `.none` is the no-profile case (tests, previews).
+struct ProgressProfile: Equatable {
+    var age: Int? = nil
+    var sex: String? = nil
+    var waistCm: Double? = nil
+    var hasHeightWeight = false
+
+    static let none = ProgressProfile()
+}
+
+/// Is the estimated VO2 max moving over months? NOOP's weekly fitness read (`FitnessAgeEngine`, Nes
+/// 2011, via `BaselineReadouts.fitness(for:days:…)`) for every week ending on today's weekday, back to
+/// the first row, then the same ladder as the HRV card: an anchor at the horizon's far end and a
+/// "steady" floor. Low accuracy (`MetricAccuracy` "vo2": resting-based estimates overestimate, typical
+/// error 4–5 mL/kg/min), so the card draws a band and names a direction, never a target.
+enum ProgressFitness {
+    /// The drawn band (± around each point) and the y-axis snap: about the model's standard error.
+    static let bandVO2 = 5.0
+    static let yStep = 5.0
+    /// Changes under this many mL/kg/min are "about where it was": roughly two standard errors of a
+    /// seven-night resting HR median carried through the model (about 1 mL/kg/min per bpm at typical
+    /// values), well inside the model's own error.
+    static let steadyVO2 = 3.0
+
+    /// One week's estimate, stamped on the week's last day.
+    struct Point: Identifiable, Equatable {
+        let id: String
+        let date: Date
+        let vo2max: Double
+        let fitnessAge: Double
+        let chronoAge: Double
+        /// Nights of resting HR in the week (4…7).
+        let rhrNights: Int
+        /// True when VO2 max came from the waist-free fallback (resting HR and age alone).
+        let fallback: Bool
+
+        var weekEnding: String { id }
+
+        /// The point as the trajectory chart draws it: the estimate with its ± band.
+        var trajectory: ProgressPoint {
+            ProgressPoint(id: id, date: date, baseline: vo2max, sigma: ProgressFitness.bandVO2,
+                          nValid: rhrNights, trusted: true)
         }
-        guard let bedMean = circularMeanSec(bed), let wakeMean = circularMeanSec(wake) else { return nil }
-        // `% 86_400`: a mean a hair below midnight rounds to 86400, which is 00:00 again.
-        return Timing(bedMeanSec: Int(bedMean.rounded()) % 86_400, bedSpreadMin: spreadMin(bed, mean: bedMean),
-                      wakeMeanSec: Int(wakeMean.rounded()) % 86_400, wakeSpreadMin: spreadMin(wake, mean: wakeMean),
-                      nights: used.count)
     }
 
-    private static func secondsOfDay(_ date: Date, calendar: Calendar) -> Double {
-        let c = calendar.dateComponents([.hour, .minute, .second], from: date)
-        return Double((c.hour ?? 0) * 3600 + (c.minute ?? 0) * 60 + (c.second ?? 0))
+    struct Comparison: Equatable {
+        let then: Point
+        let now: Point
+        /// The anchor is more than 14 days older than the cutoff, so the sentence names its date.
+        let namesDate: Bool
+
+        var delta: Double { now.vo2max - then.vo2max }
+        var steady: Bool { abs(delta) < ProgressFitness.steadyVO2 || Int(abs(delta).rounded()) == 0 }
     }
 
-    /// Mean direction of the seconds-of-day on the 24 h circle, in 0..<86400; nil when the resultant is
-    /// (near) zero, i.e. the times are spread evenly round the clock.
-    static func circularMeanSec(_ secs: [Double]) -> Double? {
-        guard !secs.isEmpty else { return nil }
-        let twoPi = 2 * Double.pi
-        var s = 0.0, c = 0.0
-        for v in secs {
-            let theta = twoPi * v / 86_400
-            s += sin(theta)
-            c += cos(theta)
+    enum Status: Equatable {
+        /// No night with a resting HR anywhere: the card is not drawn.
+        case empty
+        /// Resting HR exists but no age or sex (the pure API; `ProfileStore` always carries both).
+        case needsProfile
+        /// No week with `FitnessAgeEngine.minCoverageDays` nights of resting HR yet; `rhrNights` is
+        /// this week's count.
+        case calibrating(rhrNights: Int)
+        /// The newest estimate is more than `Baselines.staleDays` old.
+        case paused(lastWeek: String, points: [Point])
+        /// Estimates exist, but none at the horizon's far end yet.
+        case settling(firstWeek: String, compareFromDay: String?, points: [Point])
+        case ready(comparison: Comparison, points: [Point])
+
+        var points: [Point] {
+            switch self {
+            case .empty, .needsProfile, .calibrating: return []
+            case .paused(_, let p), .settling(_, _, let p), .ready(_, let p): return p
+            }
         }
-        let resultant = sqrt(s * s + c * c) / Double(secs.count)
-        guard resultant >= 1e-6 else { return nil }
-        var mean = atan2(s, c) / twoPi * 86_400
-        if mean < 0 { mean += 86_400 }
-        if mean >= 86_400 { mean -= 86_400 }
-        return mean
+
+        /// The newest estimate (the "now" cell and the fitness-age caption).
+        var now: Point? { points.last }
+
+        var comparison: Comparison? {
+            if case .ready(let c, _) = self { return c }
+            return nil
+        }
     }
 
-    /// sqrt(mean(d²)) / 60 with d the wrapped distance to `mean` (so 23:30 and 00:30 are an hour apart).
-    static func spreadMin(_ secs: [Double], mean: Double) -> Double {
-        guard !secs.isEmpty else { return 0 }
-        let sum = secs.reduce(0.0) { acc, v in
-            var d = (v - mean + 43_200).truncatingRemainder(dividingBy: 86_400)
-            if d < 0 { d += 86_400 }
-            d -= 43_200
-            return acc + d * d
+    /// `days` is `repo.baselineDays` (oldest → newest).
+    static func build(days: [DailyMetric], todayKey: String, horizon: ProgressHorizon, profile: ProgressProfile) -> Status {
+        let upToToday = days.filter { $0.day <= todayKey }
+        guard upToToday.contains(where: { $0.restingHr != nil }) else { return .empty }
+        guard (profile.age ?? 0) > 0, !(profile.sex ?? "").isEmpty else { return .needsProfile }
+        let byDay = index(upToToday)
+        let pts = points(byDay: byDay, todayKey: todayKey, profile: profile)
+        guard let newest = pts.last else {
+            return .calibrating(rhrNights: week(ending: todayKey, byDay: byDay).compactMap(\.restingHr).count)
         }
-        return sqrt(sum / Double(secs.count)) / 60
+        if newest.weekEnding < Baselines.cutoffKey(todayKey: todayKey, carryDays: Baselines.staleDays) {
+            return .paused(lastWeek: newest.weekEnding, points: pts)
+        }
+        var then: Point? = nil
+        var namesDate = false
+        if let cutoff = horizon.cutoff(todayKey: todayKey) {
+            then = pts.last(where: { $0.weekEnding <= cutoff })
+            if let anchor = then {
+                namesDate = anchor.weekEnding < Baselines.cutoffKey(todayKey: cutoff, carryDays: Baselines.staleDays)
+            }
+        } else if let first = pts.first, first.id != newest.id {
+            then = first
+            namesDate = true
+        }
+        guard let then else {
+            // Negative carryDays adds days: the day the first estimate is `horizon` days old.
+            let compareFrom = horizon.days.map { Baselines.cutoffKey(todayKey: pts[0].weekEnding, carryDays: -$0) }
+            return .settling(firstWeek: pts[0].weekEnding, compareFromDay: compareFrom, points: pts)
+        }
+        return .ready(comparison: Comparison(then: then, now: newest, namesDate: namesDate), points: pts)
+    }
+
+    /// Weekly estimates, oldest → newest, for the weeks ending on `todayKey` and every seven days before
+    /// it, down to the first row. A week without an estimate (under four nights of resting HR) emits
+    /// nothing, so a gap is a straight segment, as on the HRV card.
+    static func points(days: [DailyMetric], todayKey: String, profile: ProgressProfile) -> [Point] {
+        points(byDay: index(days.filter { $0.day <= todayKey }), todayKey: todayKey, profile: profile)
+    }
+
+    private static func points(byDay: [String: DailyMetric], todayKey: String, profile: ProgressProfile) -> [Point] {
+        guard let earliest = byDay.keys.min(), let age = profile.age, let sex = profile.sex else { return [] }
+        var out: [Point] = []
+        var weekEnd = todayKey
+        while weekEnd >= earliest {
+            let rows = week(ending: weekEnd, byDay: byDay)
+            if let r = BaselineReadouts.fitness(for: weekEnd, days: rows, age: age, sex: sex, waistCm: profile.waistCm,
+                                                hasHeightWeight: profile.hasHeightWeight),
+               let vo2 = r.vo2max, let date = TrendsDayKey.date(weekEnd) {
+                out.append(Point(id: weekEnd, date: date, vo2max: vo2, fitnessAge: r.result.fitnessAge,
+                                 chronoAge: r.result.chronoAge, rhrNights: r.rhrNights, fallback: r.vo2IsFallback))
+            }
+            weekEnd = Baselines.cutoffKey(todayKey: weekEnd, carryDays: 7)
+        }
+        return out.reversed()
+    }
+
+    private static func index(_ days: [DailyMetric]) -> [String: DailyMetric] {
+        Dictionary(days.map { ($0.day, $0) }, uniquingKeysWith: { _, last in last })
+    }
+
+    /// The seven calendar days ending on `weekEnd`, oldest → newest (rows that exist).
+    private static func week(ending weekEnd: String, byDay: [String: DailyMetric]) -> [DailyMetric] {
+        (0..<7).compactMap { byDay[Baselines.cutoffKey(todayKey: weekEnd, carryDays: $0)] }.sorted { $0.day < $1.day }
+    }
+
+    /// The points the chart draws: from the horizon's cutoff (or the anchor, whichever is earlier) to
+    /// now; every point when that leaves fewer than two, and always for `.all`.
+    static func window(_ status: Status, todayKey: String, horizon: ProgressHorizon) -> [Point] {
+        let points = status.points
+        guard let cutoff = horizon.cutoff(todayKey: todayKey) else { return points }
+        let start = min(cutoff, status.comparison?.then.weekEnding ?? cutoff)
+        let windowed = points.filter { $0.weekEnding >= start }
+        return windowed.count >= 2 ? windowed : points
     }
 }
 
@@ -429,6 +569,7 @@ struct ProgressSnapshot {
     let hrv: ProgressMetricStatus
     let restingHr: ProgressMetricStatus
     let sleep: ProgressSleep.Reading
+    let fitness: ProgressFitness.Status
     /// Nights anywhere with HRV, resting HR or sleep (Trends' gate); 0 → empty-store state.
     let totalNights: Int
     /// The recalibration day when it dropped at least one night, for the closing caption.
@@ -451,12 +592,18 @@ struct ProgressSnapshot {
         }
         switch sleep.regularity {
         case .nowOnly, .ready: return true
-        case .noTimedNights, .building: return false
+        case .noTimedNights, .building: break
+        }
+        switch fitness {
+        case .settling, .paused, .ready: return true
+        case .empty, .needsProfile, .calibrating: return false
         }
     }
 
-    /// `days` is `repo.baselineDays` (oldest → newest); `nights` is `SleepNightBuilder.nights(…)` (newest first).
-    static func build(days: [DailyMetric], nights: [SleepNight], horizon: ProgressHorizon, todayKey: String) -> ProgressSnapshot {
+    /// `days` is `repo.baselineDays` (oldest → newest); `nights` is `SleepNightBuilder.nights(…)` (newest
+    /// first); `profile` is the age, sex and body fields off `ProfileStore` (`.none` without one).
+    static func build(days: [DailyMetric], nights: [SleepNight], horizon: ProgressHorizon, todayKey: String,
+                      profile: ProgressProfile = .none) -> ProgressSnapshot {
         let upToToday = days.filter { $0.day <= todayKey }
         let totalNights = upToToday.reduce(into: 0) { acc, d in
             if d.avgHrv != nil || d.restingHr != nil || d.totalSleepMin != nil { acc += 1 }
@@ -470,6 +617,7 @@ struct ProgressSnapshot {
             restingHr: ProgressMetric.build(upToToday: upToToday, cfg: Baselines.restingHRCfg, todayKey: todayKey,
                                             horizon: horizon) { $0.restingHr.map(Double.init) },
             sleep: ProgressSleep.reading(nights: nights, todayKey: todayKey, horizon: horizon),
+            fitness: ProgressFitness.build(days: upToToday, todayKey: todayKey, horizon: horizon, profile: profile),
             totalNights: totalNights,
             recalibratedOn: diagnostic.dropped > 0 ? diagnostic.epochDay : nil)
     }
@@ -504,9 +652,13 @@ enum ProgressCopy {
 
     /// "90 days ago" / "on Mar 3" / "when it settled on Mar 3".
     private static func ago(_ c: ProgressComparison, horizon: ProgressHorizon) -> String {
-        if let phrase = horizon.agoPhrase, !c.namesDate { return phrase }
-        if horizon == .all { return "when it settled on \(date(c.then.day))" }
-        return "on \(date(c.then.day))"
+        ago(thenDay: c.then.day, namesDate: c.namesDate, horizon: horizon)
+    }
+
+    private static func ago(thenDay: String, namesDate: Bool, horizon: ProgressHorizon) -> String {
+        if let phrase = horizon.agoPhrase, !namesDate { return phrase }
+        if horizon == .all { return "when it settled on \(date(thenDay))" }
+        return "on \(date(thenDay))"
     }
 
     // MARK: Metric
@@ -613,20 +765,17 @@ enum ProgressCopy {
 
     // MARK: Sleep timing
 
-    /// "11:24 PM" for seconds of local day. Built from hour and minute components, never by adding an
-    /// interval to a midnight: on a DST transition day `startOfDay + sec` lands an hour off the clock
-    /// the components name. The components are placed on a fixed reference day (1 Jan 2001, a day no
-    /// zone transitions on) so every hour exists and the string never depends on today's date.
-    /// `calendar` must share the device zone `SleepFormat.clock` formats in (its default, `.current`).
-    static func clock(sec: Int, calendar: Calendar = .current) -> String {
-        let wrapped = ((sec % 86_400) + 86_400) % 86_400
-        var c = DateComponents()
-        c.year = 2001; c.month = 1; c.day = 1
-        c.hour = wrapped / 3_600
-        c.minute = (wrapped % 3_600) / 60
-        c.second = wrapped % 60
-        guard let date = calendar.date(from: c) else { return "" }
-        return SleepFormat.clock(date)
+    /// "11:24 PM" for minutes after local midnight: the readout's own clock text, so the Sleep tab and
+    /// Progress print one bedtime the same way.
+    static func clock(minutes: Double) -> String { BaselineReadouts.clockText(minutes: minutes) }
+
+    /// "Your bedtime averages 11:24 PM and your timing scores 83 of 100 for regularity." The index is
+    /// named only when the window has it.
+    private static func timingLead(_ t: ProgressSleep.Timing) -> String {
+        if let r = t.regularity {
+            return "Your bedtime averages \(clock(minutes: t.bedMeanMin)) and your timing scores \(r) of 100 for regularity."
+        }
+        return "Your bedtime averages \(clock(minutes: t.bedMeanMin)); regularity scores after \(BaselineReadouts.regularityMinPairs + 1) strap nights in a row."
     }
 
     static func timingSentence(_ r: ProgressSleep.Regularity, horizon: ProgressHorizon) -> String {
@@ -636,7 +785,7 @@ enum ProgressCopy {
         case .building(let n):
             return "Bed and wake times settle after \(ProgressSleep.timingMinNights) strap nights · \(n) so far."
         case .nowOnly(let now, let compareFrom):
-            let lead = "Your bedtime lands within about \(Int(now.bedSpreadMin.rounded())) min of \(clock(sec: now.bedMeanSec))."
+            let lead = timingLead(now)
             if let compareFrom, let phrase = horizon.agoPhrase {
                 return "\(lead) Compare it with \(phrase) from \(date(compareFrom))."
             }
@@ -644,43 +793,115 @@ enum ProgressCopy {
                 return "\(lead) Keep wearing the strap and the comparison arrives."
             }
             return "\(lead) Comparisons start after \(ProgressSleep.timingMinNights) more strap nights."
-        case .ready(_, _, let delta):
-            let n = Int(abs(delta).rounded())
-            if delta <= -ProgressSleep.timingSteadyMin {
-                return "Your bedtime is \(n) min steadier than \(sleepAgo(horizon))."
+        case .ready(let now, let then, let delta):
+            guard let delta, let score = now.regularity else {
+                return "Your bedtime averages \(clock(minutes: now.bedMeanMin)); it was \(clock(minutes: then.bedMeanMin)) \(sleepAgo(horizon))."
             }
-            if delta >= ProgressSleep.timingSteadyMin {
-                return "Your bedtime is \(n) min less steady than \(sleepAgo(horizon))."
+            if delta >= ProgressSleep.timingSteadyPoints {
+                return "Your sleep timing is more regular than \(sleepAgo(horizon)): \(score) of 100, up from \(score - delta)."
             }
-            return "Your bedtime is about as regular as \(sleepAgo(horizon))."
+            if delta <= -ProgressSleep.timingSteadyPoints {
+                return "Your sleep timing is less regular than \(sleepAgo(horizon)): \(score) of 100, down from \(score - delta)."
+            }
+            return "Your sleep timing is about as regular as \(sleepAgo(horizon)): \(score) of 100."
         }
     }
 
     static func timingTone(_ r: ProgressSleep.Regularity) -> Tone {
-        guard case .ready(_, _, let delta) = r else { return .none }
-        if delta <= -ProgressSleep.timingSteadyMin { return .improving }
-        if delta >= ProgressSleep.timingSteadyMin { return .worsening }
+        guard case .ready(_, _, let delta) = r, let delta else { return .none }
+        if delta >= ProgressSleep.timingSteadyPoints { return .improving }
+        if delta <= -ProgressSleep.timingSteadyPoints { return .worsening }
         return .steady
     }
 
-    /// "11:24 PM · ±25 min"
-    static func timingValue(meanSec: Int, spreadMin: Double) -> String {
-        "\(clock(sec: meanSec)) · ±\(Int(spreadMin.rounded())) min"
-    }
+    /// One row of the timing grid: the label, the clock or index now, the earlier window's figure under
+    /// it when there is a comparison, and the spoken form.
+    struct TimingRow: Identifiable, Equatable {
+        let label: String
+        let value: String
+        let was: String?
+        var id: String { label }
 
-    /// "was 11:51 PM · ±43 min"
-    static func timingWas(meanSec: Int, spreadMin: Double) -> String {
-        "was \(timingValue(meanSec: meanSec, spreadMin: spreadMin))"
-    }
-
-    /// "Bedtime usually 11:24 PM, varying about 25 minutes; was 11:51 PM varying 43 minutes."
-    static func timingSpoken(label: String, meanSec: Int, spreadMin: Double, wasMeanSec: Int?, wasSpreadMin: Double?) -> String {
-        var s = "\(label) usually \(clock(sec: meanSec)), varying about \(Int(spreadMin.rounded())) minutes"
-        if let wasMeanSec, let wasSpreadMin {
-            s += "; was \(clock(sec: wasMeanSec)) varying \(Int(wasSpreadMin.rounded())) minutes"
+        /// "Bedtime usually 11:24 PM; was 11:51 PM." / "Regularity 83 of 100; was 71."
+        var spoken: String {
+            let verb = label == "Regularity" ? "" : " usually"
+            if let was { return "\(label)\(verb) \(value); \(was)." }
+            return "\(label)\(verb) \(value)."
         }
-        return s + "."
     }
+
+    /// Bedtime and wake, each with the earlier window's clock when there is one, then the regularity
+    /// index once the window has it. Empty while timing is building or untimed.
+    static func timingRows(_ r: ProgressSleep.Regularity) -> [TimingRow] {
+        let now: ProgressSleep.Timing
+        let then: ProgressSleep.Timing?
+        switch r {
+        case .ready(let n, let t, _): now = n; then = t
+        case .nowOnly(let n, _): now = n; then = nil
+        case .building, .noTimedNights: return []
+        }
+        var rows = [
+            TimingRow(label: "Bedtime", value: clock(minutes: now.bedMeanMin),
+                      was: then.map { "was \(clock(minutes: $0.bedMeanMin))" }),
+            TimingRow(label: "Wake", value: clock(minutes: now.wakeMeanMin),
+                      was: then.map { "was \(clock(minutes: $0.wakeMeanMin))" }),
+        ]
+        if let score = now.regularity {
+            rows.append(TimingRow(label: "Regularity", value: "\(score) of 100",
+                                  was: then?.regularity.map { "was \($0)" }))
+        }
+        return rows
+    }
+
+    // MARK: Fitness
+
+    static let vo2Unit = "mL/kg/min"
+
+    /// nil for `.empty` (no card).
+    static func fitnessSentence(_ s: ProgressFitness.Status, horizon: ProgressHorizon) -> String? {
+        switch s {
+        case .empty:
+            return nil
+        case .needsProfile:
+            return "Add your date of birth and sex in Settings › Profile for an estimated VO2 max and fitness age."
+        case .calibrating(let n):
+            return "Your fitness estimate needs \(FitnessAgeEngine.minCoverageDays) nights of resting HR in a week · \(n) this week."
+        case .settling(let firstWeek, let compareFrom, _):
+            if let compareFrom, let phrase = horizon.agoPhrase {
+                return "Your first fitness estimate landed the week to \(date(firstWeek)). Compare it with \(phrase) from \(date(compareFrom))."
+            }
+            return "Your first fitness estimate landed the week to \(date(firstWeek)). Keep wearing the strap and this line grows."
+        case .paused(let lastWeek, _):
+            return "No fitness estimate since the week to \(date(lastWeek)). It resumes with \(FitnessAgeEngine.minCoverageDays) nights of resting HR in a week."
+        case .ready(let c, _):
+            let when = ago(thenDay: c.then.weekEnding, namesDate: c.namesDate, horizon: horizon)
+            if c.steady {
+                return "Your estimated VO2 max is about where it was \(when)."
+            }
+            let n = Int(abs(c.delta).rounded())
+            return "Your estimated VO2 max is about \(n) \(vo2Unit) \(c.delta > 0 ? "higher" : "lower") than \(when)."
+        }
+    }
+
+    static func fitnessTone(_ s: ProgressFitness.Status) -> Tone {
+        guard case .ready(let c, _) = s else { return .none }
+        if c.steady { return .steady }
+        return c.delta > 0 ? .improving : .worsening
+    }
+
+    /// The card's one context line, under the cells: the fitness age with its band against the calendar
+    /// age, and what the estimate was made from. "Fitness age 34 (±5 years) at 38. VO2 max from resting
+    /// HR and age alone; a waist in Settings › Profile sharpens it."
+    static func fitnessAgeCaption(_ p: ProgressFitness.Point) -> String {
+        let lead = "Fitness age \(Int(p.fitnessAge.rounded())) (±\(Int(FitnessAgeEngine.displayBandYears)) years) at \(Int(p.chronoAge))."
+        if p.fallback {
+            return "\(lead) VO2 max from resting HR and age alone; a waist in Settings › Profile sharpens it."
+        }
+        return "\(lead) VO2 max from resting HR, weekly effort and waist, with the age and sex in Settings › Profile."
+    }
+
+    static func fitnessThenLabel(_ c: ProgressFitness.Comparison) -> String { "Then · week to \(date(c.then.weekEnding))" }
+    static func fitnessNowLabel(_ p: ProgressFitness.Point) -> String { "Now · week to \(date(p.weekEnding))" }
 
     // MARK: Screen
 

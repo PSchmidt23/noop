@@ -4,8 +4,9 @@ import StrandAnalytics
 @testable import Baseline
 
 /// The Progress model: `BaselineReadouts.nightlyStates` (the one fold walk shared with Trends), the
-/// trajectory, the EWMA noise floor, the comparison anchor, the status ladder, the sleep windows and
-/// every sentence. Day keys are literals and the horizon math is UTC key arithmetic, so nothing here
+/// trajectory, the EWMA noise floor, the comparison anchor, the status ladder, the sleep windows (timing
+/// through `BaselineReadouts.sleepTiming`, the Sleep tab's readout), the weekly fitness ladder and every
+/// sentence. Day keys are literals and the horizon math is UTC key arithmetic, so nothing here
 /// depends on the machine's zone or clock except the timing test, which builds local instants.
 final class ProgressModelTests: BaselineEngineTestCase {
 
@@ -420,18 +421,11 @@ final class ProgressModelTests: BaselineEngineTestCase {
         XCTAssertEqual(points.count, 1)
     }
 
-    func testClockFromComponents() {
-        // Built from hour/minute on a fixed reference day, so it equals the formatter's own rendering of
-        // those components and never depends on today's date (or on a DST edge falling today).
-        func expected(_ hour: Int, _ minute: Int) -> String {
-            SleepFormat.clock(Fixtures.local(2001, 1, 1, hour: hour, minute: minute))
-        }
-        XCTAssertEqual(ProgressCopy.clock(sec: 23 * 3600 + 24 * 60), expected(23, 24))
-        XCTAssertEqual(ProgressCopy.clock(sec: 0), expected(0, 0))
-        XCTAssertEqual(ProgressCopy.clock(sec: 7 * 3600 + 5 * 60 + 59), expected(7, 5), "seconds are not shown")
-        XCTAssertEqual(ProgressCopy.clock(sec: 86_400), expected(0, 0), "wraps at midnight")
-        XCTAssertEqual(ProgressCopy.clock(sec: 2 * 3600 + 30 * 60), expected(2, 30), "the DST gap hour still names its components")
-        XCTAssertFalse(ProgressCopy.clock(sec: 12 * 3600).isEmpty)
+    func testClockIsTheReadouts() {
+        // Progress prints bedtimes exactly as the Sleep tab's readout does.
+        XCTAssertEqual(ProgressCopy.clock(minutes: 23 * 60 + 24), BaselineReadouts.clockText(minutes: 23 * 60 + 24))
+        XCTAssertEqual(ProgressCopy.clock(minutes: 0), BaselineReadouts.clockText(minutes: 0))
+        XCTAssertFalse(ProgressCopy.clock(minutes: 12 * 60).isEmpty)
     }
 
     func testHorizonPickerGate() {
@@ -456,6 +450,14 @@ final class ProgressModelTests: BaselineEngineTestCase {
         // Two nights of sleep and no metrics: the average is still building.
         XCTAssertFalse(ProgressSnapshot.build(days: [], nights: dailyNights(2) { _ in 420 }, horizon: .quarter, todayKey: today).hasHorizonContent)
         XCTAssertFalse(ProgressSnapshot.build(days: [], nights: [], horizon: .quarter, todayKey: today).hasHorizonContent)
+
+        // A first fitness estimate (four nights of resting HR and a profile) also names a comparison day.
+        let fourNights = priorNights(4, hrv: 60, rhr: 50)
+        XCTAssertFalse(ProgressSnapshot.build(days: fourNights, nights: [], horizon: .quarter, todayKey: today).hasHorizonContent,
+                       "no profile: no estimate")
+        let withProfile = ProgressSnapshot.build(days: fourNights, nights: [], horizon: .quarter, todayKey: today, profile: profile)
+        guard case .settling = withProfile.fitness else { return XCTFail("expected .settling") }
+        XCTAssertTrue(withProfile.hasHorizonContent)
     }
 
     func testTodayRowEqualsProgressCard() {
@@ -578,73 +580,287 @@ final class ProgressModelTests: BaselineEngineTestCase {
 
     /// `count` strap nights waking 07:00 on Feb 18, 17, 16 …; onsets alternate 23:30 the evening before
     /// and 00:30 the same morning.
-    private func sessionNights(_ count: Int) -> [SleepNight] {
+    /// `count` strap nights waking on the mornings before `today` (the newest wakes on `today` − 1), newest
+    /// first: bed at 23:00 + `bedOffsetMin(i)` the evening before (i = 0 the newest; an offset past 60 lands
+    /// after midnight), wake at 07:00. Built from local components, so they round-trip to their day keys
+    /// wherever the test runs.
+    private func timedNights(_ count: Int, bedOffsetMin: (Int) -> Int = { _ in 0 }) -> [SleepNight] {
+        func local(_ dayKey: String, minutes: Int) -> Date {
+            let parts = dayKey.split(separator: "-").compactMap { Int($0) }
+            return Fixtures.local(parts[0], parts[1], parts[2], hour: minutes / 60, minute: minutes % 60)
+        }
         let sessions = (0..<count).map { i -> CachedSleepSession in
-            let wakeDay = 18 - i
-            let onset = i % 2 == 0 ? Fixtures.local(2026, 2, wakeDay - 1, hour: 23, minute: 30)
-                                   : Fixtures.local(2026, 2, wakeDay, hour: 0, minute: 30)
-            let wake = Fixtures.local(2026, 2, wakeDay, hour: 7)
-            return CachedSleepSession(startTs: Int(onset.timeIntervalSince1970), endTs: Int(wake.timeIntervalSince1970),
+            let wakeKey = key(i + 1)
+            let bedMinutes = 23 * 60 + bedOffsetMin(i)
+            let bed = bedMinutes >= 1440 ? local(wakeKey, minutes: bedMinutes - 1440) : local(key(i + 2), minutes: bedMinutes)
+            let wake = local(wakeKey, minutes: 7 * 60)
+            return CachedSleepSession(startTs: Int(bed.timeIntervalSince1970), endTs: Int(wake.timeIntervalSince1970),
                                       efficiency: nil, restingHr: nil, avgHrv: nil, stagesJSON: nil)
         }
         return SleepNightBuilder.nights(sessions: sessions, days: [], habitualMidsleepSec: nil)
     }
 
-    func testTimingCircular() throws {
-        let ten = sessionNights(10)
+    func testTimingUsesTheReadout() throws {
+        // Ten nights alternating 23:30 / 00:30 beds and 07:00 wakes: the circular mean is midnight, not
+        // noon, and consecutive nights an hour apart score 1 − 60/1440 → 92 on the regularity index.
+        let ten = timedNights(10) { $0 % 2 == 0 ? 30 : 90 }
         XCTAssertEqual(ten.count, 10)
         XCTAssertTrue(ten.allSatisfy { $0.source == .session && $0.onsetTs != nil && $0.wakeTs != nil })
-        let t = try XCTUnwrap(ProgressSleep.timing(ten))
-        XCTAssertLessThanOrEqual(min(t.bedMeanSec, 86_400 - t.bedMeanSec), 60, "23:30 and 00:30 average to midnight, not noon")
-        XCTAssertEqual(t.bedSpreadMin, 30, accuracy: 1e-6)
-        XCTAssertEqual(t.wakeMeanSec, 7 * 3600)
-        XCTAssertEqual(t.wakeSpreadMin, 0, accuracy: 1e-6)
+        let t = try XCTUnwrap(ProgressSleep.timing(ten, for: today))
+        XCTAssertLessThanOrEqual(min(t.bedMeanMin, 1440 - t.bedMeanMin), 1, "23:30 and 00:30 average to midnight")
+        XCTAssertEqual(t.wakeMeanMin, 7 * 60, accuracy: 1e-6)
+        XCTAssertEqual(t.regularity, 92)
         XCTAssertEqual(t.nights, 10)
+        XCTAssertEqual(t.newestDay, key(1))
+        XCTAssertEqual(t.oldestDay, key(10))
 
-        // Daily-only nights are ignored by the timing pass.
+        // The identical numbers the Sleep tab's readout prints.
+        let readout = BaselineReadouts.sleepTiming(for: today, nights: ten, window: .default)
+        XCTAssertEqual(t.bedMeanMin, readout.averageBedMinutes)
+        XCTAssertEqual(t.wakeMeanMin, readout.averageWakeMinutes)
+        XCTAssertEqual(t.regularity, readout.regularity)
+
+        // Daily-only nights are skipped; under three timed nights there is no window; three nights have
+        // averages but only two consecutive pairs, so no index yet.
         let daily = dailyNights(5) { _ in 420 }
-        XCTAssertEqual(try XCTUnwrap(ProgressSleep.timing(ten + daily)).nights, 10)
-
-        XCTAssertNil(ProgressSleep.timing(sessionNights(6)))
-        XCTAssertNotNil(ProgressSleep.timing(sessionNights(7)))
+        XCTAssertEqual(try XCTUnwrap(ProgressSleep.timing(ten + daily, for: today)).nights, 10)
+        XCTAssertNil(ProgressSleep.timing(timedNights(2), for: today))
+        let three = try XCTUnwrap(ProgressSleep.timing(timedNights(3), for: today))
+        XCTAssertEqual(three.nights, 3)
+        XCTAssertNil(three.regularity)
 
         XCTAssertEqual(ProgressSleep.reading(nights: daily, todayKey: today, horizon: .quarter).regularity, .noTimedNights)
-        XCTAssertEqual(ProgressSleep.reading(nights: sessionNights(4), todayKey: today, horizon: .quarter).regularity, .building(timed: 4))
+        XCTAssertEqual(ProgressSleep.reading(nights: timedNights(2), todayKey: today, horizon: .quarter).regularity, .building(timed: 2))
         guard case .nowOnly(let now, let compareFrom) = ProgressSleep.reading(nights: ten, todayKey: today, horizon: .quarter).regularity else {
             return XCTFail("expected .nowOnly")
         }
         XCTAssertEqual(now, t)
-        XCTAssertEqual(compareFrom, Baselines.cutoffKey(todayKey: ten[6].dayKey, carryDays: -90))
+        XCTAssertEqual(compareFrom, Baselines.cutoffKey(todayKey: ten[2].dayKey, carryDays: -90))
+    }
 
-        XCTAssertNil(ProgressSleep.circularMeanSec([0, 43_200]), "opposite times have no mean direction")
-        XCTAssertEqual(try XCTUnwrap(ProgressSleep.circularMeanSec([3_600, 7_200])), 5_400, accuracy: 1e-6)
+    func testTimingComparison() throws {
+        // 100 nights: the newest 30 at 23:00 sharp, the rest alternating ±45 min. Over 90 days the far
+        // window (the nights on or before the cutoff) scores 1 − 90/1440 → 88; now scores 100.
+        let nights = timedNights(100) { $0 < 30 ? 0 : ($0 % 2 == 0 ? 45 : -45) }
+        let reading = ProgressSleep.reading(nights: nights, todayKey: today, horizon: .quarter).regularity
+        guard case .ready(let now, let then, let delta) = reading else { return XCTFail("expected .ready") }
+        XCTAssertEqual(now.regularity, 100)
+        XCTAssertEqual(then.regularity, 88)
+        XCTAssertEqual(delta, 12)
+        XCTAssertEqual(now.oldestDay, key(30))
+        XCTAssertEqual(then.newestDay, key(90), "the newest night on or before the cutoff")
+        XCTAssertLessThan(then.newestDay, now.oldestDay)
+        XCTAssertEqual(ProgressCopy.timingSentence(reading, horizon: .quarter),
+                       "Your sleep timing is more regular than 90 days ago: 100 of 100, up from 88.")
+        XCTAssertEqual(ProgressCopy.timingTone(reading), .improving)
+
+        // All time: the first 30 nights against the latest 30, so 60 are needed before they compare.
+        guard case .ready(_, let first, _) = ProgressSleep.reading(nights: nights, todayKey: today, horizon: .all).regularity else {
+            return XCTFail("expected .ready")
+        }
+        XCTAssertEqual(first.oldestDay, key(100))
+        XCTAssertEqual(first.newestDay, key(71))
+        guard case .nowOnly = ProgressSleep.reading(nights: timedNights(59), todayKey: today, horizon: .all).regularity else {
+            return XCTFail("59 nights: the windows overlap")
+        }
+        guard case .ready = ProgressSleep.reading(nights: timedNights(60), todayKey: today, horizon: .all).regularity else {
+            return XCTFail("60 nights: two windows")
+        }
     }
 
     func testTimingSentences() {
-        let now = ProgressSleep.Timing(bedMeanSec: 23 * 3600 + 24 * 60, bedSpreadMin: 25, wakeMeanSec: 7 * 3600 + 5 * 60, wakeSpreadMin: 18, nights: 30)
-        let then = ProgressSleep.Timing(bedMeanSec: 23 * 3600 + 51 * 60, bedSpreadMin: 43, wakeMeanSec: 7 * 3600 + 20 * 60, wakeSpreadMin: 31, nights: 30)
-        XCTAssertEqual(ProgressCopy.timingSentence(.ready(now: now, then: then, bedDeltaMin: -18), horizon: .quarter),
-                       "Your bedtime is 18 min steadier than 90 days ago.")
-        XCTAssertEqual(ProgressCopy.timingSentence(.ready(now: now, then: then, bedDeltaMin: 18), horizon: .all),
-                       "Your bedtime is 18 min less steady than your first month.")
-        XCTAssertEqual(ProgressCopy.timingSentence(.ready(now: now, then: then, bedDeltaMin: 3), horizon: .quarter),
-                       "Your bedtime is about as regular as 90 days ago.")
-        XCTAssertEqual(ProgressCopy.timingSentence(.building(timed: 4), horizon: .quarter),
-                       "Bed and wake times settle after 7 strap nights · 4 so far.")
+        let now = ProgressSleep.Timing(bedMeanMin: 23 * 60 + 24, wakeMeanMin: 7 * 60 + 5, regularity: 83,
+                                       nights: 30, newestDay: "2026-02-17", oldestDay: "2026-01-19")
+        let then = ProgressSleep.Timing(bedMeanMin: 23 * 60 + 51, wakeMeanMin: 7 * 60 + 20, regularity: 71,
+                                        nights: 30, newestDay: "2025-11-20", oldestDay: "2025-10-22")
+        let noIndex = ProgressSleep.Timing(bedMeanMin: now.bedMeanMin, wakeMeanMin: now.wakeMeanMin, regularity: nil,
+                                           nights: 4, newestDay: "2026-02-17", oldestDay: "2026-02-13")
+        let clock = BaselineReadouts.clockText(minutes: now.bedMeanMin)
+        let thenClock = BaselineReadouts.clockText(minutes: then.bedMeanMin)
+
+        XCTAssertEqual(ProgressCopy.timingSentence(.ready(now: now, then: then, delta: 12), horizon: .quarter),
+                       "Your sleep timing is more regular than 90 days ago: 83 of 100, up from 71.")
+        XCTAssertEqual(ProgressCopy.timingSentence(.ready(now: now, then: then, delta: -12), horizon: .all),
+                       "Your sleep timing is less regular than your first month: 83 of 100, down from 95.")
+        XCTAssertEqual(ProgressCopy.timingSentence(.ready(now: now, then: then, delta: 3), horizon: .quarter),
+                       "Your sleep timing is about as regular as 90 days ago: 83 of 100.")
+        XCTAssertEqual(ProgressCopy.timingSentence(.ready(now: now, then: then, delta: nil), horizon: .quarter),
+                       "Your bedtime averages \(clock); it was \(thenClock) 90 days ago.")
+        XCTAssertEqual(ProgressCopy.timingSentence(.building(timed: 2), horizon: .quarter),
+                       "Bed and wake times settle after 3 strap nights · 2 so far.")
         XCTAssertEqual(ProgressCopy.timingSentence(.noTimedNights, horizon: .quarter),
                        "Bed and wake times come from nights the strap recorded. Imported nights carry totals only.")
-        let clock = ProgressCopy.clock(sec: now.bedMeanSec)
         XCTAssertEqual(ProgressCopy.timingSentence(.nowOnly(now: now, compareFromDay: "2025-12-17"), horizon: .quarter),
-                       "Your bedtime lands within about 25 min of \(clock). Compare it with 90 days ago from \(ProgressCopy.date("2025-12-17")).")
-        XCTAssertEqual(ProgressCopy.timingSentence(.nowOnly(now: now, compareFromDay: nil), horizon: .all),
-                       "Your bedtime lands within about 25 min of \(clock). Keep wearing the strap and the comparison arrives.")
-        XCTAssertEqual(ProgressCopy.timingTone(.ready(now: now, then: then, bedDeltaMin: -18)), .improving)
-        XCTAssertEqual(ProgressCopy.timingTone(.ready(now: now, then: then, bedDeltaMin: 18)), .worsening)
-        XCTAssertEqual(ProgressCopy.timingTone(.ready(now: now, then: then, bedDeltaMin: 2)), .steady)
-        XCTAssertEqual(ProgressCopy.timingValue(meanSec: now.bedMeanSec, spreadMin: 25), "\(clock) · ±25 min")
-        XCTAssertEqual(ProgressCopy.timingSpoken(label: "Bedtime", meanSec: now.bedMeanSec, spreadMin: 25,
-                                                 wasMeanSec: then.bedMeanSec, wasSpreadMin: 43),
-                       "Bedtime usually \(clock), varying about 25 minutes; was \(ProgressCopy.clock(sec: then.bedMeanSec)) varying 43 minutes.")
+                       "Your bedtime averages \(clock) and your timing scores 83 of 100 for regularity. Compare it with 90 days ago from \(ProgressCopy.date("2025-12-17")).")
+        XCTAssertEqual(ProgressCopy.timingSentence(.nowOnly(now: noIndex, compareFromDay: nil), horizon: .all),
+                       "Your bedtime averages \(clock); regularity scores after 6 strap nights in a row. Keep wearing the strap and the comparison arrives.")
+
+        XCTAssertEqual(ProgressCopy.timingTone(.ready(now: now, then: then, delta: 12)), .improving)
+        XCTAssertEqual(ProgressCopy.timingTone(.ready(now: now, then: then, delta: -5)), .worsening)
+        XCTAssertEqual(ProgressCopy.timingTone(.ready(now: now, then: then, delta: 4)), .steady)
+        XCTAssertEqual(ProgressCopy.timingTone(.ready(now: now, then: then, delta: nil)), .none)
+        XCTAssertEqual(ProgressCopy.timingTone(.nowOnly(now: now, compareFromDay: nil)), .none)
+
+        // The grid: bedtime and wake with the earlier window's clock, then the index once it exists.
+        let rows = ProgressCopy.timingRows(.ready(now: now, then: then, delta: 12))
+        XCTAssertEqual(rows.map(\.label), ["Bedtime", "Wake", "Regularity"])
+        XCTAssertEqual(rows[0].value, clock)
+        XCTAssertEqual(rows[0].was, "was \(thenClock)")
+        XCTAssertEqual(rows[0].spoken, "Bedtime usually \(clock); was \(thenClock).")
+        XCTAssertEqual(rows[2].value, "83 of 100")
+        XCTAssertEqual(rows[2].was, "was 71")
+        XCTAssertEqual(rows[2].spoken, "Regularity 83 of 100; was 71.")
+        let alone = ProgressCopy.timingRows(.nowOnly(now: noIndex, compareFromDay: nil))
+        XCTAssertEqual(alone.map(\.label), ["Bedtime", "Wake"])
+        XCTAssertNil(alone[0].was)
+        XCTAssertEqual(alone[1].spoken, "Wake usually \(BaselineReadouts.clockText(minutes: now.wakeMeanMin)).")
+        XCTAssertTrue(ProgressCopy.timingRows(.building(timed: 2)).isEmpty)
+        XCTAssertTrue(ProgressCopy.timingRows(.noTimedNights).isEmpty)
+    }
+
+    // MARK: - Fitness
+
+    private let profile = ProgressProfile(age: 38, sex: "male")
+
+    /// Nights `range` days ago with resting HR `rhr` and an Effort of 40, oldest first.
+    private func rhrNights(_ range: ClosedRange<Int>, rhr: Int) -> [DailyMetric] {
+        range.reversed().map { Fixtures.metric(key($0), rhr: rhr, strain: 40) }
+    }
+
+    func testFitnessGates() {
+        XCTAssertEqual(ProgressFitness.build(days: [], todayKey: today, horizon: .quarter, profile: profile), .empty)
+        XCTAssertEqual(ProgressFitness.build(days: [Fixtures.metric(key(1), hrv: 60)], todayKey: today, horizon: .quarter, profile: profile),
+                       .empty, "HRV alone is not resting HR")
+        let two = rhrNights(1...2, rhr: 50)
+        XCTAssertEqual(ProgressFitness.build(days: two, todayKey: today, horizon: .quarter, profile: .none), .needsProfile)
+        XCTAssertEqual(ProgressFitness.build(days: two, todayKey: today, horizon: .quarter, profile: ProgressProfile(age: 38, sex: "")),
+                       .needsProfile)
+        XCTAssertEqual(ProgressFitness.build(days: two, todayKey: today, horizon: .quarter, profile: profile), .calibrating(rhrNights: 2))
+
+        // Four nights in the week ending today: the first estimate, and the day its comparison arrives.
+        let four = rhrNights(1...4, rhr: 50)
+        guard case .settling(let firstWeek, let compareFrom, let points) =
+                ProgressFitness.build(days: four, todayKey: today, horizon: .quarter, profile: profile) else {
+            return XCTFail("expected .settling")
+        }
+        XCTAssertEqual(firstWeek, today)
+        XCTAssertEqual(points.count, 1)
+        XCTAssertEqual(points[0].rhrNights, 4)
+        XCTAssertTrue(points[0].fallback, "no waist: VO2 max from the HR ratio")
+        XCTAssertEqual(compareFrom, Baselines.cutoffKey(todayKey: today, carryDays: -90))
+
+        // A row after today is ignored; a waist switches to the Nes estimate.
+        let tomorrow = Fixtures.metric(Fixtures.key(today, minus: -1), rhr: 50)
+        XCTAssertEqual(ProgressFitness.points(days: four + [tomorrow], todayKey: today, profile: profile).count, 1)
+        let waist = ProgressProfile(age: 38, sex: "male", waistCm: 85)
+        XCTAssertEqual(ProgressFitness.points(days: four, todayKey: today, profile: waist).first?.fallback, false)
+    }
+
+    func testFitnessPointsWeekly() throws {
+        // 120 nights: weeks ending today, today − 7, … while a week still has four nights of resting HR.
+        let days = rhrNights(1...120, rhr: 50)
+        let points = ProgressFitness.points(days: days, todayKey: today, profile: profile)
+        XCTAssertEqual(points.count, 17, "today − 0 … today − 112 carry 6–7 nights; today − 119 carries two")
+        XCTAssertEqual(points.last?.weekEnding, today)
+        XCTAssertEqual(points.first?.weekEnding, key(112))
+        XCTAssertEqual(points.map(\.weekEnding), points.map(\.weekEnding).sorted(), "oldest → newest")
+        XCTAssertEqual(points.last?.rhrNights, 6)
+        XCTAssertEqual(points[points.count - 2].rhrNights, 7)
+
+        // Each point is NOOP's own weekly read of those rows.
+        let readout = try XCTUnwrap(BaselineReadouts.fitness(for: today, days: Array(days.suffix(6)), age: 38, sex: "male"))
+        XCTAssertEqual(points.last?.vo2max, readout.vo2max)
+        XCTAssertEqual(points.last?.fitnessAge, readout.result.fitnessAge)
+        XCTAssertEqual(points.last?.chronoAge, 38)
+        for p in points { XCTAssertEqual(p.vo2max, try XCTUnwrap(readout.vo2max), accuracy: 1e-9, "same inputs, same number") }
+        XCTAssertEqual(points[0].trajectory.sigma, ProgressFitness.bandVO2)
+        XCTAssertEqual(points[0].trajectory.baseline, points[0].vo2max)
+    }
+
+    func testFitnessLadder() throws {
+        // Older nights at 60 bpm, the latest 60 at 50: the estimate rises. Over a quarter the anchor is
+        // the newest week on or before the cutoff.
+        let days = rhrNights(61...120, rhr: 60) + rhrNights(1...60, rhr: 50)
+        let s = ProgressFitness.build(days: days, todayKey: today, horizon: .quarter, profile: profile)
+        guard case .ready(let c, let points) = s else { return XCTFail("expected .ready") }
+        XCTAssertEqual(points.count, 17)
+        XCTAssertEqual(c.now.weekEnding, today)
+        XCTAssertEqual(c.then.weekEnding, key(91))
+        XCTAssertFalse(c.namesDate)
+        XCTAssertGreaterThan(c.delta, ProgressFitness.steadyVO2)
+        XCTAssertFalse(c.steady)
+        let sentence = try XCTUnwrap(ProgressCopy.fitnessSentence(s, horizon: .quarter))
+        XCTAssertTrue(sentence.hasPrefix("Your estimated VO2 max is about "), sentence)
+        XCTAssertTrue(sentence.hasSuffix(" mL/kg/min higher than 90 days ago."), sentence)
+        XCTAssertEqual(ProgressCopy.fitnessTone(s), .improving)
+        XCTAssertEqual(s.now, c.now)
+
+        // The chart window runs from the anchor to now.
+        let window = ProgressFitness.window(s, todayKey: today, horizon: .quarter)
+        XCTAssertEqual(window.first?.weekEnding, key(91))
+        XCTAssertEqual(window.count, 14)
+        XCTAssertEqual(ProgressFitness.window(s, todayKey: today, horizon: .all).count, 17)
+
+        // Steady: the same resting HR throughout.
+        let flat = ProgressFitness.build(days: rhrNights(1...120, rhr: 50), todayKey: today, horizon: .quarter, profile: profile)
+        XCTAssertEqual(ProgressCopy.fitnessSentence(flat, horizon: .quarter), "Your estimated VO2 max is about where it was 90 days ago.")
+        XCTAssertEqual(ProgressCopy.fitnessTone(flat), .steady)
+
+        // All time: the first week against the latest; the sentence names the week it landed.
+        let all = ProgressFitness.build(days: days, todayKey: today, horizon: .all, profile: profile)
+        guard case .ready(let ca, _) = all else { return XCTFail("expected .ready") }
+        XCTAssertEqual(ca.then.weekEnding, key(112))
+        XCTAssertTrue(ca.namesDate)
+        XCTAssertEqual(ProgressCopy.fitnessSentence(all, horizon: .all)?.hasSuffix("higher than when it settled on \(ProgressCopy.date(key(112)))."), true)
+
+        // A year: no anchor yet, so settling, naming the day the comparison arrives.
+        guard case .settling(let first, let compareFrom, _) = ProgressFitness.build(days: days, todayKey: today, horizon: .year, profile: profile) else {
+            return XCTFail("expected .settling")
+        }
+        XCTAssertEqual(first, key(112))
+        XCTAssertEqual(compareFrom, Baselines.cutoffKey(todayKey: key(112), carryDays: -365))
+
+        // Paused: the newest estimate is older than the stale window.
+        let gap = ProgressFitness.build(days: rhrNights(21...120, rhr: 50), todayKey: today, horizon: .quarter, profile: profile)
+        guard case .paused(let lastWeek, _) = gap else { return XCTFail("expected .paused") }
+        XCTAssertEqual(lastWeek, key(21))
+        XCTAssertEqual(ProgressCopy.fitnessSentence(gap, horizon: .quarter),
+                       "No fitness estimate since the week to \(ProgressCopy.date(key(21))). It resumes with 4 nights of resting HR in a week.")
+        XCTAssertEqual(ProgressCopy.fitnessTone(gap), .none)
+        XCTAssertEqual(gap.now?.weekEnding, key(21))
+    }
+
+    func testFitnessCopy() throws {
+        let now = ProgressFitness.Point(id: "2026-02-18", date: try XCTUnwrap(TrendsDayKey.date("2026-02-18")), vo2max: 42.4,
+                                        fitnessAge: 33.6, chronoAge: 38, rhrNights: 6, fallback: true)
+        let then = ProgressFitness.Point(id: "2025-11-19", date: try XCTUnwrap(TrendsDayKey.date("2025-11-19")), vo2max: 40.1,
+                                         fitnessAge: 35.2, chronoAge: 38, rhrNights: 7, fallback: false)
+        XCTAssertEqual(ProgressCopy.fitnessAgeCaption(now),
+                       "Fitness age 34 (±5 years) at 38. VO2 max from resting HR and age alone; a waist in Settings › Profile sharpens it.")
+        XCTAssertEqual(ProgressCopy.fitnessAgeCaption(then),
+                       "Fitness age 35 (±5 years) at 38. VO2 max from resting HR, weekly effort and waist, with the age and sex in Settings › Profile.")
+        XCTAssertEqual(ProgressCopy.fitnessNowLabel(now), "Now · week to \(ProgressCopy.date("2026-02-18"))")
+        let c = ProgressFitness.Comparison(then: then, now: now, namesDate: false)
+        XCTAssertEqual(ProgressCopy.fitnessThenLabel(c), "Then · week to \(ProgressCopy.date("2025-11-19"))")
+        XCTAssertTrue(c.steady, "2.3 is under the 3 mL/kg/min floor")
+        XCTAssertEqual(ProgressCopy.fitnessSentence(.ready(comparison: c, points: [then, now]), horizon: .quarter),
+                       "Your estimated VO2 max is about where it was 90 days ago.")
+        let lower = ProgressFitness.Comparison(then: now, now: then, namesDate: true)
+        XCTAssertFalse(ProgressFitness.Comparison(then: then, now: ProgressFitness.Point(id: now.id, date: now.date, vo2max: 44, fitnessAge: 33,
+                                                                                         chronoAge: 38, rhrNights: 6, fallback: true),
+                                                  namesDate: false).steady)
+        XCTAssertEqual(ProgressCopy.fitnessSentence(.ready(comparison: lower, points: []), horizon: .quarter),
+                       "Your estimated VO2 max is about where it was on \(ProgressCopy.date("2026-02-18")).")
+        XCTAssertEqual(ProgressCopy.fitnessSentence(.calibrating(rhrNights: 2), horizon: .quarter),
+                       "Your fitness estimate needs 4 nights of resting HR in a week · 2 this week.")
+        XCTAssertEqual(ProgressCopy.fitnessSentence(.needsProfile, horizon: .quarter),
+                       "Add your date of birth and sex in Settings › Profile for an estimated VO2 max and fitness age.")
+        XCTAssertEqual(ProgressCopy.fitnessSentence(.settling(firstWeek: "2026-02-04", compareFromDay: "2026-05-05", points: []), horizon: .quarter),
+                       "Your first fitness estimate landed the week to \(ProgressCopy.date("2026-02-04")). Compare it with 90 days ago from \(ProgressCopy.date("2026-05-05")).")
+        XCTAssertEqual(ProgressCopy.fitnessSentence(.settling(firstWeek: "2026-02-04", compareFromDay: nil, points: []), horizon: .all),
+                       "Your first fitness estimate landed the week to \(ProgressCopy.date("2026-02-04")). Keep wearing the strap and this line grows.")
+        XCTAssertNil(ProgressCopy.fitnessSentence(.empty, horizon: .quarter))
+        XCTAssertEqual(ProgressCopy.fitnessTone(.calibrating(rhrNights: 2)), .none)
     }
 
     // MARK: - Misc
@@ -701,6 +917,7 @@ final class ProgressModelTests: BaselineEngineTestCase {
         XCTAssertEqual(snap.restingHr, .empty)
         XCTAssertEqual(snap.sleep.duration, .none)
         XCTAssertEqual(snap.sleep.regularity, .noTimedNights)
+        XCTAssertEqual(snap.fitness, .empty)
         XCTAssertNil(snap.recalibratedOn)
 
         let one = ProgressSnapshot.build(days: [Fixtures.metric(key(1), sleepMin: 420)], nights: [], horizon: .quarter, todayKey: today)
