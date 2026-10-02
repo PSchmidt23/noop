@@ -111,7 +111,9 @@ support that story. Nothing clutters it.
   in `WidgetPalette` (the theme is app-target code); change both. Single-entry timeline, `.after(6h)` as a
   safety net for a background publish (the app reloads on every publish, so no shorter schedule). Empty
   state "Open Baseline to sync" until the first publish; gallery previews use `BaselineWidgetSnapshot.gallery`
-  only under `context.isPreview`. Every tap opens `baseline://home`: the `baseline` URL scheme is back in the
+  only under `context.isPreview`. `BaselineWidgets/PrivacyInfo.xcprivacy` is the extension's own
+  manifest (nothing collected, no required-reason API: it only decodes the App Group JSON; update it if
+  that changes). Every tap opens `baseline://home`: the `baseline` URL scheme is back in the
   Baseline Info.plist (`CFBundleURLTypes` in project.yml) and `BaselineRoot` consumes it with `.onOpenURL`.
   `WidgetSnapshotTests` holds the builder against `TodaySnapshot` for a fixture.
 
@@ -125,6 +127,7 @@ support that story. Nothing clutters it.
 | `baseline.compareMetric`, `baseline.compareRange`, `baseline.compareSource` | Compare | last picked metric / window (days, 0 = all) / source |
 | `baseline.morningSummary.enabled`, `baseline.morningSummary.lastDay` | Settings → Notifications, `MorningSummaryNotifier` | morning summary opt-in; the last day one was sent |
 | `baseline.eveningCheckIn.enabled`, `baseline.eveningCheckIn.minutes` | Settings → Notifications | evening check-in opt-in; its time as minutes since midnight |
+| `baseline.sampleData.active` | Settings → About (`SettingsSampleData`), Home's `SampleDataPill`, `BaselineApp` scene-active, `MorningSummaryNotifier` | true while the synthetic 60-night sample (`BaselineSampleData`) is in the store; the read spine is re-pointed at it on every activation and the morning summary is suppressed |
 | `baseline.pendingTab` | `BaselineNotificationDelegate` | `"journal"` → Home with the journal sheet presented on the next root read, cleared once consumed |
 
 ## v1 scope (build this, nothing more)
@@ -194,7 +197,42 @@ first screen). No Baseline screen records a route, so the honest fix is an upstr
 assignment until a route is actually recorded, after which the mode can go. Review notes in
 `Baseline/Store/ReviewNotes.md` should say the mode is unused.
 `Baseline/Store/` (App Store copy, review notes, privacy answers, checklist) is excluded from the bundle
-alongside `ENGINE_MAP.md`, `PRIVACY.md` and `scripts`.
+alongside `ENGINE_MAP.md`, `PRIVACY.md`, `scripts`, `Upstream/` (patch proposals) and `Components/DESIGN.md`.
+Anything else dropped under `Baseline/` that is not Swift or an asset catalog ships inside the app:
+add it to the `excludes` list in `project.yml` and let `release-check.sh` prove it.
+
+### Before a TestFlight build
+
+```bash
+Baseline/scripts/release-check.sh [derivedDataPath]   # default <repo>/.build-baseline-release
+```
+
+Non-interactive, prints one `PASS` / `FAIL` line per check and exits 1 on any failure. It runs
+`xcodegen generate`, then a **clean** **Release** build for `generic/platform=iOS` with `CODE_SIGNING_ALLOWED=NO`
+(arm64, no provisioning touched; clean because an incremental build can leave the embedded `.appex` stale; Release-only mistakes such as a DEBUG-only symbol used outside `#if DEBUG` show
+up here, not in `build.sh`'s Debug simulator build), then inspects
+`Build/Products/Release-iphoneos/Baseline.app`: the embedded `PlugIns/BaselineWidgets.appex`, arm64
+binary, bundle id, `CFBundleShortVersionString` 1.0 (app and widget in lockstep),
+`ITSAppUsesNonExemptEncryption` false, `UILaunchScreen` → `LaunchBackground` (and the colour compiled into
+`Assets.car`), `AppGroupIdentifier`, the `baseline` URL scheme, no NOOP-only plist keys, `PrivacyInfo.xcprivacy`
+in app and widget, `LICENSE` / `NOTICE` / `ATTRIBUTION.md`, the compiled icon (`BaselineIcon60x60@2x.png`:
+the catalog's set is `BaselineIcon`), no repo documents or patches in the bundle, and the entitlements
+(HealthKit + background delivery + App Group in both source files, `APP_GROUP_ID` resolving to
+`group.com.patrickschmidt.baseline`; the device build writes no `.xcent` with signing off, so the simulator
+build's `-Simulated.xcent` is checked when one exists in the same derived data). The full `xcodebuild`
+output is in `<derivedData>/release-check.log`.
+
+Release on the simulator for a smoke run (the app ignores every DEBUG launch argument there, so toggle
+`baseline.onboarded` with `defaults write` to see Home's empty state and the Welcome flow):
+
+```bash
+xcodebuild -project Strand.xcodeproj -scheme Baseline -configuration Release \
+  -destination "platform=iOS Simulator,id=149DD9EE-8D7D-4CC2-B5E8-07DBA768C046" -derivedDataPath <dd> build
+```
+
+What the script cannot do is sign: the first archive on Patrick's Mac needs Xcode (automatic signing,
+team 25RC553RGP) to register the `com.patrickschmidt.baseline` and `.widgets` App IDs with HealthKit and
+the App Group `group.com.patrickschmidt.baseline` in the developer account.
 
 DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch <udid> com.patrickschmidt.baseline …`):
 - `--demo-seed` — NOOP's seeder fills 120 days of synthetic, internally consistent data when the store is empty.

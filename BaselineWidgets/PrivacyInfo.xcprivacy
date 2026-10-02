@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  BaselineWidgets' privacy manifest. The extension links no NOOP package and only decodes the JSON
+  glance the app writes into the App Group (BaselineWidgetStore in Baseline/App/BaselineWidgetSnapshot.swift,
+  Foundation file read, no UserDefaults, no file timestamps, no boot time), so it collects nothing,
+  tracks nothing and calls no required-reason API. Re-check this list if the widget ever reads
+  UserDefaults(suiteName:) or file attributes.
+-->
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>

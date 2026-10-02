@@ -418,6 +418,11 @@ targets:
           - "scripts"
           # App Store copy, review notes and the submission checklist: repo documents, never bundled.
           - "Store"
+          # Upstream patch proposals (git format-patch files + their READMEs) and the design-system
+          # notes: repo documents too. Without these excludes XcodeGen copies them into Baseline.app
+          # (caught by Baseline/scripts/release-check.sh).
+          - "Upstream"
+          - "Components/DESIGN.md"
       # Legal texts for Settings → About. PolyForm Noncommercial requires passing the terms along;
       # the MIT/BSD notices in NOTICE and the credits in ATTRIBUTION.md must accompany the binary too.
       - path: LICENSE

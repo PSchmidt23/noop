@@ -114,6 +114,9 @@ struct BaselineApp: App {
                 BaselineWidgetStore.assertGroupProvisioned()
                 #endif
                 BaselineWidgetPublisher.publish(repo: model.repo, live: model.live)
+                // Sample data: AppModel re-adopts the registry's strap id on every launch, so re-point the read
+                // spine at the sample rows here (whatever tab is showing) and refresh when it actually moved.
+                Task { if BaselineSampleData.applyReadSpine(model.repo) { await model.repo.refresh() } }
                 model.applySmartAlarm()
                 model.ble.requestSync(.foreground)
                 Task { await model.runDeferredRescoreIfOwed() }

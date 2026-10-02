@@ -20,7 +20,11 @@ struct SettingsScreen: View {
             #if DEBUG
             SettingsSection(label: "Developer") { SettingsDeveloperCard() }
             #endif
-            SettingsSection(label: "About") { SettingsAboutCard() }
+            SettingsSection(label: "About") {
+                SettingsAboutCard()
+                // Release-safe stand-in for the DEBUG demo seed: App Review has no strap.
+                SettingsSampleDataCard()
+            }
         }
     }
 }

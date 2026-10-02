@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: Patrick Schmidt <paddyr.schmidt@gmail.com>
+Date: Thu, 01 Oct 2026 19:33:10 -0500
+Subject: [PATCH 1/1] ios: arm allowsBackgroundLocationUpdates only while a route
+ records
+
+GpsWorkoutRecorder set manager.allowsBackgroundLocationUpdates = true in
+init. CoreLocation asserts ("!stayUp || CLClientIsBackgroundable") the
+moment that property is set to true in a process whose Info.plist lacks
+the location UIBackgroundMode, so any host that constructs the recorder
+at launch (AppModel does, unconditionally) but does not declare that
+mode crashes before showing a screen, even though it never records a
+route.
+
+Move the flag to beginUpdates(), which only runs once a workout with a
+route has started and location is authorised, and clear it in a new
+endUpdates() that every stop path (stop, pause, a restore into the paused
+state, a mid-session permission revoke) goes through. NOOPiOS keeps the
+location background mode in project.yml, so its background capture is
+unchanged; the flag is simply true for exactly the span updates are
+streaming instead of for the process lifetime.
+
+---
+ {a => b}/Strand/App/GpsWorkoutRecorder.swift | 33 +++++++++++++++++++++-------
+ 1 file changed, 25 insertions(+), 8 deletions(-)
+
+diff --git a/Strand/App/GpsWorkoutRecorder.swift b/Strand/App/GpsWorkoutRecorder.swift
+index ad7cbb0..aa30b07 100644
+--- a/Strand/App/GpsWorkoutRecorder.swift
++++ b/Strand/App/GpsWorkoutRecorder.swift
+@@ -511,10 +511,10 @@ final class GpsWorkoutRecorder: NSObject, ObservableObject {
+         // of Android's 2 s / 0 m platform request (let the filter, not the platform, do the gating).
+         manager.distanceFilter = 5
+         #if os(iOS)
+-        // Keep the route accruing while the screen is off, matching Android's foreground-service capture.
+-        // Safe only because the iOS target declares the `location` UIBackgroundMode (project.yml); setting
+-        // this without that mode would crash when updates start.
+-        manager.allowsBackgroundLocationUpdates = true
++        // `allowsBackgroundLocationUpdates` is NOT set here: CoreLocation asserts the moment it is set to
++        // true in a process without the `location` UIBackgroundMode, so arming it in `init` crashes any host
++        // that constructs the recorder but never records a route. `beginUpdates()` arms it with the stream
++        // and `endUpdates()` disarms it, so the flag is only ever true while a route is actually recording.
+         manager.pausesLocationUpdatesAutomatically = false
+         manager.activityType = .fitness
+         #endif
+@@ -575,7 +575,7 @@ final class GpsWorkoutRecorder: NSObject, ObservableObject {
+         self.pausedDurationMs = max(0, pausedDurationMs)
+         if let pausedAtMs {
+             self.pausedAtMs = pausedAtMs
+-            manager.stopUpdatingLocation()
++            endUpdates()
+             isRecording = false
+         }
+     }
+@@ -584,7 +584,7 @@ final class GpsWorkoutRecorder: NSObject, ObservableObject {
+     /// whatever was captured, possibly empty). Tears down location updates so no battery is spent after.
+     @discardableResult
+     func stop() -> [RouteMath.LatLng] {
+-        manager.stopUpdatingLocation()
++        endUpdates()
+         isRecording = false
+         // Both End and Discard come through here, so clearing once covers both. `track` is left alone, so
+         // `capturedRoute()` still returns the whole route to whoever is saving it.
+@@ -597,7 +597,7 @@ final class GpsWorkoutRecorder: NSObject, ObservableObject {
+     func pause() {
+         guard isRecording else { return }
+         pausedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+-        manager.stopUpdatingLocation()
++        endUpdates()
+         isRecording = false
+     }
+ 
+@@ -632,9 +632,26 @@ final class GpsWorkoutRecorder: NSObject, ObservableObject {
+         // Wrapped: a Mac with no location services, or an OEM quirk, must never crash the app — just
+         // record nothing. Mirrors Android's try/catch around requestLocationUpdates (#101).
+         guard CLLocationManager.locationServicesEnabled() else { return }
++        #if os(iOS)
++        // Keep the route accruing while the screen is off, matching Android's foreground-service capture.
++        // Armed only now, with the stream, because setting it without the `location` UIBackgroundMode
++        // (declared by the NOOPiOS target in project.yml) traps; a host without that mode that never
++        // records a route must never reach this line.
++        manager.allowsBackgroundLocationUpdates = true
++        #endif
+         manager.startUpdatingLocation()
+     }
+ 
++    /// Stop the location stream and disarm background delivery, the exact inverse of `beginUpdates()`.
++    /// Every path that stops updates (stop, pause, a restore into the paused state, a mid-session
++    /// permission revoke) goes through here so the background flag never outlives the recording.
++    fileprivate func endUpdates() {
++        manager.stopUpdatingLocation()
++        #if os(iOS)
++        manager.allowsBackgroundLocationUpdates = false
++        #endif
++    }
++
+     /// Fold a batch of (already bound-checked at the source) fixes into the route, updating live
+     /// distance/pace. No-op when not recording.
+     fileprivate func ingest(_ fixes: [RawFix]) {
+@@ -707,7 +724,7 @@ extension GpsWorkoutRecorder: @preconcurrency CLLocationManagerDelegate {
+             beginUpdates()
+         case .denied, .restricted:
+             // Revoked mid-session: stop streaming but keep whatever route was captured so far (honest).
+-            manager.stopUpdatingLocation()
++            endUpdates()
+         default:
+             break
+         }
+-- 
+2.50.0
+

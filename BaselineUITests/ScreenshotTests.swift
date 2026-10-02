@@ -175,6 +175,73 @@ final class ScreenshotTests: XCTestCase {
         row.tap()
     }
 
+    // MARK: - Sample data (Release path: no demo seed)
+
+    /// The App Review path: launched WITHOUT the demo seed (an empty store), Settings › About › "Show
+    /// sample data" on, back to Home, which now wears the "Sample data" pill over populated cards
+    /// (`sample-home-0`), then the toggle off again so the simulator's store is left as it was found.
+    func testSampleData() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--skip-onboarding", "--ui-testing"]
+        app.launch()
+        let home = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Today")).firstMatch
+        XCTAssertTrue(home.waitForExistence(timeout: 10), "sample: Today title did not appear")
+        XCTAssertTrue(openSettings(app), "sample: Settings gear did not push Settings")
+
+        let toggle = app.switches["sample-data-toggle"].firstMatch
+        XCTAssertTrue(scrollUntilHittable(app, toggle), "sample: Show sample data toggle did not appear")
+        // A previous run that failed mid-way may have left the sample in the store: start from off.
+        if Self.isOn(toggle) {
+            Self.flip(toggle)
+            XCTAssertTrue(Self.wait(toggle, labelContains: "Off"), "sample: leftover sample data did not clear")
+        }
+        Self.flip(toggle)
+        XCTAssertTrue(Self.wait(toggle, labelContains: "60 made-up nights"), "sample: insert did not finish")
+
+        app.navigationBars.buttons.firstMatch.tap()   // back to Home
+        let pill = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Sample data is shown")).firstMatch
+        let pillShown = pill.waitForExistence(timeout: 20)
+        let ring = app.staticTexts["HRV"].firstMatch
+        let ringShown = ring.waitForExistence(timeout: 20)
+        Thread.sleep(forTimeInterval: 0.8)   // the rings' value arcs animate in
+        try save(XCUIScreen.main.screenshot(), as: "sample-home-0")
+        XCTAssertTrue(pillShown, "sample: Home did not show the Sample data pill (screenshot still written)")
+        XCTAssertTrue(ringShown, "sample: Home did not show the HRV ring (screenshot still written)")
+
+        XCTAssertTrue(openSettings(app), "sample: Settings gear did not push Settings again")
+        XCTAssertTrue(scrollUntilHittable(app, toggle), "sample: toggle did not reappear")
+        Self.flip(toggle)
+        XCTAssertTrue(Self.wait(toggle, labelContains: "Off"), "sample: removal did not finish")
+    }
+
+    private static func isOn(_ toggle: XCUIElement) -> Bool {
+        (toggle.value as? String) == "1"
+    }
+
+    /// Flips a SwiftUI `Toggle` that carries a row label. XCUITest exposes it as an outer `Switch` (the
+    /// whole row, labelled) wrapping the inner UISwitch at the trailing edge; tapping the outer element's
+    /// centre lands on the label text, which does not flip an iOS switch. Tap the inner switch when it
+    /// is exposed, else the row's trailing edge.
+    private static func flip(_ toggle: XCUIElement) {
+        let knob = toggle.switches.firstMatch
+        if knob.exists && knob.isHittable {
+            knob.tap()
+        } else {
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        }
+    }
+
+    /// Waits (up to 30 s) for the switch's folded label (title + subtitle) to contain `text`: the card's
+    /// subtitle reports "Adding 60 nights…" / "Removing…" while a write runs, then the settled state.
+    private static func wait(_ toggle: XCUIElement, labelContains text: String, timeout: TimeInterval = 30) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if toggle.exists, toggle.label.contains(text) { return true }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        return toggle.exists && toggle.label.contains(text)
+    }
+
     // MARK: - Launch
 
     /// The earliest frame XCUITest can grab after launch, before waiting for any card, so the launch

@@ -1,0 +1,173 @@
+From 0000000000000000000000000000000000000002 Mon Sep 17 00:00:00 2001
+From: Patrick Schmidt <paddyr.schmidt@gmail.com>
+Date: Thu, 01 Oct 2026 19:33:10 -0500
+Subject: [PATCH 1/1] repository: opt-in computed-wins precedence for overlapping
+ daily rows
+
+Repository.mergeDaily lets an imported WHOOP/Apple row win field by field
+over the on-device computed row for the same day, and the computed row
+fills only the import's nil fields. That is the right default for a user
+whose history is an export, but a strap worn continuously alongside a
+one-off import then stops reporting its own nights for every overlapping
+day.
+
+Add a computedWins parameter (default false, so nothing changes) that
+flips the precedence per overlapping day: the computed row wins and the
+import fills its nil fields. Days covered by one source only are returned
+as-is either way, and the H5 (#509) edited-night rule still applies on
+top. refresh() reads the flag from a new UserDefaults key
+(Repository.computedWinsDailyMergeDefaultsKey, "daily.computedWinsMerge")
+on the actor and hands the detached merge a plain Bool. No UI sets the
+key yet.
+
+---
+ {a => b}/Strand/Data/Repository.swift | 23 ++++++++++++++++++++---
+ 1 file changed, 20 insertions(+), 3 deletions(-)
+ .../StrandTests/ComputedWinsMergeTests.swift       | 71 ++++++++++++++++++++++
+ 1 file changed, 71 insertions(+)
+
+diff --git a/Strand/Data/Repository.swift b/Strand/Data/Repository.swift
+index adaaaf5..09d9ade 100644
+--- a/Strand/Data/Repository.swift
++++ b/Strand/Data/Repository.swift
+@@ -963,6 +963,10 @@ final class Repository: ObservableObject {
+         let need = await unionMetricSeries(store: store, key: "sleep_need_min", from: fromDay, to: toDay)
+         let debt = await unionMetricSeries(store: store, key: "sleep_debt_min", from: fromDay, to: toDay)
+ 
++        // Opt-in daily precedence (see `mergeDaily(computedWins:)`): read once here, on the actor, so the
++        // detached merge below captures a plain Bool. Absent key → false → the import-wins default.
++        let computedWins = UserDefaults.standard.bool(forKey: Self.computedWinsDailyMergeDefaultsKey)
++
+         // Merge + sort OFF the main actor (FIX 3): the figures build, the two O(n log n) daily/sleep merges,
+         // the source-row sort, and the freshness counts are all pure over the rows just read, so they run in
+         // a detached task and the main actor stays free for SwiftUI during a deep-history refresh.
+@@ -980,7 +984,8 @@ final class Repository: ObservableObject {
+             return MergedCaches(
+                 importedSleep: fig,
+                 days: Self.mergeActivityFileSteps(
+-                    into: Self.mergeDaily(imported: imported, computed: computed, userEditedDays: editedDays),
++                    into: Self.mergeDaily(imported: imported, computed: computed, userEditedDays: editedDays,
++                                          computedWins: computedWins),
+                     activityFile
+                 ),
+                 sleeps: Self.mergeSleep(imported: impSleep, computed: compSleep),
+@@ -1048,18 +1053,24 @@ final class Repository: ObservableObject {
+     /// This preserves official export/import values while allowing fresh local analysis to populate
+     /// Charge, skin temperature deviation, activity totals, or other fields missing from that row.
+     ///
++    /// `computedWins` (default false, the behaviour above) flips that precedence for every overlapping day:
++    /// the on-device computed row wins field-by-field and the import fills only its nil fields, so a strap
++    /// that is worn alongside a one-off WHOOP/Apple import keeps reporting its own nights. Days only one
++    /// source covers are unchanged either way. Read from `computedWinsDailyMergeDefaultsKey` by `refresh()`.
++    ///
+     /// H5 (#509): a day in `userEditedDays` is one the user hand-edited the sleep of (a corrected
+     /// bed/wake time, an added nap, a deleted night). For those days the COMPUTED row's SLEEP fields
+     /// take precedence over the import , otherwise a re-imported WHOOP/Apple night would silently mask
+     /// the user's correction. Non-sleep fields (recovery/strain/HRV/RHR/activity…) still follow the
+     /// normal imports-win merge, and every NON-edited day is unchanged.
+     nonisolated static func mergeDaily(imported: [DailyMetric], computed: [DailyMetric],
+-                                       userEditedDays: Set<String> = []) -> [DailyMetric] {
++                                       userEditedDays: Set<String> = [],
++                                       computedWins: Bool = false) -> [DailyMetric] {
+         var byDay: [String: DailyMetric] = [:]
+         for d in computed { byDay[d.day] = d }
+         for d in imported {
+             if let existing = byDay[d.day] {
+-                let merged = d.fillingNilFields(from: existing)
++                let merged = computedWins ? existing.fillingNilFields(from: d) : d.fillingNilFields(from: existing)
+                 byDay[d.day] = userEditedDays.contains(d.day)
+                     ? merged.takingSleepFields(from: existing)   // edited night: computed sleep wins
+                     : merged
+@@ -1682,6 +1693,12 @@ final class Repository: ObservableObject {
+     /// UserDefaults key holding the dismissed-sleep spans (see `dismissedSleepSpans`).
+     static let dismissedSleepDefaultsKey = "sleep.dismissedSessions"
+ 
++    /// UserDefaults key (Bool, default false) that lets the on-device computed daily row win over an imported
++    /// row on overlapping days in `mergeDaily`. Nothing in the shipped UI sets it yet; it exists so a host
++    /// that treats the strap as the record (rather than a WHOOP/Apple export) can opt in without forking
++    /// the merge. Takes effect on the next `refresh()`.
++    static let computedWinsDailyMergeDefaultsKey = "daily.computedWinsMerge"
++
+     /// Parsed dismissed-sleep windows for the engine's re-detection guard. Malformed / non-positive-width
+     /// entries are dropped so a corrupt value can never hide everything (mirrors `WorkoutSource`'s parser).
+     func dismissedSleepWindows() -> [(start: Int, end: Int)] {
+diff --git b/StrandTests/ComputedWinsMergeTests.swift b/StrandTests/ComputedWinsMergeTests.swift
+new file mode 100644
+index 0000000..0b95502
+--- /dev/null
++++ b/StrandTests/ComputedWinsMergeTests.swift
+@@ -0,0 +1,71 @@
++import XCTest
++import WhoopStore
++@testable import Strand
++
++/// `Repository.mergeDaily(computedWins:)`: the opt-in precedence that lets the on-device computed row win
++/// over an imported row on overlapping days. The default (`false`) must stay byte-for-byte the import-wins
++/// merge `EditMergePrecedenceTests` already guards. Pure (no store).
++final class ComputedWinsMergeTests: XCTestCase {
++
++    /// Default: imports win field-by-field, computed fills only nil import fields (unchanged behaviour).
++    func testDefaultImportWins() {
++        let imported = row(day: "2026-06-12", totalSleepMin: 480, restingHr: nil, avgHrv: 60, recovery: 80)
++        let computed = row(day: "2026-06-12", totalSleepMin: 300, restingHr: 52, avgHrv: 70, recovery: 55)
++
++        let merged = Repository.mergeDaily(imported: [imported], computed: [computed])
++
++        XCTAssertEqual(merged.count, 1)
++        XCTAssertEqual(merged[0].totalSleepMin, 480)
++        XCTAssertEqual(merged[0].avgHrv, 60)
++        XCTAssertEqual(merged[0].recovery, 80)
++        XCTAssertEqual(merged[0].restingHr, 52)   // nil on the import → filled from computed
++    }
++
++    /// Opt-in: computed wins field-by-field, the import fills only nil computed fields.
++    func testComputedWinsFlipsOverlappingDay() {
++        let imported = row(day: "2026-06-12", totalSleepMin: 480, restingHr: 50, avgHrv: 60, recovery: 80)
++        let computed = row(day: "2026-06-12", totalSleepMin: 300, restingHr: nil, avgHrv: 70, recovery: 55)
++
++        let merged = Repository.mergeDaily(imported: [imported], computed: [computed], computedWins: true)
++
++        XCTAssertEqual(merged.count, 1)
++        XCTAssertEqual(merged[0].totalSleepMin, 300)
++        XCTAssertEqual(merged[0].avgHrv, 70)
++        XCTAssertEqual(merged[0].recovery, 55)
++        XCTAssertEqual(merged[0].restingHr, 50)   // nil on the computed row → filled from the import
++    }
++
++    /// Days only one source covers are returned as-is under either precedence.
++    func testSingleSourceDaysUnchanged() {
++        let importedOnly = row(day: "2026-06-11", totalSleepMin: 500, restingHr: 48, avgHrv: 65, recovery: 70)
++        let computedOnly = row(day: "2026-06-13", totalSleepMin: 420, restingHr: 54, avgHrv: 58, recovery: 61)
++
++        for computedWins in [false, true] {
++            let merged = Repository.mergeDaily(imported: [importedOnly], computed: [computedOnly],
++                                               computedWins: computedWins)
++            let byDay = Dictionary(uniqueKeysWithValues: merged.map { ($0.day, $0) })
++            XCTAssertEqual(byDay["2026-06-11"], importedOnly)
++            XCTAssertEqual(byDay["2026-06-13"], computedOnly)
++        }
++    }
++
++    /// H5 (#509) still holds under the opt-in: an edited day keeps the computed row's sleep fields.
++    func testEditedDaySleepStillComputedUnderComputedWins() {
++        let imported = row(day: "2026-06-12", totalSleepMin: 480, restingHr: 50, avgHrv: 60, recovery: 80)
++        let computed = row(day: "2026-06-12", totalSleepMin: nil, restingHr: 52, avgHrv: 70, recovery: 55)
++
++        let merged = Repository.mergeDaily(imported: [imported], computed: [computed],
++                                           userEditedDays: ["2026-06-12"], computedWins: true)
++
++        // A deleted night (nil computed sleep) stays deleted: the edit wins outright, not just on non-nil.
++        XCTAssertNil(merged[0].totalSleepMin)
++        XCTAssertEqual(merged[0].recovery, 55)
++    }
++
++    private func row(day: String, totalSleepMin: Double?, restingHr: Int?, avgHrv: Double?,
++                     recovery: Double?) -> DailyMetric {
++        DailyMetric(day: day, totalSleepMin: totalSleepMin, efficiency: nil, deepMin: nil, remMin: nil,
++                    lightMin: nil, disturbances: nil, restingHr: restingHr, avgHrv: avgHrv,
++                    recovery: recovery, strain: nil, exerciseCount: nil)
++    }
++}
+-- 
+2.50.0
+

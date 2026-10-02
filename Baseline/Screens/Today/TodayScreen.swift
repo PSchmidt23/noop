@@ -43,6 +43,8 @@ struct TodayScreen: View {
     @State private var progressHeadline: String?
     /// Strap-first precedence (`BaselineDays`): part of the reload key so a change in Settings re-reads.
     @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
+    /// Settings › About › "Show sample data": Home wears the "Sample data" pill while it is on.
+    @AppStorage(BaselineSampleData.activeKey) private var sampleDataActive = false
     /// Bumped when the journal sheet closes, so the Signals card's confounders see the new answers.
     @State private var journalSeq = 0
     /// Per-day memo keyed by (day, logical day, `refreshSeq`, data source, horizon); emptied on a new
@@ -136,6 +138,7 @@ struct TodayScreen: View {
     // MARK: Content
 
     @ViewBuilder private var content: some View {
+        if sampleDataActive { SampleDataPill() }
         if !repo.loaded {
             ProgressView()
                 .tint(BaselineTheme.accent)

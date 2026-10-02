@@ -128,6 +128,8 @@ final class MorningSummaryNotifier: ObservableObject {
 
     private func check() async {
         guard defaults.bool(forKey: Self.enabledKey), repo.loaded else { return }
+        // Sample data is synthetic: never summarise it as a real morning (and never burn `lastDay` on it).
+        guard !BaselineSampleData.isActive else { return }
         let clock = now()
         let todayKey = Repository.localDayKey(clock)
         guard defaults.string(forKey: Self.lastDayKey) != todayKey else { return }
