@@ -34,7 +34,7 @@ final class MorningSummaryTests: BaselineEngineTestCase {
         XCTAssertEqual(summary.day, today)
         XCTAssertEqual(summary.body,
                        "HRV 61 ms · inside your band · Resting HR 52 bpm · inside your band · Slept 6h 42m · \u{2212}28 min vs average")
-        XCTAssertNil(summary.subtitle, "readiness needs 14 nights; ten must not fabricate a tier")
+        XCTAssertNil(summary.subtitle, "no stored Readiness score on these rows: no subtitle, never a fabricated one")
     }
 
     func testBandWords_matchTodaysHeroTile() throws {
@@ -58,14 +58,23 @@ final class MorningSummaryTests: BaselineEngineTestCase {
         XCTAssertNil(summary.subtitle)
     }
 
-    /// The tier never appears without its noun: "Readiness · On baseline", the pill's label after the one
-    /// word Today, Trends and the banner share.
-    func testReadinessTier_becomesSubtitle() throws {
-        let days = priorNights(14, hrv: 60) + [Fixtures.metric(today, hrv: 60)]
-        let summary = try XCTUnwrap(MorningSummaryText.build(TodaySnapshot.build(days: days, nights: [], todayKey: today)))
-        XCTAssertEqual(summary.subtitle, ReadinessTier.normal.baselineNotificationSubtitle)
-        XCTAssertEqual(summary.subtitle, "Readiness · " + ReadinessTier.normal.baselineLabel)
-        XCTAssertEqual(summary.subtitle, "Readiness · On baseline")
+    /// The subtitle is the Readiness SCORE Home's card leads with, number and word ("Readiness 72 · Good"),
+    /// read from the same snapshot: one noun, one measure, on the banner and on the tab behind it. The
+    /// seven-night HRV tier (now the HRV tile's week phrase) never takes that noun.
+    func testReadinessScore_becomesSubtitle() throws {
+        let scored = priorNights(14, hrv: 60) + [Fixtures.metric(today, hrv: 60, recovery: 72)]
+        let snap = TodaySnapshot.build(days: scored, nights: [], todayKey: today)
+        guard case .tier = snap.readiness else { return XCTFail("fixture: 15 nights score a week tier") }
+        let summary = try XCTUnwrap(MorningSummaryText.build(snap))
+        XCTAssertEqual(summary.subtitle, snap.readinessScore.summaryLine)
+        XCTAssertEqual(summary.subtitle, "Readiness 72 · Good")
+        for word in ["Primed", "On baseline", "Below your range"] {
+            XCTAssertFalse(summary.subtitle?.contains(word) ?? false, "the tier's words must not share the subtitle's noun")
+        }
+        // Past the seed with no stored score to carry: no subtitle rather than the tier under the same word.
+        let unscored = priorNights(14, hrv: 60) + [Fixtures.metric(today, hrv: 60)]
+        let plain = try XCTUnwrap(MorningSummaryText.build(TodaySnapshot.build(days: unscored, nights: [], todayKey: today)))
+        XCTAssertNil(plain.subtitle)
     }
 
     /// Today's sentence under the pill speaks of the week (the seven-night tier), so it cannot read as

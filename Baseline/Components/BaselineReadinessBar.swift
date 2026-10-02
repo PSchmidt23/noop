@@ -3,9 +3,12 @@ import SwiftUI
 
 /// The Readiness score as a NUMBER with a horizontal track bar, never a ring (trademark guardrail): the
 /// numeral in `hero(36)` with "/ 100" beside it, the tone's pill, then an 8pt capsule track filled to the
-/// score in the tone colour with two hairline ticks at NOOP's band edges (34 / 67) so the reader sees
-/// which third the number sits in. ONE context sentence under the bar (the drivers sentence, or the
-/// confidence caption), never truncated. Flat: lives inside a `BaselineCard`.
+/// score in the tone colour. The track is a plain fill, no marks at NOOP's band edges: tick marks at
+/// 34 / 67 on a 0–100 bar would reproduce WHOOP's published Recovery banding (the one trait a bar can
+/// still copy from a ring), and in `card` white on `ringTrack` they were barely visible anyway. The
+/// judgement lives in the pill and the fill's tone, which come from the engine's `RecoveryScorer.band`
+/// through `ReadinessTone`, so no cut point is spelled here. ONE context sentence under the bar (the
+/// drivers sentence, or the confidence caption), never truncated. Flat: lives inside a `BaselineCard`.
 ///
 /// ```swift
 /// let r = BaselineReadouts.readinessScore(for: day, days: repo.baselineDays)
@@ -19,13 +22,10 @@ struct ReadinessBar: View {
     let label: String
     /// The sentence under the bar (the funnel's drivers sentence or a calibration caption), verbatim.
     var context: String? = nil
-    /// Draw the band ticks (34 / 67). Off for a compact tile.
-    var showsBands: Bool = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let trackHeight: CGFloat = 8
-    private static let bands: [Double] = [34, 67]
 
     private var fraction: Double { min(1, max(0, score / 100)) }
     private var numeral: String { "\(Int(score.rounded()))" }
@@ -65,14 +65,9 @@ struct ReadinessBar: View {
         return s
     }
 
-    private var color: Color {
-        switch tone {
-        case .good: return BaselineTheme.good
-        case .watch: return BaselineTheme.watch
-        case .low: return BaselineTheme.low
-        }
-    }
+    private var color: Color { tone.baselineColor }
 
+    /// The track: a `ringTrack` capsule with a single tone-coloured fill to the score.
     private var track: some View {
         GeometryReader { geo in
             let w = geo.size.width
@@ -82,14 +77,6 @@ struct ReadinessBar: View {
                     .fill(color)
                     .frame(width: max(Self.trackHeight, w * fraction))
                     .animation(reduceMotion ? nil : .snappy(duration: 0.6), value: fraction)
-                if showsBands {
-                    ForEach(Self.bands, id: \.self) { b in
-                        Rectangle()
-                            .fill(BaselineTheme.card)
-                            .frame(width: 2, height: Self.trackHeight)
-                            .offset(x: w * b / 100 - 1)
-                    }
-                }
             }
         }
         .frame(height: Self.trackHeight)

@@ -6,15 +6,20 @@ import Foundation
 /// project.yml), so this file imports only Foundation: no NOOP package, no SwiftUI, no engine type. The
 /// extension stays tiny and never opens the SQLite store. Everything here is pre-resolved by the app from
 /// the SAME funnels Home draws (`TodaySnapshot` over `repo.baselineDays` / `repo.baselineNights()`,
-/// `MetricRingScale` for the arc, `BaselineBand.positionPhrase` and `ReadinessTier.baselineLabel` for the
-/// words), so a widget and the Home tab behind it cannot disagree. The builder that does that lives in
-/// `BaselineWidgetPublisher.swift` (app target only; it needs the engine).
+/// `MetricRingScale` for the arc, `BaselineBand.positionPhrase` and `ReadinessTone.label` for the words,
+/// `TodaySnapshot.readinessScore` for the Readiness number), so a widget and the Home tab behind it
+/// cannot disagree. The builder that does that lives in `BaselineWidgetPublisher.swift` (app target
+/// only; it needs the engine).
 ///
 /// Every value field is optional so a snapshot written by an older build still decodes (Codable fills a
 /// missing optional with nil), the discipline NOOP's `WidgetSnapshot` follows.
 struct BaselineWidgetSnapshot: Codable, Equatable {
-    /// Bumped when the meaning of a field changes; the widget shows the empty state for an unknown version.
-    static let currentVersion = 1
+    /// Bumped when the meaning of a field changes; the widget shows the empty state for a NEWER version
+    /// than it understands, and an older file still decodes (its renamed fields read as nil). 2: Readiness
+    /// became the 0–100 score Home leads with; the v1 seven-night-tier fields (`readinessLabel`,
+    /// `readinessColorName`, `readinessCalibratingNights`) were renamed away so an old file can never
+    /// show "On baseline" as a tone word while the app has yet to republish.
+    static let currentVersion = 2
     var version: Int = currentVersion
 
     /// The local day the snapshot was built for (`Repository.localDayKey(now)`).
@@ -45,15 +50,22 @@ struct BaselineWidgetSnapshot: Codable, Equatable {
     var rhrDeltaText: String?
     var rhrBandPosition: String?
 
-    // MARK: Readiness (the seven-night tier)
-    /// `ReadinessTier.baselineLabel` ("Primed" / "On baseline" / "Below your range"); nil while
-    /// calibrating or stale.
-    var readinessLabel: String?
-    /// The `BaselineTheme` token the tier wears on Home: "good" / "accent" / "watch". The extension maps
+    // MARK: Readiness (the 0–100 score Home leads with)
+    /// NOOP's stored composite for the morning (`TodayReadinessScore.score`, never recomputed), 0–100,
+    /// the number Home's `ReadinessBar` prints; nil while calibrating, stale or missing.
+    var readinessScore: Double?
+    /// `ReadinessTone.label` beside it: "Good" / "Fair" / "Low".
+    var readinessToneLabel: String?
+    /// The `BaselineTheme` token the tone wears on Home: "good" / "watch" / "low". The extension maps
     /// the name to its own literal copy of the colour (`WidgetPalette`).
-    var readinessColorName: String?
-    /// While calibrating: valid nights so far out of `HRVReadiness.minNights` (14).
-    var readinessCalibratingNights: Int?
+    var readinessToneName: String?
+    /// The morning the score is dated to; differs from `dayKey` when Home carries an earlier morning's
+    /// score under the rings' carry rule (and wears its "Woke …" stamp).
+    var readinessDay: String?
+    /// While calibrating: valid nights so far out of `readinessSeedNights` (`BaselineReadouts.readinessSeedNights`,
+    /// 4), Home's "Readiness after 4 nights · 2 so far".
+    var readinessNightsSoFar: Int?
+    var readinessSeedNights: Int?
 
     // MARK: Sleep (last night)
     var sleepMinutes: Double?
@@ -80,7 +92,7 @@ struct BaselineWidgetSnapshot: Codable, Equatable {
 
     /// Nothing to draw yet: no night, no readiness. The widgets show "Open Baseline to sync".
     var isEmpty: Bool {
-        hrvMs == nil && rhrBpm == nil && sleepMinutes == nil && readinessLabel == nil
+        hrvMs == nil && rhrBpm == nil && sleepMinutes == nil && readinessScore == nil
     }
 }
 

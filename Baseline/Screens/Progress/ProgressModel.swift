@@ -408,6 +408,27 @@ struct ProgressProfile: Equatable {
     var hasHeightWeight = false
 
     static let none = ProgressProfile()
+
+    /// The one resolver from the fields `ProfileStore` carries to what the model takes, used by both
+    /// fitness consumers (`ProgressSection` and `BaselineReadouts.fitness(_:profile:for:)`). `entered`
+    /// is `BaselineReadouts.ProfileSet`, the flag Settings › Profile writes: NOOP's store seeds age 30
+    /// and "male" when nothing was ever set, so until the person has entered them the pair is nil and
+    /// `ProgressFitness.build` lands on `.needsProfile` rather than scoring a 30-year-old man. A waist
+    /// of 0 is "none"; height and weight only shade the estimate's confidence, never a number, so their
+    /// engine defaults pass through.
+    static func lifted(age: Int, sex: String, waistCm: Double, heightCm: Double, weightKg: Double,
+                       entered: Bool) -> ProgressProfile {
+        ProgressProfile(age: entered ? age : nil, sex: entered ? sex : nil,
+                        waistCm: waistCm > 0 ? waistCm : nil,
+                        hasHeightWeight: heightCm > 0 && weightKg > 0)
+    }
+
+    /// `lifted(age:sex:waistCm:heightCm:weightKg:entered:)` over the live store.
+    @MainActor
+    static func lifted(from store: ProfileStore, entered: Bool) -> ProgressProfile {
+        lifted(age: store.age, sex: store.sex, waistCm: store.waistCm, heightCm: store.heightCm,
+               weightKg: store.weightKg, entered: entered)
+    }
 }
 
 /// Is the estimated VO2 max moving over months? NOOP's weekly fitness read (`FitnessAgeEngine`, Nes
@@ -458,7 +479,9 @@ enum ProgressFitness {
     enum Status: Equatable {
         /// No night with a resting HR anywhere: the card is not drawn.
         case empty
-        /// Resting HR exists but no age or sex (the pure API; `ProfileStore` always carries both).
+        /// Resting HR exists but no age or sex: the person has not entered them in Settings › Profile
+        /// yet (`BaselineReadouts.ProfileSet` is false, so `ProgressProfile.lifted` passed nil for the
+        /// store's seeded 30 / "male"). The card's sentence asks for them.
         case needsProfile
         /// No week with `FitnessAgeEngine.minCoverageDays` nights of resting HR yet; `rhrNights` is
         /// this week's count.

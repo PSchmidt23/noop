@@ -9,9 +9,9 @@ what they say, and what to resolve before the build goes in.
 ```
 Baseline is a free companion app for a heart-rate strap the user already owns (WHOOP 4.0, 5.0 and MG; independent, not affiliated with the hardware maker). It reads the strap over Bluetooth and shows heart rate variability (HRV) and resting heart rate against the person's own baseline, plus sleep, a habits journal and workouts. Open source (PolyForm Noncommercial 1.0.0), built on the NOOP project.
 
-NO ACCOUNT, NO SERVER. No sign-in, no demo credentials, no network connections at all: no analytics, crash reporting or backend. Everything lives in the app's container on the device and, if the user allows it, in Apple Health.
+NO ACCOUNT, NO SERVER. No sign-in, no demo credentials, no network connections: no analytics, crash reporting or backend. Everything lives in the app's container on the device and, if the user allows it, in Apple Health.
 
-WITHOUT A STRAP. Pairing needs the physical strap, which the review device lacks. TO SEE EVERY SCREEN WITH DATA: Settings (the gear in the top-right of any tab) › About › "Sample data" › turn on "Show sample data". Sixty made-up nights of HRV, resting heart rate, readiness, sleep, workouts and journal answers then fill Home, Trends, Sleep and Workouts, and Home shows a "Sample data" pill. Synthetic, on the device only; the same switch removes it. With it off, every screen shows an empty state saying what appears after the first synced night:
+WITHOUT A STRAP. Pairing needs the physical strap, which the review device lacks. TO SEE EVERY SCREEN WITH DATA: Settings (the gear in the top-right of any tab) › About › "Sample data" › turn on "Show sample data". Sixty made-up nights (HRV, resting heart rate, readiness, sleep, steps, calories, workouts, journal) then fill Home, Trends, Sleep and Workouts; only the stress curve needs a real strap. Home shows a "Sample data" pill; the same switch removes it. Synthetic, on the device only. With it off, every screen shows an empty state saying what appears after the first synced night:
 - Welcome (first launch): three pages; "Continue", "Skip for now" (pairing), "Not now" (Apple Health). No dialog is forced.
 - Home: the strap pill ("Pair" opens the pairing wizard), a "Pair strap" empty state, and the floating "Journal" button (habit chips work without data; stored locally).
 - Trends (charts, Progress, Habits) and Sleep: empty states.
@@ -19,7 +19,7 @@ WITHOUT A STRAP. Pairing needs the physical strap, which the review device lacks
 
 PERMISSIONS. Bluetooth is requested when the user starts pairing a strap; the bluetooth-central background mode keeps a paired strap's sync running. Apple Health read and write are requested only on "Allow" in Welcome or Settings › Apple Health; the app reads sleep, workouts and heart-rate samples and writes back HRV, resting heart rate and sleep, on device. Notifications are requested only when the user turns on the morning summary or evening check-in; both local, at most once a day each; no push.
 
-The "fetch" and "processing" modes run three BGTasks (healthwriteback, rescore, stalebattery): an Apple Health write or re-computation after a background sync, and a warning when the strap has not synced for days. The "location" mode is declared for the engine's outdoor-workout route recorder, which no screen in this build exposes; no location is ever read or stored. No networking.
+The "fetch" and "processing" modes run three BGTasks: an Apple Health write or re-computation after a background sync, and a warning when the strap has not synced for days. The "location" mode is declared for the engine's outdoor-workout route recorder, which no screen in this build exposes; no location is ever read or stored. No networking.
 
 DATA. Nothing is collected or transmitted by the developer or any third party (App Privacy: "Data Not Collected"). No third-party SDKs beyond compiled-in open-source packages (GRDB, ZIPFoundation, swift-markdown-ui). Health data never goes to iCloud.
 
@@ -39,8 +39,10 @@ data" › "Show sample data" (`Baseline/Screens/Sample/BaselineSampleData.swift`
 `Baseline/Screens/Settings/SettingsSampleData.swift`): 60 deterministic nights written through
 WhoopStore's public upserts under the dedicated ids `baseline-sample` (workouts, journal) and
 `baseline-sample-noop` (daily rows, sleep sessions), surfaced by pointing NOOP's repository read id at
-the sample, and removed with `deleteAllData` for exactly those two ids. Home wears a "Sample data" pill
-while it is on. It never touches a strap's, an import's or Apple Health's rows, and nothing from it is
+the sample, and removed with `deleteAllData` for exactly those two ids. Every daily row carries a step
+count and a whole-day calorie estimate, so the Steps card, the Calories cell and Trends' Steps card fill
+in too; the Stress curve is the one card the sample cannot fill (it needs the strap's daytime heart
+rate). Home wears a "Sample data" pill while it is on. It never touches a strap's, an import's or Apple Health's rows, and nothing from it is
 written back to Apple Health (the write-back reads the strap's fixed ids). `SampleDataTests` covers the
 generator and the store round-trip; `ScreenshotTests/testSampleData` walks the reviewer's path and
 captures `sample-home-0`. Check the switch on the TestFlight build before submitting: it is the one
@@ -74,14 +76,16 @@ thing the notes promise.
   Apple Health (requests read/write; skippable). Can be re-run from Settings.
 - **Home:** one day at a time (a day switcher under the bar walks back through stored days, never
   forward past today); strap pill in the bar; readiness as a 0–100 score on a horizontal track with a
-  Good / Steady / Low pill and one sentence naming what lifted or held it back (opens Progress; "after
+  Good / Fair / Low pill and one sentence naming what lifted or held it back (opens Progress; "after
   4 nights" until the engine has them); HRV and resting-heart-rate rings with delta against baseline and
   band position; that night's sleep; that day's effort and workouts ("All workouts" opens the list);
   steps against the 7-day and 30-day average; calories against the 30-day average, rounded to ten;
   a stress curve of the waking hours estimated from heart rate (empty until the strap has banked daytime
   heart rate; the sample data has none); a floating "Journal" button opens the journal sheet for the
-  day: habit chips (catalogue plus custom), "Add habit", Done. Each of these cards carries a small
-  "High / Medium / Low accuracy" pill; tapping it shows the one-line caveat behind the tier.
+  day: habit chips (catalogue plus custom), "Add habit", Done. The Readiness, Steps, Stress and Calories
+  figures carry a small "High / Medium / Low accuracy" pill (the HRV and resting-heart-rate tiles and the
+  sleep card do not on Home; the Sleep tab's cards have their own); tapping it shows the one-line caveat
+  behind the tier.
 - **Trends:** a segmented control over three sections. Trends: 7 / 30 / 90-day segments; HRV and
   resting heart rate lines with the baseline band; sleep duration bars; effort bars; tap for a day's
   numbers; "All workouts" link. Progress: HRV baseline, resting-heart-rate baseline, sleep and sleep

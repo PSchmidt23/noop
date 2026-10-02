@@ -40,7 +40,7 @@ extension BaselineWidgetSnapshot {
         s.hrvMs = 64; s.hrvDay = s.dayKey; s.hrvBaselineMs = 60; s.hrvBandLowMs = 54; s.hrvBandHighMs = 66
         s.hrvRingFraction = 0.58; s.hrvDeltaText = "+4 ms vs baseline · inside your band"; s.hrvBandPosition = "inside"
         s.rhrBpm = 52; s.rhrBaselineBpm = 53; s.rhrDeltaText = "−1 bpm vs baseline · inside your band"; s.rhrBandPosition = "inside"
-        s.readinessLabel = "On baseline"; s.readinessColorName = "accent"
+        s.readinessScore = 72; s.readinessToneLabel = "Good"; s.readinessToneName = "good"; s.readinessDay = s.dayKey
         s.sleepMinutes = 432; s.sleepAverageMinutes = 414; s.sleepDay = s.dayKey
         return s
     }

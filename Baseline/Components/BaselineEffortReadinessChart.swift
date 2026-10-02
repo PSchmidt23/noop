@@ -14,9 +14,14 @@ struct EffortReadinessPoint: Identifiable, Equatable {
 }
 
 /// Effort as amber bars under a Readiness line in the accent, days on the x axis, one 0–100 y axis.
-/// The pairing answers "did yesterday's effort show up in this morning's readiness?" without a second
-/// scale to misread. Light: `BaselineChartStyle` axes, the bars at `barOpacity`, the line at `lineWidth`,
-/// a small legend of two 6pt dots under the plot. Flat; inside a card titled "Effort and Readiness".
+/// A bar and the line point on one day are that morning's score and the effort that followed it, so
+/// the chart answers "did you push harder than you were ready for?"; the morning after a hard day is
+/// the line one day to the right. The axis is shared so there is no second scale to misread, not
+/// because the two numbers compare (effort is a log of training load, readiness a composite anchored
+/// near 58): a sentence that relates them belongs in the host card, worded as the lag, effort on day
+/// D against readiness on D+1. Light: `BaselineChartStyle` axes, the bars at `barOpacity`, the line
+/// at `lineWidth`, a small legend of two 6pt dots under the plot. Flat; inside a card titled
+/// "Effort and Readiness".
 ///
 /// ```swift
 /// let days = repo.baselineDays.suffix(30)

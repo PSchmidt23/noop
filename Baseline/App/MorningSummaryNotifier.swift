@@ -16,7 +16,8 @@ struct MorningSummary: Equatable {
     /// The newest morning any of the three facts is dated to (`TodaySnapshot`'s own day keys). The
     /// notifier only posts when this is today's key.
     let day: String
-    /// `ReadinessTier.baselineNotificationSubtitle` ("Readiness · On baseline"), nil while calibrating or stale.
+    /// `TodayReadinessScore.summaryLine` ("Readiness 72 · Good"), the score Home's card leads with; nil
+    /// while it is calibrating, stale or missing (never the seven-night HRV tier under the same noun).
     let subtitle: String?
     /// e.g. "HRV 89 ms · inside your band · Resting HR 57 bpm · inside your band · Slept 6h 42m · +18 min vs average"
     let body: String
@@ -47,10 +48,7 @@ enum MorningSummaryText {
             days.append(sleep.day)
         }
         guard let day = days.max(), !parts.isEmpty else { return nil }
-
-        var subtitle: String?
-        if case .tier(let tier) = s.readiness { subtitle = tier.baselineNotificationSubtitle }
-        return MorningSummary(day: day, subtitle: subtitle, body: parts.joined(separator: separator))
+        return MorningSummary(day: day, subtitle: s.readinessScore.summaryLine, body: parts.joined(separator: separator))
     }
 
     /// "HRV 89 ms · inside your band", or the calibrating count in Today's words while the baseline is

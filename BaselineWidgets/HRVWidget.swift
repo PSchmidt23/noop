@@ -1,8 +1,9 @@
 import WidgetKit
 import SwiftUI
 
-/// Home Screen widget. Small: the HRV ring with the number, "ms", the one context line and the readiness
-/// pill. Medium: the HRV ring beside Resting HR and last night's sleep. One ring only, never a triad.
+/// Home Screen widget. Small: the Readiness pill Home leads with ("Readiness 72 · Good"), then the HRV
+/// ring with the number, "ms", the one context line. Medium: the HRV ring beside Readiness, Resting HR
+/// and last night's sleep. One ring only, never a triad; Readiness is a number and a word, never a ring.
 struct HRVWidget: Widget {
     static let kind = "com.patrickschmidt.baseline.widgets.hrv"
 
@@ -37,14 +38,12 @@ struct HRVWidgetView: View {
 
     private func small(_ snap: BaselineWidgetSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("HRV").font(WidgetPalette.label).foregroundStyle(WidgetPalette.textTertiary)
-                Spacer()
-                readinessPill(snap)
-            }
+            // Home's order: Readiness first, then the HRV ring with its name and baseline beside it.
+            readinessPill(snap)
             HStack(spacing: 10) {
                 ring(snap, size: 64, numeral: 22)
                 VStack(alignment: .leading, spacing: 2) {
+                    Text("HRV").font(WidgetPalette.label).foregroundStyle(WidgetPalette.textTertiary)
                     if let b = snap.hrvBaselineMs {
                         Text("Baseline \(WidgetFormat.whole(b))")
                             .font(WidgetPalette.caption2).foregroundStyle(WidgetPalette.textTertiary)
@@ -68,7 +67,7 @@ struct HRVWidgetView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .leading, spacing: 10) {
-                readinessPill(snap)
+                readinessStat(snap)
                 stat("Resting HR", value: WidgetFormat.whole(snap.rhrBpm), unit: "bpm", color: WidgetPalette.rhr,
                      caption: snap.rhrBaselineBpm.map { "Baseline \(WidgetFormat.whole($0))" })
                 stat("Sleep", value: snap.sleepMinutes.map { WidgetFormat.duration(minutes: $0) } ?? "–", unit: nil,
@@ -93,24 +92,60 @@ struct HRVWidgetView: View {
         .frame(width: size, height: size)
     }
 
-    /// Readiness as a pill and a label, as Home shows it: filled in the tier's colour; a quiet
-    /// "Calibrating" chip while the seven-night tier has too few nights.
+    /// Readiness as Home's number and word under their noun, one filled pill in the tone's colour
+    /// ("Readiness 72 · Good", the lock screen's and the morning summary's line); a quiet "Readiness 2/4"
+    /// chip while the score is still calibrating; a quiet "Readiness –" while it is stale or missing (the
+    /// HRV line below already says what is being waited for). Never the seven-night HRV tier.
     @ViewBuilder
     private func readinessPill(_ snap: BaselineWidgetSnapshot) -> some View {
-        if let label = snap.readinessLabel {
-            Text(label)
+        if let score = snap.readinessScore, let label = snap.readinessToneLabel {
+            Text("Readiness \(WidgetFormat.whole(score)) · \(label)")
                 .font(WidgetPalette.caption2.weight(.semibold))
                 .foregroundStyle(WidgetPalette.onAccent)
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(Capsule().fill(WidgetPalette.named(snap.readinessColorName)))
-                .lineLimit(1).minimumScaleFactor(0.8)
-        } else if let n = snap.readinessCalibratingNights {
-            Text("Readiness \(n)/14")
-                .font(WidgetPalette.caption2)
-                .foregroundStyle(WidgetPalette.textTertiary)
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(Capsule().fill(WidgetPalette.ringTrack))
-                .lineLimit(1)
+                .background(Capsule().fill(WidgetPalette.named(snap.readinessToneName)))
+                .lineLimit(1).minimumScaleFactor(0.85)
+                .accessibilityLabel("Readiness \(WidgetFormat.whole(score)) of 100, \(label)")
+        } else if let n = snap.readinessNightsSoFar, let seed = snap.readinessSeedNights {
+            quietChip("Readiness \(n)/\(seed)")
+        } else {
+            quietChip("Readiness –")
+        }
+    }
+
+    private func quietChip(_ text: String) -> some View {
+        Text(text)
+            .font(WidgetPalette.caption2)
+            .foregroundStyle(WidgetPalette.textTertiary)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(WidgetPalette.ringTrack))
+            .lineLimit(1)
+    }
+
+    /// The medium family's Readiness row, shaped like the stats under it: the "Readiness" label, the
+    /// numeral in ink beside the tone's pill (Home's `ReadinessBar` without the track); the calibrating
+    /// count in Home's words; "–" while there is no score.
+    private func readinessStat(_ snap: BaselineWidgetSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("Readiness").font(WidgetPalette.caption2).foregroundStyle(WidgetPalette.textTertiary)
+            if let score = snap.readinessScore, let label = snap.readinessToneLabel {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(WidgetFormat.whole(score)).font(WidgetPalette.stat).monospacedDigit().foregroundStyle(WidgetPalette.text)
+                    Text(label)
+                        .font(WidgetPalette.caption2.weight(.semibold))
+                        .foregroundStyle(WidgetPalette.onAccent)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Capsule().fill(WidgetPalette.named(snap.readinessToneName)))
+                        .lineLimit(1)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Readiness \(WidgetFormat.whole(score)) of 100, \(label)")
+            } else if let n = snap.readinessNightsSoFar, let seed = snap.readinessSeedNights {
+                Text("After \(seed) nights · \(n) so far")
+                    .font(WidgetPalette.caption2).foregroundStyle(WidgetPalette.textSecondary).lineLimit(1)
+            } else {
+                Text("–").font(WidgetPalette.stat).foregroundStyle(WidgetPalette.textTertiary)
+            }
         }
     }
 

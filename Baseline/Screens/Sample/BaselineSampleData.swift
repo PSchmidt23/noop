@@ -9,8 +9,12 @@ import WhoopStore
 // anchor day = today): 60 nights of internally consistent synthetic data. HRV drifts slowly upward
 // around a personal baseline with nightly noise; resting HR moves inversely to that night's HRV; sleep
 // is 6–8 h with a light/deep/REM timeline the hypnogram can draw; a few workouts a week carry an
-// effort; the last month has journal answers (alcohol, late caffeine, stress) that HRV reacts to, so
-// Trends › Habits ranks something. Nothing here is real biometric data.
+// effort; every day carries a step count (higher on training days) and NOOP's whole-day calorie
+// estimate (`activeKcalEst`, resting + active, following the steps and that day's workouts), so Home's
+// Steps card, the Calories cell and Trends' Steps card fill in; the last month has journal answers
+// (alcohol, late caffeine, stress) that HRV reacts to, so Trends › Habits ranks something. Steps and
+// calories draw from their own fixed-seed stream (`activitySeedSalt`), so adding them left every other
+// column of the dataset byte-identical. Nothing here is real biometric data.
 //
 // WHERE IT LIVES. Every row goes through WhoopStore's PUBLIC upserts under TWO dedicated device ids and
 // nothing else: the daily table and the sleep sessions under `computedDeviceId` ("baseline-sample-noop"),
@@ -30,7 +34,10 @@ import WhoopStore
 // `workoutNamespaces`, the journal through `importedReadIds`. The real "my-whoop" history stays in
 // the union beneath (the sample wins a shared day while it is on). The re-point is in-memory: AppModel
 // re-adopts the registry's active id on every launch, so `SampleDataPill` (on Home while the flag is
-// on) re-applies it and refreshes until the two agree.
+// on) re-applies it and refreshes until the two agree. Steps reach Home through the funnel's `steps`
+// column (`BaselineReadouts.stepReadings` falls back to it for days NOOP's strap → phone → estimate
+// resolver has no metric-series point for; the sample writes none), calories through `activeKcalEst`.
+// The Stress curve is the one card the sample cannot fill: it needs the strap's daytime heart rate.
 enum BaselineSampleData {
 
     /// Workouts and journal answers live under this id.
@@ -45,6 +52,8 @@ enum BaselineSampleData {
     static let nights = 60
     /// The fixed seed; the dataset for one anchor day is the same on every device and every run.
     static let seed: UInt64 = 0xBA5E_11E5
+    /// XORed into `seed` for the steps / calories stream, which runs beside the main one.
+    static let activitySeedSalt: UInt64 = 0x57E9_5CA1
 
     /// True while the sample rows are in the store (the flag `setActive` writes).
     static var isActive: Bool { UserDefaults.standard.bool(forKey: activeKey) }
@@ -72,6 +81,7 @@ enum BaselineSampleData {
     /// anchor day and calendar give the same rows, byte for byte.
     static func generate(anchor: Date = Date(), calendar: Calendar = .current) -> Dataset {
         var rng = BaselineSampleRNG(seed: seed)
+        var activityRng = BaselineSampleRNG(seed: seed ^ activitySeedSalt)
         let start = calendar.date(byAdding: .day, value: -(nights - 1), to: calendar.startOfDay(for: anchor))!
 
         var days: [DailyMetric] = []
@@ -123,12 +133,11 @@ enum BaselineSampleData {
             let strain = (nWorkouts == 0 ? gauss(&rng, 28, 6)
                           : 52 + Double(nWorkouts - 1) * 12 + gauss(&rng, 0, 7)).clamped(8, 95)
 
-            days.append(DailyMetric(
-                day: day, totalSleepMin: round1(totalSleep), efficiency: round1(efficiency),
-                deepMin: round1(deep), remMin: round1(rem), lightMin: round1(light),
-                disturbances: disturbances, restingHr: rhr, avgHrv: round1(hrv),
-                recovery: round1(recovery), strain: round1(strain), exerciseCount: nWorkouts,
-                spo2Pct: nil, skinTempDevC: round2(skinTempDev), respRateBpm: round1(resp)))
+            // Steps: a daily count that rises on training days and a little at the weekend.
+            let steps = Int(gauss(&activityRng, 7_400 + Double(nWorkouts) * 2_600 + (weekend ? 900 : 0), 1_700)
+                .clamped(2_000, 19_000).rounded())
+            // The day row is appended after the workouts below, so its calorie estimate can include them.
+            var dayWorkoutKcal = 0.0
 
             // The night ending on `day`: onset the previous evening around 23:00, with a stage timeline.
             let previousDay = calendar.date(byAdding: .day, value: -1, to: date)!
@@ -152,16 +161,31 @@ enum BaselineSampleData {
                 let maxHr = avgHr + Int(gauss(&rng, 24, 5).clamped(14, 36))
                 let zones = [gauss(&rng, 14, 4), gauss(&rng, 30, 7), gauss(&rng, 30, 7), gauss(&rng, 18, 6), gauss(&rng, 8, 3)]
                     .map { $0.clamped(0, 100) }
+                let energyKcal = round1(durationSec / 60 * gauss(&rng, 8.5, 1.5).clamped(5, 12))
+                dayWorkoutKcal += energyKcal
                 workouts.append(WorkoutRow(
                     startTs: startTs, endTs: startTs + Int(durationSec), sport: sport, source: deviceId,
                     durationS: durationSec,
-                    energyKcal: round1(durationSec / 60 * gauss(&rng, 8.5, 1.5).clamped(5, 12)),
+                    energyKcal: energyKcal,
                     avgHr: avgHr, maxHr: maxHr,
                     strain: round1((strain * gauss(&rng, 0.65, 0.08)).clamped(10, 95)),
                     distanceM: distanceSports.contains(sport) ? round1(gauss(&rng, 6000, 2000).clamped(1500, 14000)) : nil,
                     zonesJSON: "{\"zone1\":\(round1(zones[0])),\"zone2\":\(round1(zones[1])),\"zone3\":\(round1(zones[2])),\"zone4\":\(round1(zones[3])),\"zone5\":\(round1(zones[4]))}",
                     notes: nil, steps: nil))
             }
+
+            // Calories: NOOP's whole-day HR-only estimate (resting + active): a resting floor, the steps,
+            // the day's workouts and a little noise. Never below the workouts it contains.
+            let activeKcal = round1((1_640 + Double(steps) * 0.032 + dayWorkoutKcal + gauss(&activityRng, 0, 45))
+                .clamped(1_500, 4_000))
+
+            days.append(DailyMetric(
+                day: day, totalSleepMin: round1(totalSleep), efficiency: round1(efficiency),
+                deepMin: round1(deep), remMin: round1(rem), lightMin: round1(light),
+                disturbances: disturbances, restingHr: rhr, avgHrv: round1(hrv),
+                recovery: round1(recovery), strain: round1(strain), exerciseCount: nWorkouts,
+                spo2Pct: nil, skinTempDevC: round2(skinTempDev), respRateBpm: round1(resp),
+                steps: steps, activeKcalEst: activeKcal))
         }
         return Dataset(days: days, sleeps: sleeps, workouts: workouts, journal: journal)
     }

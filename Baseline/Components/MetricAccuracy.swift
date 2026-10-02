@@ -12,6 +12,10 @@ struct MetricAccuracy: Identifiable, Equatable {
         /// "High accuracy" / "Medium accuracy" / "Low accuracy" (the badge's text).
         var label: String { rawValue.capitalized + " accuracy" }
 
+        /// "High" / "Medium" / "Low": the badge's text at accessibility type sizes, where the full label
+        /// beside a card title would truncate to "Low accura…". VoiceOver always gets `label`.
+        var shortLabel: String { rawValue.capitalized }
+
         /// The badge's dot: good for High, the accent for Medium, watch for Low. Text is always ink.
         var color: Color {
             switch self {
@@ -87,6 +91,7 @@ struct AccuracyBadge: View {
     /// Names the metric in the popover's title and the accessibility label ("Calories: Low accuracy").
     var name: String? = nil
     @State private var showCaveat = false
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     init(tier: MetricAccuracy.Tier, caveat: String? = nil, name: String? = nil) {
         self.tier = tier
@@ -130,7 +135,7 @@ struct AccuracyBadge: View {
     private var pill: some View {
         HStack(spacing: 5) {
             Circle().fill(tier.color).frame(width: 6, height: 6).accessibilityHidden(true)
-            Text(tier.label)
+            Text(typeSize.isAccessibilitySize ? tier.shortLabel : tier.label)
                 .font(BaselineTheme.caption.weight(.semibold))
                 .foregroundStyle(BaselineTheme.text)
                 .lineLimit(1)

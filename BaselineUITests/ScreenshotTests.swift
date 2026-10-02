@@ -3,7 +3,7 @@ import XCTest
 
 /// Screenshot harness: one test per Baseline screen — the three tabs (`home`, `trends`, `sleep`), the
 /// journal sheet over Home (`journal`, via Home's "Journal" button), Settings (`settings`, via the gear) and
-/// its Devices / Apple Health / Import / Compare / Export pushes, Trends' embedded Progress and Habits
+/// its Devices / Apple Health / Import / Compare / Export / Accuracy pushes, Trends' embedded Progress and Habits
 /// sections (via the pinned segments), Workouts and its detail — plus the three welcome steps and the launch
 /// frame. Each test launches the app with its DEBUG launch arguments (`--tab home|trends|sleep`, always with
 /// `--ui-testing`, which pins the tab bar so a scrolled capture is deterministic),
@@ -33,7 +33,7 @@ final class ScreenshotTests: XCTestCase {
     }
 
     func testSleep() throws {
-        try captureTab("sleep", firstCard: "Stages")
+        try captureTab("sleep", firstCard: "Sleep timing")
     }
 
     /// Home → the floating "Journal" button → `JournalSheet` at its medium detent (the journal is not a
@@ -158,6 +158,16 @@ final class ScreenshotTests: XCTestCase {
         try openSettingsRow(app, "Export CSV")
         try capturePushed(app, screen: "export", title: "Export",
                           firstCard: NSPredicate(format: "label == %@", "CSV export"))
+    }
+
+    /// Settings → About → "How accurate is this?": the Accuracy screen, one card per evidence tier
+    /// (High / Medium / Low accuracy) listing every metric with its caveat and the studies behind it. The
+    /// row sits in the About card at the foot of Settings, so the row lookup scrolls down to it.
+    func testAccuracy() throws {
+        let app = launchSettings()
+        try openSettingsRow(app, "How accurate is this?")
+        try capturePushed(app, screen: "accuracy", title: "Accuracy",
+                          firstCard: NSPredicate(format: "label == %@", "High accuracy"))
     }
 
     /// Home with Settings pushed from the gear in the bar (every tab root carries it; Home is the launch
@@ -294,10 +304,13 @@ final class ScreenshotTests: XCTestCase {
 
     /// Launches the seeded app on `tab` (`home`, `trends` or `sleep`) with onboarding skipped (and
     /// `--ui-testing`, which pins the tab bar so the scroll loop never sees it animating) and waits for the
-    /// navigation title that `--tab` lands on.
+    /// navigation title that `--tab` lands on. `-baseline.profileSet YES` seeds Settings › Profile's
+    /// "entered" flag through UserDefaults' argument domain, so Progress' Fitness card estimates from the
+    /// demo profile instead of asking for a date of birth and sex.
     private func launchTab(_ tab: String, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--tab", tab, "--ui-testing"] + extraArguments
+        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--tab", tab, "-baseline.profileSet", "YES", "--ui-testing"]
+            + extraArguments
         app.launch()
         let expected = Self.launchTitle(for: tab)
         let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", expected)).firstMatch

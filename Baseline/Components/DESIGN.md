@@ -3,10 +3,10 @@
 The single reference for every screen builder. Everything a screen renders comes from the tokens and
 components in `Baseline/Components/`; screens never spell a colour, a font size or a corner radius, and
 never compute a baseline, band or average (those come from `BaselineReadouts` / `BaselineReadiness` /
-the snapshot models). Vocabulary: **HRV / Resting HR / Readiness / Sleep / Effort / Journal**; WHOOP
-only nominatively. Trademark guardrail: at most two `MetricRing`s on one screen (Home: HRV and Resting
-HR, each in its own tile); the Sleep ring lives on the Sleep tab; Readiness is a pill and a sentence,
-never a ring. Platform: iOS 26.0 (`project.yml` deployment target for Baseline, BaselineTests,
+the snapshot models). Vocabulary: **HRV / Resting HR / Readiness / Sleep / Effort / Steps / Calories /
+Stress / Journal**; WHOOP only nominatively. Trademark guardrail: at most two `MetricRing`s on one screen (Home: HRV and Resting
+HR, each in its own tile); the Sleep ring lives on the Sleep tab; Readiness is a number on a horizontal
+track bar (`ReadinessBar`), never a ring. Platform: iOS 26.0 (`project.yml` deployment target for Baseline, BaselineTests,
 BaselineUITests). No availability checks anywhere.
 
 ## Information architecture (owner decision; overrides the spec's screen list where they conflict)
@@ -17,7 +17,7 @@ Journal is NOT a tab.
 
 | Tab | Root | Structure |
 |---|---|---|
-| Home | `Screens/Today/TodayScreen.swift` (struct name may stay `TodayScreen`; tab label "Home") | Day-by-day like WHOOP: nav title = the selected day (`BaselineDaySwitcher.title(for:)`), `BaselineDaySwitcher(style: .glass)` pinned under the bar, `.baselineDaySwipe` on the content; every card shows THAT day (readiness card with the Progress chevron, HRV + Resting HR rings, that night's sleep, that day's effort + workouts, Signals on today only); a floating `GlassCTA(title: "Journal", systemImage: "checklist", fullWidth: false)` opens `JournalSheet(day:)` for the selected day; `StrapStatusPill` stays in the toolbar beside the gear |
+| Home | `Screens/Today/TodayScreen.swift` (struct name may stay `TodayScreen`; tab label "Home") | Day-by-day like WHOOP: nav title = the selected day (`BaselineDaySwitcher.title(for:)`), `BaselineDaySwitcher(style: .glass)` pinned under the bar, `.baselineDaySwipe` on the content; every card shows THAT day, in this order: the Readiness score on its track (`ReadinessCard`, with the Progress chevron), Signals on today only, HRV + Resting HR rings, that day's steps (`StepsCard`: "Steps so far" on today), that night's sleep (`LastNightCard`), that day's Stress curve (`StressCard`), that day's effort + calories + workouts (`EffortCard`); a floating `GlassCTA(title: "Journal", systemImage: "checklist", fullWidth: false)` opens `JournalSheet(day:)` for the selected day; `StrapStatusPill` stays in the toolbar beside the gear |
 | Trends | `Screens/Trends/TrendsScreen.swift` | `BaselineSegmentedPicker(style: .glass)` pinned under the bar over THREE sections: "Trends" (the metric charts; the 7D/30D/90D `BaselineRangePicker(style: .flat)` at the top of the section content), "Progress" (`ProgressScreen`'s body embedded as a section, its horizon picker `.flat`), "Habits" (`JournalPatternsView()`). The Effort card keeps the "All workouts" `BaselineChevronRow` → `WorkoutsScreen()` |
 | Sleep | `Screens/Sleep/SleepScreen.swift` | unchanged structure, restyled |
 
@@ -421,9 +421,11 @@ All of it is `extension BaselineReadouts`, over the funnel's rows (`repo.baselin
 
 ```swift
 // Readiness: NOOP's 0–100 composite (DailyMetric.recovery) with NOOP's bands (< 34 low · < 67 watch · else good)
-let r = BaselineReadouts.readinessScore(for: day, days: repo.baselineDays)      // nil until the row has a score
-r.score, r.scoreText, r.tone (ReadinessTone .good/.watch/.low), r.tone.label ("Good" / "Steady" / "Low"),
-r.confidence (.building until 14 nights, then .solid), r.drivers ([ChargeDriver]), r.driversSentence
+let r = BaselineReadouts.readinessScore(for: day, days: repo.baselineDays,     // nil until the row has a score
+                                        strapScores: BaselineReadouts.strapScores(repo.vitalRows))   // the strap's own scores by day (nil = no per-source rows)
+r.score, r.scoreText, r.tone (ReadinessTone .good/.watch/.low), r.tone.label ("Good" / "Fair" / "Low": the word says what the colour says),
+r.confidence (.calibrating while the HRV baseline is not yet usable for that morning, .building until 14 nights, then .solid),
+r.drivers ([ChargeDriver]), r.driversSentence   // only when the score is the strap's own: an imported score keeps its number and gets no drivers
 // "Lifted by heart rate variability (+6), held back by resting heart rate (−3)."  (label + points only, never NOOP's verdict text)
 BaselineReadouts.readinessCalibrationNights(for: day, days: days)   // "N of 4" while there is no score; nil otherwise
 BaselineReadouts.readinessSeedNights                                 // 4
@@ -433,11 +435,11 @@ BaselineReadouts.readinessTone(_ score: Double) -> ReadinessTone
 let s = await BaselineReadouts.steps(repo, for: day)                 // @MainActor; strap counter → phone → strap estimate, then the funnel's `steps` column
 s.steps, s.average7, s.average30, s.observed7, s.observed30, s.recent (7 days ending on `day`, nil = not recorded), s.delta(against:)
 BaselineReadouts.steps(for: day, readings: [(day, value)])            // the pure form (tests)
-BaselineReadouts.stepReadings(repo, from:, to:)                      // the resolution itself; imports-only mode reads the phone's series alone
+BaselineReadouts.stepReadings(repo, from:, to:)                      // the resolution itself; imports-only keeps the phone's points alone (the strap's computed steps NOOP's resolver appends are filtered out: stepReadings(mode:resolved:funnel:from:to:))
 BaselineReadouts.stepsText(8_412) == "8,412"; stepsDeltaText(steps:average:windowLabel:) // "+1,240 vs your 7‑day average" / "On your 7‑day average" (±5%)
 
 // Calories: NOOP's whole-day HR-only estimate (active_kcal), vs the 30 days before; rounded to 10, never to the kcal
-let c = BaselineReadouts.calories(for: day, days: repo.baselineDays)  // c.kcal, c.average30, c.observed30, c.delta
+let c = BaselineReadouts.calories(for: day, days: repo.baselineDays, logicalKey: logicalKey)  // c.kcal, c.average30, c.observed30, c.delta; today's logicalKey = NOOP's 04:00-rollover day, the Effort cell's row (Repository.resolveToday)
 BaselineReadouts.caloriesText(2_143) == "2,140"; caloriesDeltaText(kcal:average:)
 
 // Stress: a day's hourly 0–3 curve (NOOP DaytimeStress, day-relative), nil when the strap banked no daytime HR
@@ -451,7 +453,8 @@ let t = BaselineReadouts.sleepTiming(for: day, nights: nights)       // nights =
 t.nights ([SleepTiming.Night] day/bed/wake, newest first, ≤ 30), t.averageBedMinutes, t.averageWakeMinutes (minutes after midnight),
 t.regularity (0–100 over the last 14 nights; nil under 5 consecutive-night pairs), t.target (SleepWindow), t.nightsInWindow, t.nightsCounted
 BaselineReadouts.SleepWindow.stored()  // UserDefaults "baseline.sleepWindow.bedMinutes" / "wakeMinutes", defaults 23:00 / 07:00; .save(), .spanMinutes
-BaselineReadouts.clockText(minutes: 1_380) == "11:00 PM"; circularMeanMinutes([1_410, 30]) == 0; noonInterval(bed:wake:)
+BaselineReadouts.clockText(minutes: 1_380) == "11:00 PM"; hourText(minutes: 1_080) == "6 PM" (axis labels: "18" / "18 Uhr" on a 24-hour device, the same locale as clockText)
+BaselineReadouts.circularMeanMinutes([1_410, 30]) == 0; noonInterval(bed:wake:)
 ```
 
 Regularity formula (documented here and in the source): for every pair of CONSECUTIVE nights in the last
@@ -461,8 +464,11 @@ are 100, clamped and rounded. An 8-hour night that drifts an hour every day scor
 timing goes in, the part a wearable gets right (`MetricAccuracy` "sleepRegularity": High).
 
 ```swift
-// Fitness: NOOP's FitnessAgeEngine (Nes 2011) over the 7 days ending on `day`; needs age, sex and 4 nights of resting HR
+// Fitness: NOOP's FitnessAgeEngine (Nes 2011) over the 7 CALENDAR days ending on `day` (stricter than NOOP's last-seven-ROWS gate, on purpose: a Progress point never carries nights from the week before; ENGINE_CAPABILITIES.md §5); needs age, sex and 4 nights of resting HR
 let f = BaselineReadouts.fitness(repo, profile: profile, for: day)   // @MainActor over ProfileStore; or the pure fitness(for:days:age:sex:waistCm:hasHeightWeight:)
+BaselineReadouts.ProfileSet.current()  // UserDefaults "baseline.profileSet": Settings › Profile's "entered" flag (a DOB / sex change or "Use these"); ProfileStore seeds
+                                       // 30 / "male" when nothing was set, so until it is true ProgressProfile.lifted(from:entered:) passes nil age and sex, the
+                                       // readout is nil and Progress' Fitness card asks for the profile (.needsProfile). Both consumers go through that one resolver.
 f.result (FitnessAgeResult: fitnessAge, chronoAge, deltaYears, bandYears 5), f.vo2max (Nes with a waist, else Uth 15.3·HRmax/RHR),
 f.vo2IsFallback, f.vo2BandText ("38–48"), f.restingHr (week median), f.rhrNights, f.activeDays (Effort ≥ 30), f.inputs (the checklist)
 BaselineReadouts.fitnessInputs(for:days:age:sex:waistCm:hasHeightWeight:) -> FitnessAgeReadiness   // always available: what is missing
@@ -475,11 +481,13 @@ MetricAccuracy.all                     // 14 rows: key, name, tier (.high/.mediu
 MetricAccuracy.lookup("hrv")?.tier     // .high;  MetricAccuracy["calories"]
 AccuracyBadge(metric: "steps")         // a flat pill "Medium accuracy" + info glyph; tap → popover with the caveat (failable: nil for an unrated key)
 AccuracyBadge(tier: .low, caveat: "…", name: "Calories")
-BaselineCard(title: "Steps", accessory: AnyView(AccuracyBadge(metric: "steps"))) { StepsTile(readout: s) }
+BaselineCard(title: "Steps", accessory: AccuracyBadge(metric: "steps").map { AnyView($0) }) { StepsTile(readout: s, showsHeader: false) }
 ```
 
 Flat pill rule: colour @ 0.10 capsule, 6pt dot in the tier colour (High → `good`, Medium → `accent`,
-Low → `watch`), text in ink. Keys and tiers are pinned by `testMetricAccuracy_coversTheLiteratureTable`.
+Low → `watch`), text in ink. At accessibility type sizes the pill prints the tier word alone
+(`Tier.shortLabel`: "Low"), so it never truncates beside a card title; VoiceOver and the popover keep the
+full label. Keys and tiers are pinned by `testMetricAccuracy_coversTheLiteratureTable`.
 Change the table in the research doc first, then here.
 
 ### `ReadinessBar(score:tone:label:context:)` — `BaselineReadinessBar.swift`
@@ -492,29 +500,46 @@ BaselineCard(title: "Readiness", accessory: AnyView(AccuracyBadge(metric: "readi
 ```
 
 Numeral in `hero(36)` + "/ 100", the tone's `BaselinePill`, an 8pt `ringTrack` capsule filled to the
-score in `good` / `watch` / `low` with two white ticks at 34 and 67 (NOOP's bands; `showsBands: false`
-for a tile), ONE context caption under it (never truncated). One accessibility element: "Readiness 72
-of 100, Good. Lifted by …". `ReadinessTone.baselineColor` gives the same colour for a dot elsewhere.
-This is the number-with-a-bar form of Readiness; the existing `ReadinessCard` (HRV tier pill + week
-sentence) stays as it is until its screen builder swaps it.
+score in `good` / `watch` / `low`, ONE context caption under it (never truncated). The track carries NO
+marks at NOOP's band edges: ticks at 34 / 67 on a 0–100 bar would reproduce WHOOP's published Recovery
+banding (the one trait a bar can still copy from a ring), and in white on `ringTrack` they were barely
+visible anyway; the judgement is the pill and the fill's tone, which come from the engine's
+`RecoveryScorer.band` through `ReadinessTone`, so no cut point is spelled in a view. One accessibility
+element: "Readiness 72 of 100, Good. Lifted by …". `ReadinessTone.baselineColor` gives the same colour
+for a dot elsewhere.
+This is the form of Readiness everywhere the word is printed: Home's `ReadinessCard`, the morning
+summary's subtitle (`TodayReadinessScore.summaryLine`, "Readiness 72 · Good") and both widgets (the
+snapshot carries the score, the tone label and the colour name; the extension assembles the same line).
+All three read `TodaySnapshot.readinessScore`, resolved once. The seven-night HRV tier survives only as
+the HRV tile's week phrase (`TodayReadiness.weekPhrase`, "Week on baseline") and is never called Readiness
+on its own.
 
 ### `StepsTile` — `BaselineStepsTile.swift`
 
 ```swift
 StepsTile(readout: s, window: .week)                       // "Steps" header, numeral, "avg 6,000", 7 bars, ONE context line
+StepsTile(readout: s, window: .week, showsHeader: false, isToday: isToday)   // inside a BaselineCard(title: StepsTile.title(isToday:), accessory: badge): the card owns the header row
 StepsTile(steps: 8_412, average: 6_000, averageLabel: "7‑day", bars: [StepsTile.Bar(id: day, value: 6_000), …])
 ```
 
 Seven 10pt capsules at 4pt spacing scaled to the week's peak (today solid `steps`, earlier days @ 0.45,
 an unrecorded day a 4pt `ringTrack` stub); context = `stepsDeltaText` or "7‑day average after N more
-days" or "No steps recorded"; tone dot good (≥ +5%) / watch (≤ −25%) / `steps`. Sits in a tile beside
-Calories or in its own card with `AccuracyBadge(metric: "steps")`.
+days" or "No steps recorded"; tone dot good (≥ +5%) / watch (≤ −25%) / `steps`. On today (`isToday`)
+the count is still accruing, so the header is "Steps so far", the dot stays `steps` and the line reads
+"Builds through the day" (plus the "average after N more days" wait while there is none): a partial
+count is never judged against whole-day averages, and the average is said once, in the "avg 6,000"
+caption. VoiceOver hears the average too: "8,412 steps, 7‑day average 6,000, +2,412 vs your 7‑day
+average". Sits in a tile beside
+Calories or in its own card with `AccuracyBadge(metric: "steps")` in the card's `accessory:` slot and
+`showsHeader: false`, so the badge sits in the header row and never beside the hero numeral.
 
 ### `StressCurveChart(points:height:accessibilitySummary:)` — `BaselineStressChart.swift`
 
 Swift Charts area (`stress` @ `bandOpacity`) + line (`stress`, `lineWidth`) over 06:00–22:00 of the
-day, unscored windows break the line, moving windows are shaded in `fill`, a dashed rule at 2.0 ("High"),
-y labels 0 / Low / High / 3, x labels every four hours. Pass `BaselineReadouts.stressSummary(st)` as the
+day, unscored windows break the line, moving windows are shaded in `fill`, a dashed rule at 2.0 (the high
+edge), gridlines at the band edges 0 / 1 / 2 / 3 and the band words Low / Medium / High at the band
+midpoints (`BaselineReadouts.stressLevelText`, the same table as the Average cell's unit, so the axis
+and the cell never disagree), x labels every four hours. Pass `BaselineReadouts.stressSummary(st)` as the
 summary. Pair with `AccuracyBadge(metric: "stress")` (Low) and the caption "Estimated from heart rate;
 N hours left out while you were moving".
 
@@ -525,9 +550,13 @@ TimingStripChart(nights: t.nights.prefix(14).reversed(), target: t.target,
                  averageBed: t.averageBedMinutes, averageWake: t.averageWakeMinutes)
 ```
 
-One 6pt row per night (oldest at the top, 9pt pitch) over a noon-to-noon axis ("6 PM · 12 AM · 6 AM ·
-12 PM"): the target window as a `sleep @ 0.12` band, each night's bed → wake capsule in `sleep` (solid
-inside the window ± 30 min at both ends, @ 0.45 outside), dashed ticks at the average bed and wake. Plain
+One 6pt row per night (oldest at the top, 9pt pitch) over a noon-to-noon axis: the target window as a
+`sleep @ 0.12` band, each night's bed → wake capsule in `sleep` (solid inside the window ± 30 min at both
+ends, @ 0.45 outside), dashed ticks at the average bed and wake. The axis labels are hours in the
+device's clock style (`BaselineReadouts.hourText`: "6 PM · 12 AM · 6 AM · 12 PM", or "18 · 00 · 06 · 12"
+on a 24-hour device, the same locale as the card's `clockText` cells), each centred under its tick by its
+own width, the last ending at the trailing edge, the row as tall as the caption font (never a fixed
+height or pixel offset); at accessibility sizes only the midnight and trailing labels are drawn. Plain
 SwiftUI; one accessibility element with a summary sentence. Put `StatCell`s for "Average bedtime" /
 "Average wake" / "Regularity" (`clockText(minutes:)`, `"\(t.regularity)"`) under it, and
 `AccuracyBadge(metric: "sleepTiming")` on the card.
@@ -543,7 +572,11 @@ EffortReadinessChart(points: points)
 
 Effort as `effort` bars (`barOpacity`, `barRadius`) under a Readiness line in `accent`, ONE 0…100 y axis
 (both columns are already 0–100, nothing is rescaled), `BaselineChartStyle` axes, a two-dot legend below.
-The default accessibility summary averages both series; pass a better sentence when the card has one.
+A bar and the line point on one day are that morning's score and the effort that followed it. The shared
+axis is for reading, not comparing: never count days where one series "beat" the other (the scales are
+unrelated, and it is WHOOP's day reading renamed); a sentence relating them states the lag, effort on
+day D against readiness on D+1 (`TrendsSeries.MorningAfter`). The default accessibility summary averages
+both series; pass a better sentence when the card has one.
 
 ### Tokens added
 

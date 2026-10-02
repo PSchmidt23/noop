@@ -35,7 +35,6 @@ final class TrendsSeriesTests: BaselineEngineTestCase {
         XCTAssertEqual(try XCTUnwrap(s.hrv.average), 60, accuracy: 1e-9)
         XCTAssertEqual(s.totalNights, 10)
         XCTAssertTrue(s.restingHr.points.isEmpty, "no resting HR banked")
-        XCTAssertNil(s.readiness, "fewer than 14 HRV nights: no readiness strip")
     }
 
     func testBandGateIsTheSameWithoutHistory_monthRange() {
@@ -129,11 +128,11 @@ final class TrendsSeriesTests: BaselineEngineTestCase {
                     exerciseCount: nil, steps: steps)
     }
 
-    func testEffortReadinessPointsAveragesAndOutranCount() throws {
-        let days = [Fixtures.metric(key(3), strain: 30, recovery: 60),   // paired, readiness ahead
-                    Fixtures.metric(key(2), strain: 80, recovery: 50),   // paired, effort outran
+    func testEffortReadinessPointsAveragesAndNextMorningPairs() throws {
+        let days = [Fixtures.metric(key(3), strain: 30, recovery: 60),   // pairs with key(2)'s score
+                    Fixtures.metric(key(2), strain: 80, recovery: 50),   // pairs with key(1)'s score
                     Fixtures.metric(key(1), recovery: 70),               // readiness only
-                    Fixtures.metric(key(0), hrv: 60, strain: 40)]        // effort only
+                    Fixtures.metric(key(0), hrv: 60, strain: 40)]        // effort only; no morning after yet
         let s = TrendsSeries.build(days: days, range: .week, now: now)
         let m = s.effortReadiness
 
@@ -144,25 +143,66 @@ final class TrendsSeriesTests: BaselineEngineTestCase {
         XCTAssertEqual(try XCTUnwrap(m.readinessAverage), 60, accuracy: 1e-9)
         XCTAssertEqual(m.effortDays, 3)
         XCTAssertEqual(m.readinessDays, 3)
-        XCTAssertEqual(m.pairedDays, 2)
-        XCTAssertEqual(m.outranDays, 1)
+        XCTAssertEqual(m.nextMorningPairs, 2)
+        XCTAssertNil(m.morningAfter, "two pairs are below the \(TrendsSeries.minMorningAfterPairs)-pair floor")
         // The merged card prints one average effort: the same number the effort bars carry.
         XCTAssertEqual(m.effortAverage, s.effort.average)
     }
 
-    func testEffortReadinessIgnoresDaysOutsideTheRangeAndEqualValues() {
+    func testEffortReadinessIgnoresDaysOutsideTheRange() {
         let days = [Fixtures.metric(key(10), strain: 90, recovery: 20),   // before the 7-day window
-                    Fixtures.metric(key(1), strain: 55, recovery: 55),    // equal: not outran
+                    Fixtures.metric(key(1), strain: 55, recovery: 55),    // same-day score is not a pair
                     Fixtures.metric(key(0), hrv: 60)]                     // neither column
         let s = TrendsSeries.build(days: days, range: .week, now: now)
         XCTAssertEqual(s.effortReadiness.points.map(\.id), [key(1)])
-        XCTAssertEqual(s.effortReadiness.pairedDays, 1)
-        XCTAssertEqual(s.effortReadiness.outranDays, 0)
+        XCTAssertEqual(s.effortReadiness.nextMorningPairs, 0, "key(0) has no score, so key(1)'s effort has no morning after")
+        XCTAssertNil(s.effortReadiness.morningAfter)
 
         let none = TrendsSeries.build(days: [Fixtures.metric(key(10), strain: 90, recovery: 20)], range: .week, now: now)
         XCTAssertTrue(none.effortReadiness.points.isEmpty)
         XCTAssertNil(none.effortReadiness.effortAverage)
         XCTAssertNil(none.effortReadiness.readinessAverage)
+    }
+
+    func testMorningAfterPairsEffortWithTheNextMorningsScore() throws {
+        // Two hard days (90, 85) whose own mornings read 70 and 40, then quiet days. The lag pairs
+        // each effort with the NEXT morning: 90 → 40, 85 → 44; a same-day pairing would average 55.
+        let days = [Fixtures.metric(key(8), strain: 90, recovery: 70),
+                    Fixtures.metric(key(7), strain: 85, recovery: 40),
+                    Fixtures.metric(key(6), strain: 20, recovery: 44),
+                    Fixtures.metric(key(5), strain: 25, recovery: 60),
+                    Fixtures.metric(key(4), strain: 20, recovery: 62),
+                    Fixtures.metric(key(3), strain: 25, recovery: 64),
+                    Fixtures.metric(key(2), strain: 20, recovery: 66),
+                    Fixtures.metric(key(1), strain: 25, recovery: 68),
+                    Fixtures.metric(key(0), recovery: 70)]
+        let m = TrendsSeries.build(days: days, range: .month, now: now).effortReadiness
+        XCTAssertEqual(m.nextMorningPairs, 8)
+        let after = try XCTUnwrap(m.morningAfter)
+        XCTAssertEqual(after.hardDays, 2, "a third of 8 pairs, floored")
+        XCTAssertEqual(after.afterHard, 42, accuracy: 1e-9)
+        XCTAssertEqual(after.afterOthers, 65, accuracy: 1e-9, "60, 62, 64, 66, 68, 70")
+        XCTAssertEqual(TrendEffortReadinessCard.morningAfterText(after),
+                       "After your 2 hardest days, readiness averaged 42 the next morning, against 65 after the rest.")
+    }
+
+    func testMorningAfterNeedsSixPairsAndCapsTheHardDays() throws {
+        // Five pairs (effort on key(5)…key(1), a score on key(4)…key(0)): nothing is said.
+        var days = (1...5).reversed().map { Fixtures.metric(key($0), strain: Double(10 * $0), recovery: 50) }
+        days.append(Fixtures.metric(key(0), recovery: 50))
+        XCTAssertEqual(TrendsSeries.build(days: days, range: .month, now: now).effortReadiness.nextMorningPairs, 5)
+        XCTAssertNil(TrendsSeries.build(days: days, range: .month, now: now).effortReadiness.morningAfter)
+
+        // A sixth pair crosses the floor: two hard days against four.
+        days.insert(Fixtures.metric(key(6), strain: 60, recovery: 50), at: 0)
+        let six = try XCTUnwrap(TrendsSeries.build(days: days, range: .month, now: now).effortReadiness.morningAfter)
+        XCTAssertEqual(six.hardDays, 2)
+
+        // Thirty pairs: the hardest five, never a third of thirty.
+        let pairs = (0..<30).map { (day: key($0), effort: Double($0), nextMorning: 50.0) }
+        XCTAssertEqual(try XCTUnwrap(TrendsSeries.morningAfter(pairs: pairs)).hardDays, TrendsSeries.maxHardDays)
+        XCTAssertEqual(TrendsSeries.maxHardDays, 5)
+        XCTAssertEqual(TrendsSeries.minMorningAfterPairs, 6)
     }
 
     // MARK: Steps

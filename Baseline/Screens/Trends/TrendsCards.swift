@@ -225,11 +225,14 @@ struct TrendBarCard: View {
     }
 }
 
-/// Effort bars under the Readiness line over the picked range: did the day's effort show up in the next
-/// morning's readiness? Two stats (the mean of each series over the days that have it), the chart, and
-/// ONE sentence counting the days effort outran readiness. Closes with the "All workouts" row, the
-/// Trends tab's path to the Workouts list (the standalone Effort card folded into this one: the same
-/// bars and the same average would otherwise appear twice on the screen).
+/// Effort bars under the Readiness line over the picked range. On any one day the line point is that
+/// morning's score and the bar the effort that followed it; the two scales are never compared number
+/// against number. Two stats (the mean of each series over the days that have it), the chart, and ONE
+/// sentence: readiness the morning after the range's hardest days against the morning after the rest
+/// (effort on day D paired with the score of D+1, the direction NOOP's `RecoveryScorer` reads its
+/// `priorDayEffort` term), or why that sentence is not there yet. Closes with the "All workouts" row,
+/// the Trends tab's path to the Workouts list (the standalone Effort card folded into this one: the
+/// same bars and the same average would otherwise appear twice on the screen).
 struct TrendEffortReadinessCard: View {
     let range: TrendsRange
     let metric: TrendsSeries.EffortReadiness
@@ -263,25 +266,34 @@ struct TrendEffortReadinessCard: View {
     private var effortText: String { metric.effortAverage.map(TrendsFormat.whole) ?? "—" }
     private var readinessText: String { metric.readinessAverage.map(TrendsFormat.whole) ?? "—" }
 
-    /// The one line under the chart. With both series: the count of days effort outran readiness.
-    /// With effort alone: why the line is missing (no score yet, or none from this source).
+    /// The one line under the chart. With enough pairs: the morning after the hardest days against the
+    /// rest. Otherwise why not yet: no score at all (it needs the HRV baseline first), or too few days
+    /// with an effort and a score the next morning.
     private var sentence: String {
-        if metric.pairedDays > 0 {
-            return "Days where effort outran readiness: \(metric.outranDays) of \(metric.pairedDays)"
-        }
+        if let m = metric.morningAfter { return Self.morningAfterText(m) }
         if metric.readinessDays == 0 {
             return "No readiness score in the last \(range.days) days; it starts after \(BaselineReadouts.readinessSeedNights) nights of HRV."
         }
-        return "No day in the last \(range.days) days has both an effort and a readiness score."
+        return "After \(TrendsSeries.minMorningAfterPairs) days with an effort and a readiness score the next morning "
+            + "(\(metric.nextMorningPairs) so far), this line compares the mornings after your hardest days with the rest."
+    }
+
+    /// "After your 5 hardest days, readiness averaged 49 the next morning, against 61 after the rest."
+    static func morningAfterText(_ m: TrendsSeries.MorningAfter) -> String {
+        "After your \(m.hardDays) hardest day\(m.hardDays == 1 ? "" : "s"), readiness averaged "
+            + "\(TrendsFormat.whole(m.afterHard)) the next morning, against \(TrendsFormat.whole(m.afterOthers)) after the rest."
     }
 
     /// What VoiceOver reads for the chart: the two averages the header prints, the peak day and the
-    /// outran count, so nothing the bars and the line show is lost to the touch-only view.
+    /// morning-after comparison, so nothing the bars and the line show is lost to the touch-only view.
     private var chartSummary: String {
         var s = "Effort and Readiness, last \(range.days) days: average effort \(effortText) of 100"
         if let peak { s += ", highest \(TrendsFormat.whole(peak.value)) on \(TrendsFormat.shortDate(peak.date))" }
         s += "; average readiness \(readinessText) of 100"
-        if metric.pairedDays > 0 { s += "; effort outran readiness on \(metric.outranDays) of \(metric.pairedDays) days" }
+        if let m = metric.morningAfter {
+            s += "; after your \(m.hardDays) hardest days readiness averaged \(TrendsFormat.whole(m.afterHard)) "
+                + "the next morning, \(TrendsFormat.whole(m.afterOthers)) after the rest"
+        }
         return s
     }
 }

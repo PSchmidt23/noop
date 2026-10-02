@@ -63,6 +63,10 @@ final class SampleDataTests: XCTestCase {
             XCTAssertTrue((0...100).contains(strain), "\(d.day) effort \(strain)")
             XCTAssertTrue((1...12).contains(try XCTUnwrap(d.disturbances)))
             XCTAssertTrue((10...98).contains(try XCTUnwrap(d.recovery)))
+            let steps = try XCTUnwrap(d.steps, "\(d.day) has no step count")
+            XCTAssertTrue((2_000...19_000).contains(steps), "\(d.day) steps \(steps)")
+            let kcal = try XCTUnwrap(d.activeKcalEst, "\(d.day) has no calorie estimate")
+            XCTAssertTrue((1_500...4_000).contains(kcal), "\(d.day) calories \(kcal)")
         }
         for w in data.workouts {
             let minutes = Double(w.endTs - w.startTs) / 60
@@ -98,6 +102,22 @@ final class SampleDataTests: XCTestCase {
         // Every workout sits on a day whose row counts it, and vice versa.
         let byDay = Dictionary(grouping: data.workouts) { Repository.localDayKey(Date(timeIntervalSince1970: TimeInterval($0.startTs))) }
         for d in data.days { XCTAssertEqual(byDay[d.day]?.count ?? 0, d.exerciseCount ?? 0, d.day) }
+    }
+
+    /// Training days carry more steps, and the whole-day calorie estimate never undercuts the day's own
+    /// workouts, so Steps, Calories and Workouts agree on a day.
+    func testGenerate_stepsAndCaloriesFollowTheDay() throws {
+        let data = BaselineSampleData.generate(anchor: noon)
+        let trained = data.days.filter { ($0.exerciseCount ?? 0) > 0 }
+        let rested = data.days.filter { ($0.exerciseCount ?? 0) == 0 }
+        XCTAssertFalse(trained.isEmpty); XCTAssertFalse(rested.isEmpty)
+        let meanSteps = { (rows: [DailyMetric]) in Double(rows.compactMap(\.steps).reduce(0, +)) / Double(rows.count) }
+        XCTAssertGreaterThan(meanSteps(trained), meanSteps(rested) + 1_000)
+        let byDay = Dictionary(grouping: data.workouts) { Repository.localDayKey(Date(timeIntervalSince1970: TimeInterval($0.startTs))) }
+        for d in data.days {
+            let workoutKcal = (byDay[d.day] ?? []).compactMap(\.energyKcal).reduce(0, +)
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(d.activeKcalEst), workoutKcal, d.day)
+        }
     }
 
     /// Each session ends on the morning of its daily row's day (how `BaselineDays.endDay` and
@@ -186,6 +206,17 @@ final class SampleDataTests: XCTestCase {
         XCTAssertEqual(days.count, BaselineSampleData.nights)
         XCTAssertEqual(days.last?.day, Fixtures.dayKey(noon))
         XCTAssertTrue(repo.vitalRows.allSatisfy { $0.source == .noopComputed }, "the sample reads as the strap's own nights")
+        XCTAssertTrue(days.allSatisfy { $0.steps != nil && $0.activeKcalEst != nil }, "steps and calories survive the funnel")
+        // Home's Steps card and Calories cell, through the same readouts the screen calls.
+        let todayKey = Fixtures.dayKey(noon)
+        let steps = await BaselineReadouts.steps(repo, for: todayKey, mode: .strapFirst)
+        XCTAssertTrue(steps.hasRecordedSource)
+        XCTAssertEqual(steps.steps, days.last?.steps, "the anchor day's count, as the sample wrote it")
+        XCTAssertNotNil(steps.average7)
+        XCTAssertNotNil(steps.average30)
+        let calories = BaselineReadouts.calories(for: todayKey, days: days)
+        XCTAssertEqual(calories.kcal, days.last?.activeKcalEst)
+        XCTAssertNotNil(calories.average30)
         let nowTs = Int(noon.timeIntervalSince1970)
         let computedNights = await repo.computedSleepSessions(from: nowTs - 100 * 86_400, to: nowTs + 86_400, limit: 1000)
         XCTAssertEqual(computedNights.count, BaselineSampleData.nights)

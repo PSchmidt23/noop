@@ -4,8 +4,10 @@ import Charts
 
 /// A day's Stress curve: NOOP's hourly 0–3 proxy as a light area under a line in `BaselineTheme.stress`,
 /// over the waking hours (06:00–22:00) of that day. Unscored windows break the line; windows the strap
-/// masked as walking are shaded in `fill` so "you were moving" never reads as "calm". A dashed rule at
-/// the high band (2.0) names the only threshold the scale has. Axes from `BaselineChartStyle`; flat;
+/// masked as walking are shaded in `fill` so "you were moving" never reads as "calm". The y axis names
+/// the bands the card's Average cell uses (`BaselineReadouts.stressLevelText`: Low under 1, Medium under
+/// 2, High from 2), each word at the middle of its band, with gridlines at the band edges and a dashed
+/// rule at the high edge (2.0). Axes from `BaselineChartStyle`; flat;
 /// lives inside a card with an `AccuracyBadge(metric: "stress")` (Low: an estimate, not a feeling).
 ///
 /// ```swift
@@ -84,11 +86,18 @@ struct StressCurveChart: View {
         .chartXScale(domain: xDomain)
         .chartYScale(domain: BaselineReadouts.stressDomain)
         .chartYAxis {
-            AxisMarks(position: .trailing, values: [0.0, 1.0, 2.0, 3.0]) { v in
+            // Gridlines at the band edges (0 / 1 / 2 / 3), unlabelled.
+            AxisMarks(position: .trailing, values: Self.bandEdges) { _ in
                 AxisGridLine().foregroundStyle(BaselineTheme.hairline.opacity(0.75))
+            }
+            // One word per band at its midpoint, from the same table as the Average cell's unit, so the
+            // axis and the cell can never name a level differently.
+            AxisMarks(position: .trailing, values: Self.bandMidpoints) { v in
                 AxisValueLabel {
                     if let d = v.as(Double.self) {
-                        Text(Self.axisLabel(d)).foregroundStyle(BaselineTheme.textTertiary).font(BaselineTheme.caption)
+                        Text(BaselineReadouts.stressLevelText(d))
+                            .foregroundStyle(BaselineTheme.textTertiary)
+                            .font(BaselineTheme.caption)
                     }
                 }
             }
@@ -105,13 +114,9 @@ struct StressCurveChart: View {
         .modifier(BaselineChartSummary(summary: accessibilitySummary))
     }
 
-    /// 0 / 1 "Low" / 2 "High" / 3: the bands as the only y labels.
-    private static func axisLabel(_ v: Double) -> String {
-        switch v {
-        case 1: return "Low"
-        case 2: return "High"
-        default: return "\(Int(v))"
-        }
-    }
+    /// The band edges on the 0–3 scale (the gridlines) and the midpoints the band words sit on, so the
+    /// y axis reads Low / Medium / High, one word per band, like the Average cell beside it.
+    static let bandEdges: [Double] = [0, 1, 2, 3]
+    static let bandMidpoints: [Double] = [0.5, 1.5, 2.5]
 }
 #endif

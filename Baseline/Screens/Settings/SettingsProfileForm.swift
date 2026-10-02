@@ -4,10 +4,15 @@ import SwiftUI
 /// The few profile fields NOOP's engine actually reads: date of birth (age), sex, weight, height and an
 /// optional manual max heart rate. Writes straight to `ProfileStore`, which persists each change. The
 /// two segmented choices (sex, units) are flat in-card `BaselineSegmentedPicker`s, like every picker
-/// inside content.
+/// inside content. `ProfileStore` seeds a 30-year-old male when nothing was ever stored, so the form
+/// also keeps `BaselineReadouts.ProfileSet` (`baseline.profileSet`): false until a date of birth or sex
+/// is changed here, or the ones shown are confirmed with "Use these". Until then the "About you" card
+/// says so and the fitness estimate (Progress' Fitness card) asks for the profile instead of using the
+/// seeded values.
 struct SettingsProfileForm: View {
     @EnvironmentObject private var profile: ProfileStore
     @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
+    @AppStorage(BaselineReadouts.ProfileSet.key) private var profileSet = false
 
     private var unitSystem: UnitSystem { UnitSystem(rawValue: unitSystemRaw) ?? .metric }
 
@@ -35,7 +40,7 @@ struct SettingsProfileForm: View {
                 DatePicker(selection: $profile.dateOfBirth,
                            in: ProfileStore.dateOfBirthRange,
                            displayedComponents: .date) {
-                    SettingsFieldLabel(title: "Date of birth", value: "\(profile.age) yrs")
+                    SettingsFieldLabel(title: "Date of birth", value: profileSet ? "\(profile.age) yrs" : "Not set")
                 }
                 .tint(BaselineTheme.accent)
                 SettingsDivider()
@@ -46,7 +51,19 @@ struct SettingsProfileForm: View {
                                             accessibilityLabel: { "Sex: \(Self.sexLabel($0))" },
                                             style: .flat)
                 }
+                if !profileSet {
+                    SettingsDivider()
+                    Text("Not entered yet. Pick your date of birth and sex, or keep the ones shown; your estimated VO2 max and fitness age wait for them.")
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    BaselineCTA(title: "Use these", prominent: false) { profileSet = true }
+                }
             }
+            // The bindings write `ProfileStore` directly, so there is no save point: a change to either
+            // field is the entry. `onChange` never fires for the store's own seeded values.
+            .onChange(of: profile.dateOfBirth) { _, _ in profileSet = true }
+            .onChange(of: profile.sex) { _, _ in profileSet = true }
 
             BaselineCard(title: "Body") {
                 BaselineSegmentedPicker(options: Self.unitKeys, selection: $unitSystemRaw,

@@ -1,9 +1,10 @@
 import WidgetKit
 import SwiftUI
 
-/// Lock Screen accessories. Circular: the HRV ring with the number. Rectangular: the readiness tier over
-/// HRV and Resting HR. Rendered `.vibrant` by the system, so these use `.primary` / `.secondary` only,
-/// never a tint (a colour handed to the lock screen lands as an arbitrary grey).
+/// Lock Screen accessories. Circular: the HRV ring with the number. Rectangular: the Readiness score and
+/// its tone word, as Home's card leads ("Readiness 72 · Good"), over HRV and Resting HR. Rendered
+/// `.vibrant` by the system, so these use `.primary` / `.secondary` only, never a tint (a colour handed
+/// to the lock screen lands as an arbitrary grey).
 struct ReadinessLockWidget: Widget {
     static let kind = "com.patrickschmidt.baseline.widgets.readiness"
 
@@ -55,7 +56,7 @@ struct ReadinessLockView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Image(systemName: "circle.fill").font(.system(size: 6))
-                Text(readinessText(snap)).font(.system(.headline, design: .rounded)).lineLimit(1)
+                Text(readinessText(snap)).font(.system(.headline, design: .rounded)).lineLimit(1).minimumScaleFactor(0.8)
             }
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 cell("HRV", value: WidgetFormat.whole(snap.hrvMs), unit: "ms")
@@ -65,9 +66,14 @@ struct ReadinessLockView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Home's number and word under their noun ("Readiness 72 · Good", the morning summary's line too);
+    /// "Readiness · 2 of 4 nights" while the score is calibrating; "Readiness · –" when it is stale or
+    /// missing, never the seven-night HRV tier under the same word.
     private func readinessText(_ snap: BaselineWidgetSnapshot) -> String {
-        if let label = snap.readinessLabel { return "Readiness · \(label)" }
-        if let n = snap.readinessCalibratingNights { return "Readiness · \(n)/14 nights" }
+        if let score = snap.readinessScore, let label = snap.readinessToneLabel {
+            return "Readiness \(WidgetFormat.whole(score)) · \(label)"
+        }
+        if let n = snap.readinessNightsSoFar, let seed = snap.readinessSeedNights { return "Readiness · \(n) of \(seed) nights" }
         return "Readiness · –"
     }
 

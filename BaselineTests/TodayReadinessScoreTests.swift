@@ -36,6 +36,32 @@ final class TodayReadinessScoreTests: BaselineEngineTestCase {
         for word in forbidden { XCTAssertFalse(context.lowercased().contains(word), context) }
     }
 
+    /// The snapshot resolves the score once (Home's card, the morning summary and the widgets read that
+    /// one), and `summaryLine` is its one-line spelling for a banner or a glance.
+    func testSnapshot_resolvesTheScoreOnceAndSpellsTheSummaryLine() throws {
+        let days = priorNights() + [Fixtures.metric(today, hrv: 72, rhr: 55, recovery: 71)]
+        let snap = TodaySnapshot.build(days: days, nights: [], todayKey: today)
+        guard case .score(let r, let stamp) = snap.readinessScore else { return XCTFail("expected a score") }
+        XCTAssertEqual(r.score, 71)
+        XCTAssertEqual(r.tone, .good)
+        XCTAssertNil(stamp)
+        XCTAssertEqual(snap.readinessScore.summaryLine, "Readiness 71 · Good")
+        // A carried score keeps its number in the line; the stamp is Home's business.
+        guard case .score(let carried, let carriedStamp) = TodaySnapshot.build(days: priorNights(), nights: [], todayKey: today).readinessScore else {
+            return XCTFail("expected a carried score")
+        }
+        XCTAssertEqual(carried.day, key(1))
+        XCTAssertNotNil(carriedStamp)
+        XCTAssertEqual(TodayReadinessScore.score(carried, wokeStamp: carriedStamp).summaryLine, "Readiness 60 · Fair")
+        // Every other state says nothing under the noun.
+        XCTAssertNil(TodayReadinessScore.calibrating(nights: 2).summaryLine)
+        XCTAssertNil(TodayReadinessScore.stale(lastDay: today).summaryLine)
+        XCTAssertNil(TodayReadinessScore.missing.summaryLine)
+        let low = BaselineReadouts.ReadinessScore(day: today, score: 28, tone: .low, confidence: .solid, drivers: [], driversSentence: nil)
+        XCTAssertEqual(TodayReadinessScore.score(low, wokeStamp: nil).summaryLine, "Readiness 28 · Low")
+        for word in forbidden { XCTAssertFalse("Readiness 28 · Low".lowercased().contains(word)) }
+    }
+
     func testUnsyncedMorning_carriesTheNewestScoreWithItsStamp() throws {
         // Past the seed gate, no row for today: yesterday's score is carried and dated.
         let days = priorNights()
@@ -59,6 +85,8 @@ final class TodayReadinessScoreTests: BaselineEngineTestCase {
         }
         XCTAssertEqual(n, 2)
         XCTAssertEqual(BaselineReadouts.readinessSeedNights, 4)
+        // The caption under the "Calibrating" pill keeps the count; the pill itself stays one word.
+        XCTAssertEqual(ReadinessCard.calibratingLine(nights: n), "Readiness after 4 nights · 2 so far")
     }
 
     func testStaleHrv_pausesTheScore() {
@@ -99,6 +127,10 @@ final class TodayReadinessScoreTests: BaselineEngineTestCase {
                                                     drivers: [], driversSentence: nil)
         XCTAssertEqual(ReadinessCard.context(solid, wokeStamp: "Woke Mon 16 Feb"),
                        "Woke Mon 16 Feb · From that night's HRV, resting HR and sleep")
+        // The least-settled score (an export's first mornings) says so instead of wearing the plainest caption.
+        let calibrating = BaselineReadouts.ReadinessScore(day: today, score: 55, tone: .watch, confidence: .calibrating,
+                                                          drivers: [], driversSentence: nil)
+        XCTAssertEqual(ReadinessCard.context(calibrating), "From that night's HRV, resting HR and sleep · baseline not yet usable")
     }
 
     // MARK: The week phrase on the HRV tile

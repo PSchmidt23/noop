@@ -5,8 +5,12 @@ import SwiftUI
 /// 24-hour axis: the target window (`SleepWindow`) as a translucent sleep-coloured band behind every row,
 /// each night's bed → wake span as a sleep-coloured capsule, and the 30-night average bed and wake as
 /// dashed ticks. A night inside the window (± 30 min at both ends) is drawn solid, one outside it at
-/// 0.45. Plain SwiftUI (no Swift Charts): fourteen rows at 9pt pitch, axis labels "6 PM · 12 AM · 6 AM
-/// · 12 PM". ONE accessibility element with the summary sentence. Flat; inside a card.
+/// 0.45. Plain SwiftUI (no Swift Charts): fourteen rows at 9pt pitch, then an axis whose hour labels
+/// come from `BaselineReadouts.hourText` ("6 PM · 12 AM · 6 AM · 12 PM" on a 12-hour clock, "18 · 00 ·
+/// 06 · 12" on a 24-hour one, so the axis and the card's `clockText` cells always agree), take their
+/// height from the caption font and sit under their ticks by their own width (two of them at
+/// accessibility sizes, where four would collide). ONE accessibility element with the summary sentence.
+/// Flat; inside a card.
 ///
 /// ```swift
 /// let t = BaselineReadouts.sleepTiming(for: day, nights: nights)
@@ -22,18 +26,34 @@ struct TimingStripChart: View {
     var averageWake: Double? = nil
     var accessibilitySummary: String? = nil
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     private static let rowHeight: CGFloat = 6
     private static let rowPitch: CGFloat = 9
-    private static let axisHeight: CGFloat = 18
-    private struct AxisTick: Identifiable {
-        let minutes: Double
-        let label: String
-        var id: Double { minutes }
+
+    /// A labelled point on the noon-to-noon axis.
+    struct AxisTick: Identifiable, Equatable {
+        /// 0…1 across the strip (minutes since noon ÷ 1440).
+        let fraction: Double
+        /// The clock minute the label names (minutes after midnight).
+        let minutesOfDay: Double
+        /// Whether the label survives at accessibility sizes (midnight and the trailing noon only).
+        let keptAtAccessibilitySizes: Bool
+        var id: Double { fraction }
     }
-    private static let axisTicks: [AxisTick] = [
-        AxisTick(minutes: 360, label: "6 PM"), AxisTick(minutes: 720, label: "12 AM"),
-        AxisTick(minutes: 1080, label: "6 AM"), AxisTick(minutes: 1440, label: "12 PM"),
+
+    /// 6 PM, midnight, 6 AM and the trailing noon.
+    static let axisTicks: [AxisTick] = [
+        AxisTick(fraction: 0.25, minutesOfDay: 18 * 60, keptAtAccessibilitySizes: false),
+        AxisTick(fraction: 0.5, minutesOfDay: 0, keptAtAccessibilitySizes: true),
+        AxisTick(fraction: 0.75, minutesOfDay: 6 * 60, keptAtAccessibilitySizes: false),
+        AxisTick(fraction: 1, minutesOfDay: 12 * 60, keptAtAccessibilitySizes: true),
     ]
+
+    /// The ticks drawn at a type size: all four, or the two that cannot collide at accessibility sizes.
+    static func ticks(accessibilitySize: Bool) -> [AxisTick] {
+        axisTicks.filter { !accessibilitySize || $0.keptAtAccessibilitySizes }
+    }
 
     init<S: Sequence>(nights: S, target: BaselineReadouts.SleepWindow, averageBed: Double? = nil,
                       averageWake: Double? = nil, accessibilitySummary: String? = nil)
@@ -86,25 +106,51 @@ struct TimingStripChart: View {
                 }
             }
             .frame(height: rowsHeight)
-            // Axis.
-            GeometryReader { geo in
-                let w = geo.size.width
-                ZStack(alignment: .topLeading) {
-                    Rectangle().fill(BaselineTheme.hairline).frame(height: 1)
-                    ForEach(Self.axisTicks) { t in
-                        let x = t.minutes / 1440 * w
-                        Text(t.label)
-                            .font(BaselineTheme.caption)
-                            .foregroundStyle(BaselineTheme.textTertiary)
-                            .fixedSize()
-                            .offset(x: t.minutes >= 1440 ? x - 40 : (t.minutes <= 0 ? x : x - 18), y: 4)
-                    }
-                }
-            }
-            .frame(height: Self.axisHeight)
+            axis
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary ?? defaultSummary)
+    }
+
+    // MARK: Axis
+
+    private struct AxisLabel: Identifiable {
+        let tick: AxisTick
+        let text: String
+        var id: Double { tick.id }
+    }
+
+    private var axisLabels: [AxisLabel] {
+        Self.ticks(accessibilitySize: dynamicTypeSize.isAccessibilitySize)
+            .map { AxisLabel(tick: $0, text: BaselineReadouts.hourText(minutes: $0.minutesOfDay)) }
+    }
+
+    /// The hairline and its hour labels. The label row is exactly one caption line tall (an invisible
+    /// copy of the widest label sizes it, so it grows with Dynamic Type instead of overflowing a fixed
+    /// frame into the caption below); each visible label is centred under its tick by its own measured
+    /// width, the trailing one ending at the trailing edge, with no pixel constant anywhere.
+    private var axis: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Rectangle().fill(BaselineTheme.hairline).frame(height: 1)
+            Text(axisLabels.map(\.text).max(by: { $0.count < $1.count }) ?? "")
+                .font(BaselineTheme.caption)
+                .hidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay {
+                    GeometryReader { geo in
+                        let w = geo.size.width
+                        ForEach(axisLabels) { label in
+                            let trailing = label.tick.fraction >= 1
+                            Text(label.text)
+                                .font(BaselineTheme.caption)
+                                .foregroundStyle(BaselineTheme.textTertiary)
+                                .fixedSize()
+                                .frame(width: w, alignment: trailing ? .trailing : .center)
+                                .offset(x: trailing ? 0 : w * label.tick.fraction - w / 2)
+                        }
+                    }
+                }
+        }
     }
 
     private func inWindow(_ n: BaselineReadouts.SleepTiming.Night) -> Bool {

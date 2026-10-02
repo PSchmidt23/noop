@@ -66,6 +66,39 @@ If you host `TodayView`/`TrendsView` add `.tabRouteDestinations()` (Strand/App/T
   let d = Baselines.deviation(todayHrv, state: s)  // d.delta ms, d.ratio, band = s.baseline ± Baselines.sigma(s)
   ```
 
+## Baseline readouts over the engine (Baseline/Components/BaselineReadoutsMetrics.swift)
+Every screen reads these through `BaselineReadouts` (pure, tested; `@MainActor` wrappers take the `Repository`
+and go through the funnel). The NOOP entry point behind each is listed so nobody recomputes it.
+- Readiness: `readinessScore(for:days:epoch:strapScores:) -> ReadinessScore? { score, tone (good/watch/low:
+  "Good"/"Fair"/"Low"), confidence, drivers, driversSentence }` reads `DailyMetric.recovery` as stored (NOOP's
+  `RecoveryScorer`, bands `RecoveryScorer.bandRedMax` / `bandYellowMax`), drivers from
+  `ChargeBreakdownWiring.breakdown` folded over the nights before the day, only for a strap-scored day
+  (`strapScores(repo.vitalRows)`). `readinessCalibrationNights` / `readinessSeedNights` (4, `Baselines.minNightsSeed`).
+  `TodayReadinessScore.build` (Today) adds the carry rule for an unsynced morning.
+- Steps: `steps(_ repo:for:mode:) -> StepsReadout { steps, average7, average30, observed7/30, recent }`;
+  `stepReadings(_ repo:from:to:mode:)` = `repo.resolvedSteps(from:to:)` (strap counter → phone → strap
+  estimate; `.importOnly` keeps the apple-health / health-connect points only) with the funnel's `steps`
+  column filling the gaps. `windowAverage(before:window:readings:)` needs `averageMinDays` (3) observed days.
+- Calories: `calories(for:days:logicalKey:) -> CaloriesReadout { kcal, average30 }` from `DailyMetric.activeKcalEst`
+  (`active_kcal`), the day's row resolved like NOOP's `Repository.resolveToday`. Rounded to 10 (`caloriesText`).
+- Stress: `stressDay(_ repo:for:now:calendar:) -> StressDayReadout? { points (hourly 0–3), dayMean, peak,
+  highMinutes, movingHours, scoredHours, sustainedHigh }`: today via NOOP's `StressDayCurve.today`, other days
+  `DaytimeStress.analyze` over `repo.hrSamples` / `rrIntervals` / `gravitySamplesUnion` (nil under 300 HR samples).
+  Level words `stressLevelText` (Low / Medium / High at 1 / 2).
+- Sleep timing: `sleepTiming(for:nights:window:calendar:) -> SleepTiming { nights (session nights only),
+  averageBedMinutes / averageWakeMinutes (circular mean, ≥ 3 nights), regularity (SRI-like over consecutive
+  nights, ≥ `regularityMinPairs` = 5 pairs of the last 14), target: SleepWindow, nightsInWindow }`.
+  `SleepWindow.stored()` / `save()` are the `baseline.sleepWindow.*` defaults (± `toleranceMin` 30).
+  Helpers: `minutesOfDay`, `circularMeanMinutes`, `clockText` / `hourText` (device clock style), `noonInterval`, `median`.
+- Fitness: `fitness(_ repo:profile:for:mode:entered:) -> FitnessReadout? { result: FitnessAgeResult, vo2max,
+  vo2IsFallback, restingHr (week median), rhrNights, activeDays }` over NOOP's `FitnessAgeEngine` (Nes 2011 with
+  a waist, else the Uth `15.3·HRmax/RHR` fallback), gated like `IntelligenceEngine.fitnessAgeRows` but on a
+  calendar week (not NOOP's last seven rows). `ProfileSet.current()` (`baseline.profileSet`) says whether age
+  and sex were entered; until then they pass as nil and the Progress card asks for them.
+- Accuracy: `MetricAccuracy.all` (Baseline/Components/MetricAccuracy.swift, 14 rows verbatim from
+  `Baseline/Research/METRIC_ACCURACY.md`, tiers high / medium / low), drawn as `AccuracyBadge(metric:)`; the
+  citations are `AccuracyCitations` (Baseline/Screens/Settings/AccuracyScreen.swift).
+
 ## Workouts
 - `repo.workoutRows(days: Int = 4000) async -> [WorkoutRow]` (merged, deduped).
 - `WorkoutZones.percents(_ zonesJSON: String?) -> [Double]?` (Z1–Z5), `WorkoutZones.summary(from:)`.

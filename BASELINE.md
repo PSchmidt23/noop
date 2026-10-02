@@ -20,7 +20,9 @@ support that story. Nothing clutters it.
   surface them in Settings → About.
 - **No WHOOP look-alikes.** No three-ring home screen, no "Strain / Recovery / Sleep Coach" labels.
   WHOOP is only named nominatively ("works with WHOOP 4.0 and 5.0 straps"). Our vocabulary:
-  **HRV, Resting HR, Readiness, Sleep, Effort, Journal.**
+  **HRV, Resting HR, Readiness, Sleep, Effort, Steps, Calories, Stress, Journal.** "Readiness" is one
+  measure everywhere it is printed: the 0–100 score (`TodaySnapshot.readinessScore`) on Home's card, in
+  the morning summary's subtitle and on the widgets; the seven-night HRV tier is the HRV tile's week phrase.
 - **Local only.** No accounts, no sign-in, no backend. Data stays in the app's SQLite and, when
   allowed, Apple Health.
 - **Not medical advice.** Every score is an estimate from published methods. Say so in onboarding
@@ -49,7 +51,19 @@ support that story. Nothing clutters it.
   `repo.refreshSeq` (`repo.baselineReloadID(dataSourceRaw:)` folds the setting in).
 - Baseline math: `Baselines.foldHistory(_:dayKeys:cfg:)` → `BaselineState`, then
   `Baselines.deviation(value, state:)`. Band = `baseline ± Baselines.sigma(state)`.
-- Readiness tier: `HRVReadiness.evaluate(avgHrv:)`. Sleep stages: `AnalyticsEngine.decodeStages`.
+- Readiness score: `BaselineReadouts.readinessScore(for:days:)` reads NOOP's stored `DailyMetric.recovery`
+  (never recomputed); `TodaySnapshot.readinessScore` (`TodayReadinessScore.build`) resolves it once per
+  morning for Home, the morning summary and the widgets. The seven-night HRV tier
+  (`HRVReadiness.evaluate(avgHrv:)`) is `TodayReadiness.weekPhrase` on the HRV tile. Sleep stages:
+  `AnalyticsEngine.decodeStages`.
+- The other readouts live in `Baseline/Components/BaselineReadoutsMetrics.swift` (map in `ENGINE_MAP.md`):
+  Steps (`BaselineReadouts.steps` / `stepReadings`, NOOP's `repo.resolvedSteps` strap → phone → estimate,
+  7- and 30-day averages), Calories (`calories(for:days:)`, the `active_kcal` column against the 30-day
+  average), Stress (`stressDay`, NOOP's `DaytimeStress` / `StressDayCurve` hour curve, 0–3), sleep timing
+  (`sleepTiming`: circular-mean bedtime and wake, SRI-like regularity over consecutive nights, nights inside
+  the `SleepWindow`), fitness (`fitness`: NOOP's `FitnessAgeEngine`, estimated VO2 max with the Uth fallback
+  and fitness age, one estimate per calendar week) and the evidence tier per metric (`MetricAccuracy.all`,
+  from `Baseline/Research/METRIC_ACCURACY.md`, drawn as `AccuracyBadge`).
 - Journal: `repo.saveJournalAnswer`, `repo.journalEntries(days:)`, catalog in `JournalCatalogStore`.
   Effects: `EffectRanker.rank(behaviors:controls:outcomeByDay:outcome:)`.
 - Workouts: `repo.workoutRows(days:)`, zones via `WorkoutZones.percents`.
@@ -93,21 +107,26 @@ support that story. Nothing clutters it.
   pattern (`StrandiOSShared/WidgetSnapshot.swift` + `StrandiOSWidgets/`), but it links **no NOOP package**.
   The one file both targets compile is `Baseline/App/BaselineWidgetSnapshot.swift` (Foundation only): the
   Codable glance (`dayKey`, HRV value / day / baseline / band / pre-computed ring fraction / Home's context
-  sentence / band position, resting HR, readiness label + `BaselineTheme` colour *name* or the calibrating
-  count, last night's minutes + 30-night average, `lastSyncedAt`, `generatedAt`), the App Group JSON store
+  sentence / band position, resting HR, the Readiness score with its tone label ("Good" / "Fair" /
+  "Low"), `BaselineTheme` colour *name* and day, or the calibrating count out of the 4-night seed, last
+  night's minutes + 30-night average, `lastSyncedAt`, `generatedAt`), the App Group JSON store
   (`BaselineWidgetStore`: `baseline-widget-snapshot.json` in
   `containerURL(forSecurityApplicationGroupIdentifier:)`, the id read from each bundle's own
   `AppGroupIdentifier` Info.plist key, which both targets set to `$(APP_GROUP_ID)` =
   `group.com.patrickschmidt.baseline`, the same value as both entitlements) and `BaselineDeepLink`.
   `Baseline/App/BaselineWidgetPublisher.swift` (app only) builds it with `BaselineWidgetSnapshot.make(from:)`
-  from the **same** `TodaySnapshot` Home draws, through the strap-first funnel `MorningSummaryNotifier.summary`
+  from the **same** `TodaySnapshot` Home draws (its `readinessScore` included: the score Home's card and
+  the morning summary's subtitle print), through the strap-first funnel `MorningSummaryNotifier.summary`
   uses, so a widget never disagrees with the tab behind it; `publish` dedups an unchanged glance
   (`rendersSame(as:)`, the clock excluded), writes atomically and calls `WidgetCenter.reloadAllTimelines()`.
   `BaselineApp` publishes on scene active, when the store loads and on `repo.refreshSeq` (debounced 2 s,
-  foreground-gated: NOOP's budget rule). Widgets: `HRVWidget` (small: HRV ring + number + "ms" + context
-  line + readiness pill; medium: adds Resting HR and last night's sleep) and `ReadinessLockWidget`
-  (`accessoryCircular` ring + number, `accessoryRectangular` readiness tier + HRV + RHR, `.primary` /
-  `.secondary` only because the lock screen renders vibrant). Colours are literal copies of `BaselineTheme`
+  foreground-gated: NOOP's budget rule). Widgets: `HRVWidget` (small: the Readiness pill "Readiness 72 ·
+  Good" over the HRV ring + number + "ms" + context line; medium: the ring beside Readiness, Resting HR
+  and last night's sleep) and `ReadinessLockWidget` (`accessoryCircular` ring + number,
+  `accessoryRectangular` "Readiness 72 · Good" + HRV + RHR, `.primary` / `.secondary` only because the lock
+  screen renders vibrant). Readiness on a widget is always the score, never the HRV tier; snapshot
+  `version` 2 renamed the v1 tier fields away so an old file reads as "Readiness · –" until the app
+  republishes. Colours are literal copies of `BaselineTheme`
   in `WidgetPalette` (the theme is app-target code); change both. Single-entry timeline, `.after(6h)` as a
   safety net for a background publish (the app reloads on every publish, so no shorter schedule). Empty
   state "Open Baseline to sync" until the first publish; gallery previews use `BaselineWidgetSnapshot.gallery`
@@ -129,6 +148,8 @@ support that story. Nothing clutters it.
 | `baseline.eveningCheckIn.enabled`, `baseline.eveningCheckIn.minutes` | Settings → Notifications | evening check-in opt-in; its time as minutes since midnight |
 | `baseline.sampleData.active` | Settings → About (`SettingsSampleData`), Home's `SampleDataPill`, `BaselineApp` scene-active, `MorningSummaryNotifier` | true while the synthetic 60-night sample (`BaselineSampleData`) is in the store; the read spine is re-pointed at it on every activation and the morning summary is suppressed |
 | `baseline.pendingTab` | `BaselineNotificationDelegate` | `"journal"` → Home with the journal sheet presented on the next root read, cleared once consumed |
+| `baseline.sleepWindow.bedMinutes`, `baseline.sleepWindow.wakeMinutes` | Settings → Sleep window (`SettingsSleepWindow`, through `BaselineReadouts.SleepWindow.save`) | the target bed and wake clock times as minutes after midnight (defaults 23:00 / 07:00, `SleepWindow.default`); read by the Sleep tab's timing card and the sleep-timing readouts |
+| `baseline.profileSet` | Settings → Profile (a date-of-birth or sex change, or "Use these"); `-baseline.profileSet YES` in the screenshot harness | the person has entered a date of birth and sex; until true the fitness estimate (`BaselineReadouts.fitness`, Progress › Fitness) passes nil age and sex and the card asks for them instead of using `ProfileStore`'s seeded 30 / male |
 
 ## v1 scope (build this, nothing more)
 
@@ -139,22 +160,31 @@ bar. The journal is not a tab: it is a sheet from Home, and its patterns are a s
 2. **Home** (`Baseline/Screens/Today/`, struct still `TodayScreen`): a day-by-day view. The nav title is the
    selected day ("Today" / "Yesterday" / "Wednesday 1 October"), a pinned glass day switcher (chevrons, plus a
    horizontal swipe on the content) walks back through stored days and forward to today, never a future day.
-   Every card shows that day: readiness (pill + sentence, chevron → Progress), HRV and Resting HR rings against
-   the baseline band, that night's sleep, that day's effort and workouts ("All workouts" → the list), signals
-   on today only, and a floating glass **Journal** button that opens `JournalSheet(day:)` for the selected day.
+   Every card shows that day: readiness (the 0–100 score on a horizontal track with its Good / Fair / Low
+   pill and one drivers sentence, chevron → Progress), signals on today only, HRV and Resting HR rings against
+   the baseline band, that day's steps against the 7-day average ("Steps so far" on today), that night's
+   sleep, that day's Stress curve, that day's effort, calories and workouts ("All workouts" → the list), and
+   a floating glass **Journal** button that opens `JournalSheet(day:)` for the selected day.
    The strap status pill stays small, in the bar beside the gear.
 3. **Trends**: a pinned glass segmented control over three sections. *Trends*: 7 / 30 / 90-day HRV and RHR
-   lines with the baseline band, sleep-duration and effort bars, tap a point for the day's numbers. *Progress*:
-   the long-term baseline screen embedded (HRV / Resting HR / sleep over months, horizon picker). *Habits*:
+   lines with the baseline band, the Effort & Readiness card (effort bars under the readiness line on one
+   0–100 axis, the two averages, one sentence comparing the mornings after the hardest days with the rest,
+   "All workouts" → the list), sleep-duration bars and Steps bars against the average; tap a point for the
+   day's numbers. *Progress*: the long-term baseline screen embedded (HRV / Resting HR / sleep timing and
+   duration / Fitness — estimated VO2 max and fitness age week by week, with its ±5 band — over months,
+   horizon picker). *Habits*:
    `JournalPatternsView()` — "What moves your HRV / Resting HR" ranked effects with sample size and confidence,
    and the alcohol / caffeine dose rows.
-4. **Sleep**: last night's ring against the 30-night average, hypnogram and stages, efficiency; list of nights,
-   each opening its detail.
+4. **Sleep**: last night's ring against the 30-night average, the Sleep timing card (noon-to-noon strip of the
+   last 14 nights against the target window, average bedtime and wake, regularity, "Tonight: aim for …",
+   "Set window" → Settings), hypnogram and stages (badged Low accuracy), efficiency; list of nights, each
+   opening its detail.
 5. **Journal** (`JournalSheet(day:)`): that day's habit chips (catalog plus custom, yes / no / clear, numeric
    steps), "Add habit", Done.
 6. **Settings** (gear): Devices, Apple Health, Data (Import WHOOP CSV / Apple Health export, Compare sources,
-   Export CSV, Data source), Notifications (morning summary, evening check-in), Profile (age, max HR, units),
-   About + licenses + disclaimer.
+   Export CSV, Data source), Notifications (morning summary, evening check-in), Profile (age, max HR, units;
+   Sleep window: target bedtime and wake time), About + licenses + disclaimer + "How accurate is this?"
+   (`AccuracyScreen`: every metric by evidence tier with its caveat and cited studies).
 
 ### Deferred
 AI coach, Apple Watch, Live Activities, lift log, hydration, caffeine, cycle tracking,
@@ -174,7 +204,8 @@ be exposed later.
   button and Welcome's action column (`GlassCTA`), the Settings section headers. Cards, chips, charts, rows,
   pills and in-card pickers are flat; never glass on glass; at most four custom glass regions on a screen.
 - Rings: one `MetricRing` per metric (HRV and Resting HR on Home, each in its own tile; Sleep's ring on the
-  Sleep tab). Readiness is a pill and a sentence. Never a three-ring triad (the trademark guardrail).
+  Sleep tab). Readiness is a number on a horizontal track bar (`ReadinessBar`), never a ring. Never a
+  three-ring triad (the trademark guardrail).
 - Every number keeps its context — the baseline, the band, the average — said once: a ring's context line,
   a card's one caption, never a repeated subtitle.
 - Empty states explain what will appear after the first synced night.
@@ -197,9 +228,10 @@ first screen). No Baseline screen records a route, so the honest fix is an upstr
 assignment until a route is actually recorded, after which the mode can go. Review notes in
 `Baseline/Store/ReviewNotes.md` should say the mode is unused.
 `Baseline/Store/` (App Store copy, review notes, privacy answers, checklist) is excluded from the bundle
-alongside `ENGINE_MAP.md`, `PRIVACY.md`, `scripts`, `Upstream/` (patch proposals) and `Components/DESIGN.md`.
-Anything else dropped under `Baseline/` that is not Swift or an asset catalog ships inside the app:
-add it to the `excludes` list in `project.yml` and let `release-check.sh` prove it.
+alongside `ENGINE_MAP.md`, `PRIVACY.md`, `scripts`, `Upstream/` (patch proposals), `Research/` (the engine
+capability notes and the metric-accuracy review, which quote NOOP's identifiers and name WHOOP) and
+`Components/DESIGN.md`. Anything else dropped under `Baseline/` that is not Swift or an asset catalog ships
+inside the app: add it to the `excludes` list in `project.yml` and let `release-check.sh` prove it.
 
 ### Before a TestFlight build
 

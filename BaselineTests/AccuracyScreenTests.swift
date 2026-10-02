@@ -68,4 +68,13 @@ final class AccuracyScreenTests: XCTestCase {
         XCTAssertEqual(SettingsSleepWindowCard.spanText(0), "0h")
         XCTAssertEqual(SettingsSleepWindowCard.spanText(BaselineReadouts.SleepWindow.default.spanMinutes), "8h")
     }
+
+    /// The caption says what the window drives (the Sleep tab's in-window count, at the readout's
+    /// tolerance) and never claims regularity, which is window-independent.
+    func testSleepWindowContextText() {
+        let text = SettingsSleepWindowCard.contextText
+        XCTAssertEqual(text, "The Sleep tab counts the nights that land inside this window (\u{00B1} 30 min).")
+        XCTAssertTrue(text.contains("\(BaselineReadouts.SleepWindow.toleranceMin) min"))
+        XCTAssertFalse(text.lowercased().contains("regularity"))
+    }
 }

@@ -1,12 +1,16 @@
 #if os(iOS)
 import SwiftUI
 
-/// Settings › Profile (second card): the sleep window Baseline measures regularity against. Two
-/// `hourAndMinute` pickers (bedtime, wake time) bound straight to the readout's UserDefaults keys
-/// (`BaselineReadouts.SleepWindow.bedKey` / `wakeKey`, minutes since midnight), so the Sleep tab's
-/// timing card reads the same numbers through `SleepWindow.stored()` with no model in between. The
-/// span the two times enclose is the card's one context fact, in the accessory pill; the one line
-/// under the pickers says what the window is for. Defaults 23:00 → 07:00 until a time is changed.
+/// Settings › Profile (second card): the target sleep window the Sleep tab's timing card draws as
+/// its strip's band and counts nights against ("N of 14 nights inside your window", each within
+/// `SleepWindow.toleranceMin` of both targets). The regularity index is NOT read against it: that
+/// compares consecutive nights with each other (`BaselineReadouts.sleepRegularity`), so moving the
+/// window never moves the Regularity cell. Two `hourAndMinute` pickers (bedtime, wake time) bound
+/// straight to the readout's UserDefaults keys (`BaselineReadouts.SleepWindow.bedKey` / `wakeKey`,
+/// minutes since midnight), so the Sleep tab reads the same numbers through `SleepWindow.stored()`
+/// with no model in between. The span the two times enclose is the card's one context fact, in the
+/// accessory pill; the one line under the pickers (`contextText`) says what the window does.
+/// Defaults 23:00 → 07:00 until a time is changed.
 struct SettingsSleepWindowCard: View {
     @AppStorage(BaselineReadouts.SleepWindow.bedKey)
     private var bedMinutes = BaselineReadouts.SleepWindow.default.bedMinutes
@@ -28,7 +32,7 @@ struct SettingsSleepWindowCard: View {
             timeRow(icon: "bed.double", title: "Bedtime", selection: bedTime)
             SettingsDivider()
             timeRow(icon: "sunrise", title: "Wake time", selection: wakeTime)
-            Text("Baseline measures regularity against this window.")
+            Text(Self.contextText)
                 .font(BaselineTheme.caption)
                 .foregroundStyle(BaselineTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -53,6 +57,12 @@ struct SettingsSleepWindowCard: View {
     private func time(_ minutes: Binding<Int>) -> Binding<Date> {
         Binding(get: { EveningCheckInScheduler.date(minutesSinceMidnight: minutes.wrappedValue) },
                 set: { minutes.wrappedValue = EveningCheckInScheduler.minutes(from: $0) })
+    }
+
+    /// What the window drives, with the tolerance read from the readout so the two cannot drift apart.
+    /// It names the count, not regularity: the index is window-independent.
+    static var contextText: String {
+        "The Sleep tab counts the nights that land inside this window (\u{00B1} \(BaselineReadouts.SleepWindow.toleranceMin) min)."
     }
 
     /// "8h" / "7h 30m" for the window's span; "0h" when both times match (no window to measure against).

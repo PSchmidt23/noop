@@ -90,9 +90,12 @@ struct TrendsSeries {
         let average: Double?
     }
 
-    /// Effort bars under the Readiness line, one point per day in range that has either. Both columns
-    /// are 0–100 (the funnel's `strain` and `recovery`), so "outran" is a plain comparison on one axis:
-    /// a day whose effort reads higher than that morning's readiness.
+    /// Effort bars under the Readiness line, one point per day in range that has either. A point holds
+    /// that morning's score and the effort that followed it; the two are drawn on one 0–100 axis (the
+    /// funnel's `strain` and `recovery`) but are different scales (a log of training load against a
+    /// z-composite anchored near 58), so they are never compared number against number. The one
+    /// relation the engine itself reads is lagged, effort on day D into the score of D+1 (NOOP's
+    /// `RecoveryScorer` takes `priorDayEffort`), and that is what `morningAfter` states.
     struct EffortReadiness {
         let points: [EffortReadinessPoint]
         /// Mean effort over the days that recorded one (the same number as `effort.average`).
@@ -101,25 +104,26 @@ struct TrendsSeries {
         let readinessAverage: Double?
         let effortDays: Int
         let readinessDays: Int
-        /// Days carrying both, and how many of them effort outran readiness.
-        let pairedDays: Int
-        let outranDays: Int
+        /// In-range days with an effort and a readiness score the next morning (the pairs
+        /// `morningAfter` reads; the range's last day never pairs, its next morning has not come).
+        let nextMorningPairs: Int
+        /// nil until `minMorningAfterPairs` pairs exist.
+        let morningAfter: MorningAfter?
     }
 
-    struct ReadinessNight: Identifiable {
-        let id: String
-        let date: Date
-        /// nil = no HRV that night, or fewer than 14 valid nights banked by then.
-        let tier: ReadinessTier?
+    /// Readiness the morning after the range's hardest days against the morning after the others.
+    struct MorningAfter {
+        /// The top `hardDays` paired days by effort (`maxHardDays` at most, a third of the pairs).
+        let hardDays: Int
+        /// Mean next-morning readiness after those days …
+        let afterHard: Double
+        /// … and after every other paired day.
+        let afterOthers: Double
     }
 
-    struct Readiness {
-        let nights: [ReadinessNight]
-        /// Tier this morning (fold of every night up to today).
-        let latest: ReadinessTier?
-    }
-
-    static let readinessNights = 14
+    /// Pairs before the morning-after sentence is said: two hard days against four others at the least.
+    static let minMorningAfterPairs = 6
+    static let maxHardDays = 5
 
     let range: TrendsRange
     /// Nights anywhere in history carrying HRV, resting HR or sleep — the empty-state gate.
@@ -139,7 +143,6 @@ struct TrendsSeries {
     /// False when no day in the quarter behind `now` recorded steps (a 4.0 without phone steps, a CSV
     /// import): the screen then leaves the Steps card out instead of showing an empty one forever.
     let hasSteps: Bool
-    let readiness: Readiness?
 
     /// The window's first and last day keys (local calendar days, `range.days` long, ending on `now`).
     static func window(range: TrendsRange, now: Date = Date()) -> (startKey: String, todayKey: String) {
@@ -155,7 +158,6 @@ struct TrendsSeries {
     /// nil falls back to the funnel table's `steps` column (previews, tests).
     static func build(days: [DailyMetric], range: TrendsRange,
                       stepReadings: [(day: String, value: Double)]? = nil, now: Date = Date()) -> TrendsSeries {
-        let cal = Calendar.current
         let (startKey, todayKey) = window(range: range, now: now)
 
         // `days` is oldest → newest; ISO keys compare chronologically.
@@ -197,39 +199,55 @@ struct TrendsSeries {
         let steps = stepsMetric(readings: stepReadings ?? BaselineDays.series(key: "steps", days: upToToday),
                                 startKey: startKey, todayKey: todayKey, lookbackKey: stepsStart)
 
-        let readiness = readinessStrip(days: upToToday, now: now, cal: cal)
-
         return TrendsSeries(range: range, totalNights: totalNights, hrv: hrv, restingHr: rhr,
                             sleep: sleep, sleepNights: sleepBars.count, sleepNights7h: sleep7h,
                             effort: effort, effortPeak: peak, effortReadiness: effortReadiness,
                             steps: steps.metric, stepsDays: steps.metric.bars.count,
-                            stepsAboveAverage: steps.aboveAverage, hasSteps: steps.hasAny,
-                            readiness: readiness)
+                            stepsAboveAverage: steps.aboveAverage, hasSteps: steps.hasAny)
     }
 
     // MARK: - Effort and Readiness
 
     /// One point per in-range day with effort or a readiness score; the averages count only the days
-    /// that have each. A day "outran" when both exist and effort is the larger number.
+    /// that have each. The morning-after pairs are built inside the range too: the day after an
+    /// in-range day is either in range or tomorrow, which no row carries yet.
     static func effortReadiness(inRange: [DailyMetric], effortAverage: Double?) -> EffortReadiness {
         var points: [EffortReadinessPoint] = []
         var readinessValues: [Double] = []
         var effortDays = 0
-        var paired = 0
-        var outran = 0
+        var recoveryByDay: [String: Double] = [:]
         for d in inRange {
             guard d.strain != nil || d.recovery != nil, let date = TrendsDayKey.date(d.day) else { continue }
             points.append(EffortReadinessPoint(id: d.day, date: date, effort: d.strain, readiness: d.recovery))
             if d.strain != nil { effortDays += 1 }
-            if let r = d.recovery { readinessValues.append(r) }
-            if let e = d.strain, let r = d.recovery {
-                paired += 1
-                if e > r { outran += 1 }
+            if let r = d.recovery {
+                readinessValues.append(r)
+                recoveryByDay[d.day] = r
             }
         }
+
+        // Effort on D with the score of D+1 (`cutoffKey` with a negative carry is "the day after").
+        var pairs: [(day: String, effort: Double, nextMorning: Double)] = []
+        for d in inRange {
+            guard let e = d.strain,
+                  let next = recoveryByDay[Baselines.cutoffKey(todayKey: d.day, carryDays: -1)] else { continue }
+            pairs.append((d.day, e, next))
+        }
+
         return EffortReadiness(points: points, effortAverage: effortAverage, readinessAverage: mean(readinessValues),
                                effortDays: effortDays, readinessDays: readinessValues.count,
-                               pairedDays: paired, outranDays: outran)
+                               nextMorningPairs: pairs.count, morningAfter: morningAfter(pairs: pairs))
+    }
+
+    /// The hardest third of the pairs (at most `maxHardDays`, ties to the earlier day) against the rest;
+    /// nil below `minMorningAfterPairs` pairs, so a two-day week never reads as a pattern.
+    static func morningAfter(pairs: [(day: String, effort: Double, nextMorning: Double)]) -> MorningAfter? {
+        guard pairs.count >= minMorningAfterPairs else { return nil }
+        let hardCount = min(maxHardDays, pairs.count / 3)
+        let byEffort = pairs.sorted { $0.effort != $1.effort ? $0.effort > $1.effort : $0.day < $1.day }
+        guard let hard = mean(byEffort.prefix(hardCount).map(\.nextMorning)),
+              let others = mean(byEffort.dropFirst(hardCount).map(\.nextMorning)) else { return nil }
+        return MorningAfter(hardDays: hardCount, afterHard: hard, afterOthers: others)
     }
 
     // MARK: - Steps
@@ -317,35 +335,6 @@ struct TrendsSeries {
         guard w >= 2 else { return nil }
         guard let first = mean(Array(values.prefix(w))), let last = mean(Array(values.suffix(w))) else { return nil }
         return last - first
-    }
-
-    // MARK: - Readiness strip
-
-    /// One dot per calendar night for the last 14 nights, coloured by the HRV readiness tier *as of that
-    /// morning* (evaluate over everything up to and including that night). nil when no night has a tier
-    /// yet (fewer than 14 valid HRV nights), so the screen can skip the strip.
-    private static func readinessStrip(days: [DailyMetric], now: Date, cal: Calendar) -> Readiness? {
-        guard let windowStart = cal.date(byAdding: .day, value: -(readinessNights - 1), to: now) else { return nil }
-        let windowKey = Repository.localDayKey(windowStart)
-
-        var series: [Double?] = []
-        series.reserveCapacity(days.count)
-        var tierByDay: [String: ReadinessTier] = [:]
-        for d in days {
-            series.append(d.avgHrv)
-            if d.day >= windowKey, d.avgHrv != nil, let r = HRVReadiness.evaluate(avgHrv: series) {
-                tierByDay[d.day] = r.tier
-            }
-        }
-        guard !tierByDay.isEmpty else { return nil }
-
-        var nights: [ReadinessNight] = []
-        for offset in 0..<readinessNights {
-            guard let date = cal.date(byAdding: .day, value: offset, to: windowStart) else { continue }
-            let key = Repository.localDayKey(date)
-            nights.append(ReadinessNight(id: key, date: date, tier: tierByDay[key]))
-        }
-        return Readiness(nights: nights, latest: HRVReadiness.evaluate(avgHrv: series)?.tier)
     }
 }
 #endif

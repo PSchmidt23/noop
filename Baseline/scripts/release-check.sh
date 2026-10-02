@@ -72,7 +72,8 @@ check "launch colour LaunchBackground compiled into Assets.car" sh -c "xcrun --s
 STRAY=$(cd "$APP" && find . -maxdepth 1 \( -name "*.md" -o -name "*.sh" -o -name "*.swift" -o -name "*.patch" -o -name "*.yml" \) ! -name "ATTRIBUTION.md" | sed 's|^\./||')
 [ -d "$APP/Store" ] && STRAY="$STRAY Store/"
 [ -d "$APP/scripts" ] && STRAY="$STRAY scripts/"
-[ -z "${STRAY// /}" ] && pass "no repo documents in the bundle (Store/, ENGINE_MAP.md, PRIVACY.md, DESIGN.md, scripts, patches)" \
+[ -d "$APP/Research" ] && STRAY="$STRAY Research/"
+[ -z "${STRAY// /}" ] && pass "no repo documents in the bundle (Store/, Research/, ENGINE_MAP.md, PRIVACY.md, DESIGN.md, scripts, patches)" \
                        || fail "repo documents leaked into the bundle: $(echo $STRAY | tr '\n' ' ')"
 
 # 3. Entitlements -----------------------------------------------------------------------------

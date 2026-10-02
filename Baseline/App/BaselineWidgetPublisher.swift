@@ -9,8 +9,9 @@ import StrandAnalytics
 extension BaselineWidgetSnapshot {
     /// Flattens the `TodaySnapshot` Home draws into the widget's glance. Pure, so `WidgetSnapshotTests`
     /// can hold it against `TodaySnapshot` for a fixture: every number is read from the snapshot, never
-    /// recomputed, and every phrase is the funnel's (`BaselineBand.positionPhrase`,
-    /// `ReadinessTier.baselineLabel`, `TodayFormat`), so the widget prints what the tile prints.
+    /// recomputed (the Readiness score from `TodaySnapshot.readinessScore`, the one Home's card and the
+    /// morning summary read), and every phrase is the funnel's (`BaselineBand.positionPhrase`,
+    /// `ReadinessTone.label`, `TodayFormat`), so the widget prints what the tile prints.
     static func make(from s: TodaySnapshot, lastSyncedAt: Date?, generatedAt: Date) -> BaselineWidgetSnapshot {
         var out = BaselineWidgetSnapshot(dayKey: s.todayKey, generatedAt: generatedAt)
         out.lastSyncedAt = lastSyncedAt
@@ -33,13 +34,16 @@ extension BaselineWidgetSnapshot {
         }
         out.rhrDeltaText = contextText(s.restingHr, unit: "bpm", todayKey: s.todayKey)
 
-        switch s.readiness {
-        case .tier(let tier):
-            out.readinessLabel = tier.baselineLabel
-            out.readinessColorName = colorName(tier)
+        switch s.readinessScore {
+        case .score(let r, _):
+            out.readinessScore = r.score
+            out.readinessToneLabel = r.tone.label
+            out.readinessToneName = colorName(r.tone)
+            out.readinessDay = r.day
         case .calibrating(let nights):
-            out.readinessCalibratingNights = nights
-        case .stale:
+            out.readinessNightsSoFar = nights
+            out.readinessSeedNights = BaselineReadouts.readinessSeedNights
+        case .stale, .missing:
             break
         }
 
@@ -74,12 +78,12 @@ extension BaselineWidgetSnapshot {
         }
     }
 
-    /// The `BaselineTheme` token behind `ReadinessTier.baselineColor`, by name, for the extension's palette.
-    static func colorName(_ tier: ReadinessTier) -> String {
-        switch tier {
-        case .primed: return "good"
-        case .normal: return "accent"
-        case .suppressed: return "watch"
+    /// The `BaselineTheme` token `ReadinessBar` paints a tone with, by name, for the extension's palette.
+    static func colorName(_ tone: ReadinessTone) -> String {
+        switch tone {
+        case .good: return "good"
+        case .watch: return "watch"
+        case .low: return "low"
         }
     }
 }

@@ -17,7 +17,8 @@ final class WidgetSnapshotTests: BaselineEngineTestCase {
     }
 
     private func fixture() throws -> (TodaySnapshot, BaselineWidgetSnapshot) {
-        let days = priorNights(20, hrv: 60, rhr: 50) + [Fixtures.metric(today, hrv: 61, rhr: 52)]
+        // This morning's row carries NOOP's stored score (72: "Good"), as a scored strap night does.
+        let days = priorNights(20, hrv: 60, rhr: 50) + [Fixtures.metric(today, hrv: 61, rhr: 52, recovery: 72)]
         let n0 = try XCTUnwrap(SleepNightBuilder.build(fromDaily: Fixtures.metric(today, sleepMin: 480, efficiency: 0.89)))
         let n1 = try XCTUnwrap(SleepNightBuilder.build(fromDaily: Fixtures.metric(Fixtures.key(today, minus: 1), sleepMin: 420)))
         let n2 = try XCTUnwrap(SleepNightBuilder.build(fromDaily: Fixtures.metric(Fixtures.key(today, minus: 2), sleepMin: 450)))
@@ -64,22 +65,64 @@ final class WidgetSnapshotTests: BaselineEngineTestCase {
         XCTAssertFalse(w.isEmpty)
     }
 
-    func testReadinessTierCarriesHomeLabelAndColourName() throws {
+    /// Readiness on a widget is the 0–100 score Home's card leads with, number and tone word, never the
+    /// seven-night HRV tier under the same noun (Home moved the tier to the HRV tile's week phrase).
+    func testReadinessScoreCarriesHomeNumberWordAndColourName() throws {
         let (snap, w) = try fixture()
-        guard case .tier(let tier) = snap.readiness else { return XCTFail("20 nights must score a tier") }
-        XCTAssertEqual(w.readinessLabel, tier.baselineLabel)
-        XCTAssertEqual(w.readinessColorName, BaselineWidgetSnapshot.colorName(tier))
-        XCTAssertNil(w.readinessCalibratingNights)
+        guard case .score(let r, let stamp) = snap.readinessScore else { return XCTFail("a scored morning must carry its score") }
+        XCTAssertNil(stamp, "this morning's own score")
+        XCTAssertEqual(w.readinessScore, r.score)
+        XCTAssertEqual(w.readinessScore, 72)
+        XCTAssertEqual(w.readinessToneLabel, r.tone.label)
+        XCTAssertEqual(w.readinessToneLabel, "Good")
+        XCTAssertEqual(w.readinessToneName, BaselineWidgetSnapshot.colorName(r.tone))
+        XCTAssertEqual(w.readinessToneName, "good")
+        XCTAssertEqual(w.readinessDay, today)
+        XCTAssertNil(w.readinessNightsSoFar)
+        XCTAssertNil(w.readinessSeedNights)
+        // The lock screen's line is the morning summary's subtitle, assembled from the same two fields.
+        let line = "Readiness \(Int(try XCTUnwrap(w.readinessScore).rounded())) · \(try XCTUnwrap(w.readinessToneLabel))"
+        XCTAssertEqual(line, snap.readinessScore.summaryLine)
+        XCTAssertEqual(line, "Readiness 72 · Good")
+        if case .tier(let tier) = snap.readiness {
+            XCTAssertNotEqual(w.readinessToneLabel, tier.baselineLabel, "the week's tier never poses as the score's word")
+        }
     }
 
-    func testCalibratingReadinessCarriesTheCount() throws {
-        let days = priorNights(5, hrv: 60) + [Fixtures.metric(today, hrv: 61)]
+    func testColourNamesCoverEveryTone() {
+        XCTAssertEqual(BaselineWidgetSnapshot.colorName(.good), "good")
+        XCTAssertEqual(BaselineWidgetSnapshot.colorName(.watch), "watch")
+        XCTAssertEqual(BaselineWidgetSnapshot.colorName(.low), "low")
+    }
+
+    func testCalibratingReadinessCarriesTheCountOutOfTheSeed() throws {
+        // Three valid nights, under the 4-night seed: Home says "Readiness after 4 nights · 3 so far".
+        let days = priorNights(2, hrv: 60) + [Fixtures.metric(today, hrv: 61)]
         let snap = TodaySnapshot.build(days: days, nights: [], todayKey: today)
+        guard case .calibrating(let n) = snap.readinessScore else { return XCTFail("three nights must be calibrating") }
+        XCTAssertEqual(n, 3)
         let w = BaselineWidgetSnapshot.make(from: snap, lastSyncedAt: nil, generatedAt: now)
-        XCTAssertNil(w.readinessLabel)
-        XCTAssertEqual(w.readinessCalibratingNights, 6)
+        XCTAssertNil(w.readinessScore)
+        XCTAssertNil(w.readinessToneLabel)
+        XCTAssertNil(w.readinessToneName)
+        XCTAssertEqual(w.readinessNightsSoFar, 3)
+        XCTAssertEqual(w.readinessSeedNights, BaselineReadouts.readinessSeedNights)
+        XCTAssertEqual(w.readinessSeedNights, 4)
         XCTAssertEqual(w.hrvMs, 61)
         XCTAssertNil(w.sleepMinutes)
+    }
+
+    func testUnscoredMorningPastTheSeedPublishesNoReadiness() throws {
+        // Twenty nights without a stored score (a source without one): nothing to carry, so no number,
+        // no word and no count: the widget prints "Readiness · –", never a tier.
+        let days = priorNights(20, hrv: 60) + [Fixtures.metric(today, hrv: 61)]
+        let snap = TodaySnapshot.build(days: days, nights: [], todayKey: today)
+        guard case .missing = snap.readinessScore else { return XCTFail("expected missing") }
+        let w = BaselineWidgetSnapshot.make(from: snap, lastSyncedAt: nil, generatedAt: now)
+        XCTAssertNil(w.readinessScore)
+        XCTAssertNil(w.readinessToneLabel)
+        XCTAssertNil(w.readinessNightsSoFar)
+        XCTAssertFalse(w.isEmpty, "HRV alone is a glance")
     }
 
     func testOnBaselineWording() throws {
@@ -110,8 +153,9 @@ final class WidgetSnapshotTests: BaselineEngineTestCase {
         XCTAssertEqual(w.hrvDay, lastNight)
         XCTAssertNil(w.hrvRingFraction)
         XCTAssertEqual(w.hrvDeltaText, "No night since \(TodayFormat.dayLabel(lastNight))")
-        XCTAssertNil(w.readinessLabel)
-        XCTAssertNil(w.readinessCalibratingNights)
+        XCTAssertNil(w.readinessScore, "a stale HRV night pauses the score too, as Home")
+        XCTAssertNil(w.readinessToneLabel)
+        XCTAssertNil(w.readinessNightsSoFar)
     }
 
     func testEmptyStoreIsEmptyGlance() {
@@ -131,6 +175,8 @@ final class WidgetSnapshotTests: BaselineEngineTestCase {
         XCTAssertEqual(back.version, BaselineWidgetSnapshot.currentVersion)
         XCTAssertTrue(back.rendersSame(as: w))
         XCTAssertEqual(back.hrvMs, w.hrvMs)
+        XCTAssertEqual(back.readinessScore, w.readinessScore)
+        XCTAssertEqual(back.readinessToneLabel, w.readinessToneLabel)
         XCTAssertEqual(back.sleepAverageMinutes, w.sleepAverageMinutes)
         // ISO-8601 dates survive to the second.
         XCTAssertEqual(try XCTUnwrap(back.lastSyncedAt).timeIntervalSince1970,
@@ -142,6 +188,21 @@ final class WidgetSnapshotTests: BaselineEngineTestCase {
         let back = try BaselineWidgetStore.decode(Data(json.utf8))
         XCTAssertEqual(back.dayKey, "2026-02-18")
         XCTAssertTrue(back.isEmpty)
+    }
+
+    func testVersionOneTierFieldsNeverReadAsTheScore() throws {
+        // A v1 file carried the seven-night tier under "readinessLabel". It still decodes (HRV and the
+        // rest are drawn), but the renamed readiness fields stay nil until the app republishes: "On
+        // baseline" can never be printed as the score's word.
+        let json = #"{"version":1,"dayKey":"2026-02-18","generatedAt":"2026-02-18T07:00:00Z","hrvMs":61,"readinessLabel":"On baseline","readinessColorName":"accent","readinessCalibratingNights":null}"#
+        let back = try BaselineWidgetStore.decode(Data(json.utf8))
+        XCTAssertEqual(back.hrvMs, 61)
+        XCTAssertNil(back.readinessScore)
+        XCTAssertNil(back.readinessToneLabel)
+        XCTAssertNil(back.readinessToneName)
+        XCTAssertNil(back.readinessNightsSoFar)
+        XCTAssertFalse(back.isEmpty)
+        XCTAssertLessThan(back.version, BaselineWidgetSnapshot.currentVersion)
     }
 
     func testRendersSameIgnoresOnlyTheClock() throws {

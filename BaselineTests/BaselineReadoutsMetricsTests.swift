@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 import WhoopStore
 import StrandAnalytics
 @testable import Baseline
@@ -26,12 +27,20 @@ final class BaselineReadoutsMetricsTests: BaselineEngineTestCase {
 
     // MARK: Readiness
 
-    func testReadinessTone_cutsAtNoopsBands() {
-        XCTAssertEqual(BaselineReadouts.readinessTone(33.9), .low)
-        XCTAssertEqual(BaselineReadouts.readinessTone(34), .watch)
-        XCTAssertEqual(BaselineReadouts.readinessTone(66.9), .watch)
-        XCTAssertEqual(BaselineReadouts.readinessTone(67), .good)
+    func testReadinessTone_cutsAtNoopsBands_andTheWordMatchesTheColour() {
+        // The cuts are the engine's own constants, never literals of ours, so a change upstream moves the
+        // tone and everything drawn from it together.
+        let red = RecoveryScorer.bandRedMax, yellow = RecoveryScorer.bandYellowMax
+        XCTAssertEqual(BaselineReadouts.readinessTone(red - 0.1), .low)
+        XCTAssertEqual(BaselineReadouts.readinessTone(red), .watch)
+        XCTAssertEqual(BaselineReadouts.readinessTone(yellow - 0.1), .watch)
+        XCTAssertEqual(BaselineReadouts.readinessTone(yellow), .good)
         XCTAssertEqual(BaselineReadouts.readinessTone(100), .good)
+        // One signal per tone: the watch tone is drawn in the watch colour, so its word is "Fair", never
+        // a reassurance like "Steady".
+        XCTAssertEqual(ReadinessTone.good.label, "Good")
+        XCTAssertEqual(ReadinessTone.watch.label, "Fair")
+        XCTAssertEqual(ReadinessTone.low.label, "Low")
         for tone in [ReadinessTone.good, .watch, .low] {
             for word in forbidden { XCTAssertFalse(tone.label.lowercased().contains(word), tone.label) }
         }
@@ -74,6 +83,32 @@ final class BaselineReadoutsMetricsTests: BaselineEngineTestCase {
         XCTAssertTrue(r.drivers.isEmpty)
         XCTAssertNil(r.driversSentence)
         XCTAssertEqual(r.confidence, .calibrating)
+    }
+
+    func testReadinessScore_anImportedScoreKeepsItsNumberAndGetsNoDrivers() throws {
+        // Ten strap-scored nights, then a morning the export scored (90) and the strap did not.
+        var days = (1...10).reversed().map { night(key($0), hrv: 60, rhr: 50, recovery: 60, sleep: nil) }
+        days.append(night(today, hrv: 72, rhr: 55, recovery: 90, sleep: nil))
+        let rows = days.map { SourcedDailyMetric(metric: $0, source: $0.day == today ? .whoopImport : .noopComputed) }
+        let strap = try XCTUnwrap(BaselineReadouts.strapScores(rows))
+        XCTAssertEqual(strap.count, 10)
+        XCTAssertNil(strap[today], "the strap scored nothing for this morning")
+
+        let imported = try XCTUnwrap(BaselineReadouts.readinessScore(for: today, days: days, epoch: 0, strapScores: strap))
+        XCTAssertEqual(imported.score, 90, "the export's number is the number shown")
+        XCTAssertTrue(imported.drivers.isEmpty, "NOOP's driver points explain nothing about an export's score")
+        XCTAssertNil(imported.driversSentence)
+        XCTAssertEqual(imported.confidence, .building, "the caption's baseline is still the strap's ten nights")
+
+        // The strap's own score (the same number under strap-first) keeps its drivers; a strap that scored
+        // the morning differently from the number shown (an export winning under merged) does not.
+        let own = try XCTUnwrap(BaselineReadouts.readinessScore(for: today, days: days, epoch: 0, strapScores: [today: 90]))
+        XCTAssertFalse(own.drivers.isEmpty)
+        let shadowed = try XCTUnwrap(BaselineReadouts.readinessScore(for: today, days: days, epoch: 0, strapScores: [today: 61]))
+        XCTAssertTrue(shadowed.drivers.isEmpty)
+        // No per-source rows (a preview, or `days` assigned directly): every score is taken as the strap's.
+        XCTAssertNil(BaselineReadouts.strapScores([]))
+        XCTAssertFalse(try XCTUnwrap(BaselineReadouts.readinessScore(for: today, days: days, epoch: 0)).drivers.isEmpty)
     }
 
     func testReadinessCalibrationNights_countsValidHrvNightsUnderTheSeed() {
@@ -151,6 +186,65 @@ final class BaselineReadoutsMetricsTests: BaselineEngineTestCase {
         XCTAssertEqual(empty.recent.count, 7)
     }
 
+    func testStepReadings_importsOnlyDropsTheStrapsComputedPoints() {
+        // NOOP's Apple-preferred resolver appends the strap's computed steps ("<deviceId>-noop") after the
+        // phone's sources; "Imports only" promises the strap's rows are gone, so those points are dropped.
+        let point = { (day: String, value: Double, source: String) in
+            ResolvedMetricPoint(day: day, value: value, source: source, sourceKey: "steps")
+        }
+        let resolved = [point(key(3), 4_000, Repository.appleHealthSource),
+                        point(key(2), 9_000, "whoop-abc-noop"),
+                        point(key(1), 5_000, Repository.healthConnectSource),
+                        point(today, 7_000, "whoop-abc-noop")]
+        let funnel: [(day: String, value: Double)] = [(key(5), 3_000), (today, 1_000), (key(40), 2_000)]
+        let imports = BaselineReadouts.stepReadings(mode: .importOnly, resolved: resolved, funnel: funnel,
+                                                    from: key(30), to: today)
+        XCTAssertEqual(imports.map(\.day), [key(5), key(3), key(1), today])
+        XCTAssertEqual(imports.map(\.value), [3_000, 4_000, 5_000, 1_000],
+                       "the strap's counts are gone; the funnel's import-only column fills today and the day the resolver lacks")
+        XCTAssertFalse(imports.contains { $0.day == key(2) })
+        XCTAssertFalse(imports.contains { $0.day == key(40) }, "outside the window")
+
+        // Strap-first keeps every resolved point verbatim (the resolver already ranked the sources).
+        let strapFirst = BaselineReadouts.stepReadings(mode: .strapFirst, resolved: resolved, funnel: funnel,
+                                                       from: key(30), to: today)
+        XCTAssertEqual(strapFirst.map(\.value), [3_000, 4_000, 9_000, 5_000, 7_000])
+        XCTAssertEqual(BaselineReadouts.importedStepSources, [Repository.appleHealthSource, Repository.healthConnectSource])
+    }
+
+    func testStepsTile_todayWithholdsTheJudgement_andVoiceOverHearsTheAverage() {
+        // A completed day is judged against the average; today is a running count and is not.
+        XCTAssertEqual(StepsTile.title(isToday: false), "Steps")
+        XCTAssertEqual(StepsTile.title(isToday: true), "Steps so far")
+        XCTAssertEqual(StepsTile.context(steps: 1_800, average: 7_000, averageLabel: "7-day", daysUntilAverage: nil, isToday: false),
+                       "\u{2212}5,200 vs your 7-day average")
+        XCTAssertEqual(StepsTile.context(steps: 1_800, average: 7_000, averageLabel: "7-day", daysUntilAverage: nil, isToday: true),
+                       "Builds through the day")
+        XCTAssertEqual(StepsTile.context(steps: 1_800, average: nil, averageLabel: "7-day", daysUntilAverage: 2, isToday: true),
+                       "Builds through the day · 7-day average after 2 more days")
+        XCTAssertEqual(StepsTile.context(steps: 1_800, average: nil, averageLabel: "7-day", daysUntilAverage: 1, isToday: false),
+                       "7-day average after 1 more day")
+        XCTAssertEqual(StepsTile.context(steps: nil, average: 7_000, averageLabel: "7-day", daysUntilAverage: nil, isToday: true),
+                       "No steps recorded yet")
+        XCTAssertEqual(StepsTile.context(steps: nil, average: 7_000, averageLabel: "7-day", daysUntilAverage: nil, isToday: false),
+                       "No steps recorded")
+
+        XCTAssertEqual(StepsTile.tone(steps: 1_800, average: 7_000, isToday: false), BaselineTheme.watch, "a quarter under, on a completed day")
+        XCTAssertEqual(StepsTile.tone(steps: 1_800, average: 7_000, isToday: true), BaselineTheme.steps, "a partial count earns no judgement")
+        XCTAssertEqual(StepsTile.tone(steps: 8_000, average: 7_000, isToday: false), BaselineTheme.good)
+        XCTAssertEqual(StepsTile.tone(steps: 8_000, average: 7_000, isToday: true), BaselineTheme.steps)
+        XCTAssertEqual(StepsTile.tone(steps: 6_900, average: 7_000, isToday: false), BaselineTheme.steps)
+        XCTAssertEqual(StepsTile.tone(steps: nil, average: 7_000, isToday: false), BaselineTheme.textTertiary)
+
+        // VoiceOver hears the "avg" caption, not only the delta.
+        XCTAssertEqual(StepsTile.accessibilityLabel(numeral: "8,412", average: 6_000, averageLabel: "7-day",
+                                                    context: "+2,412 vs your 7-day average"),
+                       "8,412 steps, 7-day average 6,000, +2,412 vs your 7-day average")
+        XCTAssertEqual(StepsTile.accessibilityLabel(numeral: "1,800", average: nil, averageLabel: "7-day",
+                                                    context: "Builds through the day"),
+                       "1,800 steps, Builds through the day")
+    }
+
     // MARK: Calories
 
     func testCalories_readoutAndRoundedText() throws {
@@ -172,6 +266,30 @@ final class BaselineReadoutsMetricsTests: BaselineEngineTestCase {
         let none = BaselineReadouts.calories(for: today, days: [night(today, hrv: 60, rhr: 50, recovery: 60)])
         XCTAssertNil(none.kcal)
         XCTAssertNil(none.average30)
+    }
+
+    func testCalories_beforeTheRolloverReadTheSameRowAsEffort() throws {
+        // 01:30 on `today`: NOOP's logical day is still yesterday. Yesterday's row carries the figure of the
+        // day being lived; today's row has no banked night yet, so Calories follows the Effort cell to
+        // yesterday's row and the 30-day average is taken before yesterday.
+        var days = (2...31).reversed().map { night(key($0), hrv: 60, rhr: 50, recovery: 60, kcal: 2_000) }
+        days.append(night(key(1), hrv: 60, rhr: 50, recovery: 60, kcal: 2_300))
+        days.append(night(today, hrv: 60, rhr: 50, recovery: nil, sleep: nil))
+        let early = BaselineReadouts.calories(for: today, days: days, logicalKey: key(1))
+        XCTAssertEqual(early.kcal, 2_300)
+        XCTAssertEqual(try XCTUnwrap(early.average30), 2_000, accuracy: 1e-9, "the 30 days before yesterday")
+        XCTAssertEqual(early.observed30, 30)
+        let effortRow = Repository.resolveToday(days: days, logicalKey: key(1), localKey: today)
+        XCTAssertEqual(effortRow?.day, key(1), "the Effort cell's row")
+        XCTAssertEqual(effortRow?.activeKcalEst, early.kcal)
+
+        // Once today's night is banked the local row wins for both cells.
+        days[days.count - 1] = night(today, hrv: 60, rhr: 50, recovery: 60, kcal: 150)
+        XCTAssertEqual(BaselineReadouts.calories(for: today, days: days, logicalKey: key(1)).kcal, 150)
+        XCTAssertEqual(Repository.resolveToday(days: days, logicalKey: key(1), localKey: today)?.day, today)
+        // Daytime (logical == local) and an earlier day read their own row, as before.
+        XCTAssertEqual(BaselineReadouts.calories(for: today, days: days).kcal, 150)
+        XCTAssertEqual(BaselineReadouts.calories(for: key(1), days: days, logicalKey: key(1)).kcal, 2_300)
     }
 
     // MARK: Stress
@@ -212,6 +330,9 @@ final class BaselineReadoutsMetricsTests: BaselineEngineTestCase {
         XCTAssertEqual(BaselineReadouts.stressLevelText(1), "Medium")
         XCTAssertEqual(BaselineReadouts.stressLevelText(2), "High")
         XCTAssertEqual(BaselineReadouts.stressDomain, 0...3)
+        // The chart's y axis names each band at its middle with the Average cell's own words.
+        XCTAssertEqual(StressCurveChart.bandMidpoints.map(BaselineReadouts.stressLevelText), ["Low", "Medium", "High"])
+        XCTAssertEqual(StressCurveChart.bandEdges, [0, 1, 2, 3])
     }
 
     // MARK: Sleep timing
@@ -248,6 +369,23 @@ final class BaselineReadoutsMetricsTests: BaselineEngineTestCase {
         XCTAssertEqual(BaselineReadouts.clockDistance(1_430, 10), 20)
         XCTAssertEqual(BaselineReadouts.clockDistance(100, 160), 60)
         XCTAssertFalse(BaselineReadouts.clockText(minutes: 1_380).isEmpty)
+    }
+
+    func testHourText_followsTheLocaleLikeClockText_andTheStripsAxisUsesIt() {
+        let us = Locale(identifier: "en_US"), gb = Locale(identifier: "en_GB")
+        // Foundation sets the day period off with a narrow no-break space (U+202F) on iOS 17+; the
+        // label reads "6 PM" either way, so compare on plain spaces.
+        func plain(_ s: String) -> String { s.replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ") }
+        XCTAssertEqual(plain(BaselineReadouts.hourText(minutes: 18 * 60, locale: us)), "6 PM")
+        XCTAssertEqual(plain(BaselineReadouts.hourText(minutes: 0, locale: us)), "12 AM")
+        XCTAssertEqual(plain(BaselineReadouts.hourText(minutes: 12 * 60, locale: us)), "12 PM")
+        XCTAssertEqual(BaselineReadouts.hourText(minutes: 18 * 60, locale: gb), "18", "a 24-hour locale, like clockText's 18:00")
+        XCTAssertTrue(BaselineReadouts.clockText(minutes: 18 * 60).contains(BaselineReadouts.hourText(minutes: 18 * 60).prefix(1)))
+        // The strip's four ticks: 6 PM, midnight, 6 AM and the trailing noon; two survive at accessibility sizes.
+        XCTAssertEqual(TimingStripChart.axisTicks.map(\.minutesOfDay), [18 * 60, 0, 6 * 60, 12 * 60])
+        XCTAssertEqual(TimingStripChart.axisTicks.map(\.fraction), [0.25, 0.5, 0.75, 1])
+        XCTAssertEqual(TimingStripChart.ticks(accessibilitySize: false).count, 4)
+        XCTAssertEqual(TimingStripChart.ticks(accessibilitySize: true).map(\.fraction), [0.5, 1])
     }
 
     func testNoonInterval_framesANightOnTheNoonToNoonDay() {
@@ -367,6 +505,40 @@ final class BaselineReadoutsMetricsTests: BaselineEngineTestCase {
         XCTAssertEqual(BaselineReadouts.median([4, 1, 2, 3]), 2.5)
     }
 
+    func testFitnessWeek_isACalendarWeek_notNoopsLastSevenRows() throws {
+        // Four nights, five days off, two nights (yesterday and today). NOOP's own gate takes the last seven
+        // ROWS, so it sees all six resting-HR nights and scores the week; Baseline's week is the seven
+        // CALENDAR days ending today, which hold two, so it waits rather than scoring a week with nights
+        // from the week before. A deliberate difference, documented on `fitnessWeek`.
+        let worn = [10, 9, 8, 7, 1, 0]
+        let days = worn.reversed().map { night(key($0), hrv: 60, rhr: 52, recovery: 60, strain: 40) }
+        XCTAssertEqual(Array(days.suffix(7)).compactMap(\.restingHr).count, 6, "NOOP's last-seven-rows gate would compute")
+        XCTAssertNil(BaselineReadouts.fitness(for: today, days: days, age: 40, sex: "male"))
+        let inputs = BaselineReadouts.fitnessInputs(for: today, days: days, age: 40, sex: "male", waistCm: nil, hasHeightWeight: false)
+        XCTAssertFalse(inputs.canCompute)
+        XCTAssertEqual(inputs.items.first(where: { $0.key == "rhr" })?.detail, "2 of last 7 nights")
+        // The week ending on the fourth worn night holds those four and computes.
+        let earlier = try XCTUnwrap(BaselineReadouts.fitness(for: key(7), days: days, age: 40, sex: "male"))
+        XCTAssertEqual(earlier.rhrNights, 4)
+        XCTAssertEqual(earlier.weekEnding, key(7))
+    }
+
+    /// Settings › Profile's "entered" flag, read from a suite of its own so the app's defaults stay
+    /// untouched: absent → false (the store's seeded age and sex are not used), "YES" the way the
+    /// screenshot harness passes it through the argument domain → true.
+    func testProfileSet_isFalseUntilWritten() throws {
+        let suite = "baseline.tests.profileSet"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(BaselineReadouts.ProfileSet.key, "baseline.profileSet")
+        XCTAssertFalse(BaselineReadouts.ProfileSet.current(defaults))
+        defaults.set(true, forKey: BaselineReadouts.ProfileSet.key)
+        XCTAssertTrue(BaselineReadouts.ProfileSet.current(defaults))
+        defaults.set("YES", forKey: BaselineReadouts.ProfileSet.key)
+        XCTAssertTrue(BaselineReadouts.ProfileSet.current(defaults), "the harness' `-baseline.profileSet YES`")
+    }
+
     // MARK: Accuracy table
 
     func testMetricAccuracy_coversTheLiteratureTable_inBaselinesVocabulary() throws {
@@ -392,6 +564,8 @@ final class BaselineReadoutsMetricsTests: BaselineEngineTestCase {
         XCTAssertEqual(MetricAccuracy.Tier.high.label, "High accuracy")
         XCTAssertEqual(MetricAccuracy.Tier.medium.label, "Medium accuracy")
         XCTAssertEqual(MetricAccuracy.Tier.low.label, "Low accuracy")
+        XCTAssertEqual(MetricAccuracy.Tier.allCases.map(\.shortLabel), ["High", "Medium", "Low"],
+                       "the badge's text at accessibility sizes is the tier word alone")
     }
 
     // MARK: Day keys

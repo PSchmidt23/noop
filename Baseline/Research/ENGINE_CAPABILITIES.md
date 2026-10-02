@@ -256,9 +256,12 @@ is a retrospective TDEE from logged calories-in + weigh-ins (≥ 21 days, ≥ 14
 
 **Baseline today.** `fill` carries `activeKcalEst` (`BaselineDays.swift:189`), `dailyColumn("active_kcal" | "energy_kcal")`
 (`Repository.swift:2570`) so `baselineSeries(key: "active_kcal")` returns strap days. Workout detail shows
-`energyKcal` (`WorkoutDetailScreen.swift:184`). No daily calories anywhere. Honest framing per
-`METRIC_ACCURACY.md`: double-digit error, so show it as a rounded whole-day estimate against its own 30-day
-mean, never to the kcal.
+`energyKcal` (`WorkoutDetailScreen.swift:184`). Home's Effort card shows the day's figure
+(`BaselineReadouts.calories(for:days:logicalKey:)`), read through the same `Repository.resolveToday` row as
+the Effort cell: today's `logicalKey` is NOOP's 04:00-rollover day, so between midnight and 04:00 Calories
+and Effort describe one physiological day (the cycle window above) rather than yesterday's effort beside an
+empty new calendar row. Honest framing per `METRIC_ACCURACY.md`: double-digit error, so it is a rounded
+whole-day estimate against its own 30-day mean (taken before the resolved row's day), never to the kcal.
 
 ---
 
@@ -301,6 +304,16 @@ would read `repo.series(key: "vo2max_est", source: "my-whoop")` / `repo.series(k
 `repo.series(key: "vo2max", source: "apple-health")`, and `SettingsProfileForm` would need age, sex and
 (optionally) waist. Per `METRIC_ACCURACY.md` VO2 max from HR alone carries SEE ≈ 5 ml/kg/min; show the
 ±5-year band and the word "estimate".
+
+**Baseline's week is a calendar week, NOOP's is seven rows.** `BaselineReadouts.fitness(for:days:…)` runs
+the same `FitnessAgeEngine` with the same gate size and inputs (RHR median, PA index from Effort ≥ 30), but
+its `fitnessWeek` is the seven CALENDAR days ending on the day, where NOOP's `faGate7 = …suffix(7)` takes
+the last seven ROWS whatever dates they carry. For a wearer with gaps the two windows differ: worn Mon–Thu,
+off Fri–Sun, worn Mon–Tue, NOOP's seven rows hold six resting-HR nights and store a `vo2max_est` for the
+week, Baseline's calendar week holds two and waits ("needs 4 nights of resting HR in a week · 2 this
+week"). Deliberate: a Progress point is dated to its week and never carries nights from the week before;
+the cost is that Baseline's weekly number and NOOP's stored series can disagree for the same week. Pinned by
+`BaselineReadoutsMetricsTests.testFitnessWeek_isACalendarWeek_notNoopsLastSevenRows`.
 
 ---
 

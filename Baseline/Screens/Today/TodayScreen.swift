@@ -161,7 +161,7 @@ struct TodayScreen: View {
             }
             rings(s)
             if let steps, steps.hasRecordedSource {
-                StepsCard(readout: steps)
+                StepsCard(readout: steps, isToday: selection.isToday)
             }
             LastNightCard(sleep: s.sleep, dayKey: s.todayKey, isToday: selection.isToday)
             // Today's card waits for the day with a paired strap ("No daytime data yet"); a past day
@@ -258,7 +258,10 @@ struct TodayScreen: View {
             nights = SleepNightBuilder.nights(sessions: sessions, days: days, habitualMidsleepSec: habitual)
             cache.storeNights(nights, refreshSeq: cacheKey.refreshSeq, dataSource: cacheKey.dataSource)
         }
-        let snap = TodaySnapshot.build(days: days, nights: nights, todayKey: key, logicalKey: cacheKey.logicalKey)
+        // The per-source rows tell an import's score from the strap's, so the Readiness card's drivers
+        // sentence only ever explains a number NOOP computed.
+        let snap = TodaySnapshot.build(days: days, nights: nights, todayKey: key, logicalKey: cacheKey.logicalKey,
+                                       strapScores: BaselineReadouts.strapScores(repo.vitalRows))
         var daySignals: TodaySignals?
         if isToday {
             // The recent journal only feeds the illness watch's confounders (alcohol, a hard workout, …).
@@ -272,11 +275,13 @@ struct TodayScreen: View {
             .filter { Repository.localDayKey(Date(timeIntervalSince1970: TimeInterval($0.startTs))) == key }
             .sorted { $0.startTs < $1.startTs }
             .map(TodayWorkout.init)
-        // The metrics layer: the stored Readiness score (never recomputed), steps through NOOP's
-        // strap → phone → estimate resolver, the whole-day calorie estimate, the day's Stress curve.
-        let dayReadiness = TodayReadinessScore.build(for: key, days: days, readiness: snap.readiness)
+        // The metrics layer: the stored Readiness score (never recomputed; resolved once in the snapshot,
+        // where the morning summary and the widgets read the same one), steps through NOOP's strap →
+        // phone → estimate resolver, the whole-day calorie estimate, the day's Stress curve.
+        let dayReadiness = snap.readinessScore
         let daySteps = await BaselineReadouts.steps(repo, for: key, mode: BaselineDataSource.resolve(dataSourceRaw))
-        let dayCalories = BaselineReadouts.calories(for: key, days: days)
+        // Calories through the same 04:00-rollover row as the Effort cell (`cacheKey.logicalKey`).
+        let dayCalories = BaselineReadouts.calories(for: key, days: days, logicalKey: cacheKey.logicalKey)
         let dayStress = await BaselineReadouts.stressDay(repo, for: key)
         let entry = HomeDayCache.Entry(snapshot: snap, signals: daySignals, signalsJournalSeq: seq,
                                        workouts: dayWorkouts, progressHeadline: headline,

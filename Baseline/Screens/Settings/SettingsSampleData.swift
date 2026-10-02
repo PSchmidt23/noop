@@ -27,7 +27,7 @@ struct SettingsSampleDataCard: View {
             .tint(BaselineTheme.accent)
             .disabled(busy)
             .accessibilityIdentifier("sample-data-toggle")
-            .accessibilityHint("Sixty nights of made-up HRV, resting HR, sleep, workouts and journal answers, stored under their own id")
+            .accessibilityHint("Sixty nights of made-up HRV, resting HR, sleep, steps, calories, workouts and journal answers, stored under their own id")
             if let failure {
                 Text(failure)
                     .font(BaselineTheme.caption)

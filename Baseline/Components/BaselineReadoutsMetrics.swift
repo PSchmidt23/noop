@@ -18,11 +18,13 @@ import StrandAnalytics
 enum ReadinessTone: Equatable {
     case good, watch, low
 
-    /// The pill / bar label beside the number: one plain word in Baseline's vocabulary.
+    /// The pill / bar label beside the number: one plain word in Baseline's vocabulary that says what
+    /// the tone's colour says (`watch` is drawn in `BaselineTheme.watch`, so its word is "Fair", never a
+    /// reassurance like "Steady" on an orange track).
     var label: String {
         switch self {
         case .good: return "Good"
-        case .watch: return "Steady"
+        case .watch: return "Fair"
         case .low: return "Low"
         }
     }
@@ -37,12 +39,16 @@ extension BaselineReadouts {
         /// 0–100.
         let score: Double
         let tone: ReadinessTone
-        /// `.calibrating` never reaches a caller (the readout is nil without a score); `.building` until
-        /// the HRV baseline is trusted (14 valid nights), then `.solid`.
+        /// How settled the HRV baseline behind the score is (`ScoreConfidence.charge`): `.calibrating`
+        /// when it is not yet usable for that morning (under `Baselines.minNightsSeed` valid nights
+        /// before it, as on the first imported days, whose score is the export's own), `.building` until
+        /// it is trusted (14 valid nights), then `.solid`.
         let confidence: ScoreConfidence
         /// NOOP's driver rows (`RecoveryScorer.chargeDrivers`), biggest mover first; empty when the night
         /// cannot be broken down (no HRV or resting HR, or an HRV baseline not yet usable, as on the
-        /// first imported days).
+        /// first imported days) and whenever the score shown is not the strap's own (`strapScores`): each
+        /// row's points are one term's contribution to NOOP's model, which explains nothing about an
+        /// export's number.
         let drivers: [ChargeDriver]
         /// One short sentence from the top two drivers ("Lifted by heart rate variability (+6), held
         /// back by resting heart rate (−3)."); nil when there are no drivers.
@@ -65,8 +71,13 @@ extension BaselineReadouts {
     /// four HRV nights, an Apple-only day). `days` is the funnel table, oldest → newest. Drivers and the
     /// confidence tier are folded from every night BEFORE `day` (the rule every Baseline baseline follows:
     /// a night never sits inside its own baseline), honouring the persisted HRV recalibration epoch like
-    /// the engine (`epoch` overrides it, for tests).
-    static func readinessScore(for day: String, days: [DailyMetric], epoch: Double? = nil) -> ReadinessScore? {
+    /// the engine (`epoch` overrides it, for tests). `strapScores` is `strapScores(_:)` over
+    /// `repo.vitalRows`: the drivers are attached only when the score shown is the strap's own (NOOP's
+    /// model, which they explain); an imported score (a WHOOP export filling a morning the strap did not
+    /// score, or winning it under merged / imports-only) keeps its number and gets none. nil (no
+    /// per-source table: previews and tests that assign `days` directly) takes every score as the strap's.
+    static func readinessScore(for day: String, days: [DailyMetric], epoch: Double? = nil,
+                               strapScores: [String: Double]? = nil) -> ReadinessScore? {
         guard let row = days.last(where: { $0.day == day }), let score = row.recovery else { return nil }
         let history = days.filter { $0.day < day }
         let sleepPerf = AnalyticsEngine.Rest.composite(daily: row)
@@ -74,10 +85,24 @@ extension BaselineReadouts {
                                                         hrvBaselineEpoch: epoch ?? Baselines.hrvBaselineEpoch())
         let hrvState = Baselines.foldHistory(history.map(\.avgHrv), dayKeys: history.map(\.day), cfg: Baselines.hrvCfg,
                                              baselineEpoch: epoch ?? Baselines.hrvBaselineEpoch())
-        let drivers = breakdown?.drivers ?? []
+        let strapsOwn = strapScores.map { $0[day] == score } ?? true
+        let drivers = strapsOwn ? (breakdown?.drivers ?? []) : []
         return ReadinessScore(day: day, score: min(100, max(0, score)), tone: readinessTone(score),
                               confidence: breakdown?.confidence ?? ScoreConfidence.charge(recovery: score, hrvBaseline: hrvState),
                               drivers: drivers, driversSentence: driversSentence(drivers))
+    }
+
+    /// The strap's own Readiness score per morning: the `recovery` the engine's `.noopComputed` row carries
+    /// in `vitalRows` (`repo.vitalRows`, one row per source BEFORE the merge). `readinessScore` compares the
+    /// funnel's score for a day against this to tell NOOP's number from an import's. nil when there are no
+    /// per-source rows at all (the funnel is then `repo.days` itself and every score is taken as the strap's).
+    static func strapScores(_ vitalRows: [SourcedDailyMetric]) -> [String: Double]? {
+        guard !vitalRows.isEmpty else { return nil }
+        var out: [String: Double] = [:]
+        for row in vitalRows where row.source == .noopComputed {
+            if let score = row.metric.recovery { out[row.metric.day] = score }
+        }
+        return out
     }
 
     /// The honest "N of 4 nights" while the score is still calibrating: the HRV baseline's valid-night
@@ -207,11 +232,19 @@ extension BaselineReadouts {
         }
     }
 
-    static func calories(for day: String, days: [DailyMetric]) -> CaloriesReadout {
+    /// The readout for `day`. `logicalKey` is NOOP's 04:00-rollover day when `day` is today
+    /// (`Repository.logicalDayKey`, the key Home's Effort cell is read through): the figure comes from the
+    /// row `Repository.resolveToday` picks, so between midnight and 04:00 Calories and Effort on one card
+    /// describe the same physiological day (the one still being lived, or the new local day once its
+    /// night is banked) instead of one cell showing yesterday beside an empty one. nil (an earlier day,
+    /// or the daytime case) reads `day`'s own row. The 30-day average is taken before THAT row's day, so
+    /// the figure never sits inside its own average.
+    static func calories(for day: String, days: [DailyMetric], logicalKey: String? = nil) -> CaloriesReadout {
         let readings = BaselineDays.series(key: "active_kcal", days: days)
-        let a = windowAverage(before: day, window: 30, readings: readings)
-        let today = days.last(where: { $0.day == day })?.activeKcalEst
-        return CaloriesReadout(day: day, kcal: today.flatMap { $0 > 0 ? $0 : nil }, average30: a.mean, observed30: a.observed)
+        let row = Repository.resolveToday(days: days.filter { $0.day <= day }, logicalKey: logicalKey ?? day, localKey: day)
+        let a = windowAverage(before: row?.day ?? day, window: 30, readings: readings)
+        return CaloriesReadout(day: day, kcal: row?.activeKcalEst.flatMap { $0 > 0 ? $0 : nil },
+                               average30: a.mean, observed30: a.observed)
     }
 
     /// ONE spelling for a calorie figure, rounded to the nearest 10 ("2,140"); "–" when there is none.
@@ -400,6 +433,16 @@ extension BaselineReadouts {
         return date.formatted(date: .omitted, time: .shortened)
     }
 
+    /// The hour alone, for an axis label, in the device's clock style and language like `clockText`
+    /// ("6 PM" / "18" / "18 Uhr" for 1 080 minutes), so an axis never says "6 PM" beside a "23:12" cell.
+    static func hourText(minutes: Double, calendar: Calendar = .current, locale: Locale = .current) -> String {
+        let m = Int(minutes.rounded()) % 1440
+        var c = DateComponents()
+        c.year = 2001; c.month = 1; c.day = 1; c.hour = m / 60; c.minute = m % 60
+        guard let date = calendar.date(from: c) else { return "–" }
+        return date.formatted(Date.FormatStyle(locale: locale, calendar: calendar).hour())
+    }
+
     /// A night as a half-open interval in minutes since NOON of the day before it ends, clamped to one
     /// noon-to-noon day (0 … 1440): the frame every timing drawing and the regularity index share.
     static func noonInterval(bed: Date, wake: Date, calendar: Calendar = .current) -> ClosedRange<Double> {
@@ -465,10 +508,11 @@ extension BaselineReadouts {
 
     // MARK: - Fitness (VO2 max, fitness age)
 
-    /// NOOP's weekly fitness read (`FitnessAgeEngine`, Nes 2011 HUNT model) for the seven days ending on
-    /// a day: a fitness age with its ±5-year band and an estimated VO2 max (Nes with a waist measurement,
-    /// else the rougher Uth HR-ratio fallback). Low/Medium accuracy (`MetricAccuracy` "vo2"): show the
-    /// band and the word "estimate".
+    /// NOOP's weekly fitness read (`FitnessAgeEngine`, Nes 2011 HUNT model) for the seven CALENDAR days
+    /// ending on a day: a fitness age with its ±5-year band and an estimated VO2 max (Nes with a waist
+    /// measurement, else the rougher Uth HR-ratio fallback). Low/Medium accuracy (`MetricAccuracy` "vo2"):
+    /// show the band and the word "estimate". The week is a calendar week on purpose (`fitnessWeek`), so
+    /// a wearer with gaps can see a different number here from the one NOOP stores for the same week.
     struct FitnessReadout {
         let weekEnding: String
         let result: FitnessAgeResult
@@ -499,8 +543,9 @@ extension BaselineReadouts {
     }
 
     /// The readout for the week ending on `day`, nil until age, sex and four nights of resting HR exist
-    /// (`FitnessAgeEngine.minCoverageDays`). Mirrors NOOP's `IntelligenceEngine.fitnessAgeRows` gate and
-    /// inputs: RHR = the week's median, PA index from the days with Effort ≥ 30.
+    /// (`FitnessAgeEngine.minCoverageDays`). The same engine, gate size and inputs as NOOP's
+    /// `IntelligenceEngine.fitnessAgeRows` (RHR = the week's median, PA index from the days with Effort
+    /// ≥ 30) over a stricter window: the seven calendar days, where NOOP takes its last seven rows.
     static func fitness(for day: String, days: [DailyMetric], age: Int?, sex: String?,
                         waistCm: Double? = nil, hasHeightWeight: Bool = false) -> FitnessReadout? {
         let inputs = fitnessInputs(for: day, days: days, age: age, sex: sex, waistCm: waistCm, hasHeightWeight: hasHeightWeight)
@@ -521,7 +566,13 @@ extension BaselineReadouts {
                               restingHr: rhr, rhrNights: rhrs.count, activeDays: active.count, inputs: inputs)
     }
 
-    /// The seven calendar days ending on `day`, oldest → newest.
+    /// The seven CALENDAR days ending on `day`, oldest → newest. Deliberately stricter than NOOP's own gate,
+    /// which feeds `fitnessAgeRows` the last seven ROWS (`faGate7 = …suffix(7)` in `IntelligenceEngine`)
+    /// and so reaches back past a gap: worn Mon–Thu, off Fri–Sun, worn Mon–Tue, NOOP's seven rows hold six
+    /// resting-HR nights and score the week, this window holds two and waits ("2 this week"). A Progress
+    /// point is dated to its week, so it never carries nights from the week before; the cost is that the
+    /// two numbers can differ for a wearer with gaps (`Baseline/Research/ENGINE_CAPABILITIES.md` §5).
+    /// Pinned by `testFitnessWeek_isACalendarWeek_notNoopsLastSevenRows`.
     private static func fitnessWeek(for day: String, days: [DailyMetric]) -> [DailyMetric] {
         let start = Baselines.cutoffKey(todayKey: day, carryDays: 6)
         return days.filter { $0.day >= start && $0.day <= day }
@@ -553,28 +604,46 @@ extension BaselineReadouts {
 
 extension BaselineReadouts {
 
-    /// `(day, steps)` readings over `from`…`to` (inclusive day keys) with the funnel's precedence: under
-    /// strap-first / merged NOOP's own resolver (`repo.resolvedSteps`: the strap's counted steps, then
-    /// the phone's, then the strap's calibrated estimate, first non-nil per day, so live-HealthKit steps
-    /// and the 4.0 estimate are seen); under imports-only the phone's series alone. Days the resolver has
-    /// no point for fall back to the funnel table's `steps` column (previews and tests that assign
-    /// `repo.days` directly have no store behind the resolver).
-    @MainActor
-    static func stepReadings(_ repo: Repository, from: String, to: String,
-                             mode: BaselineDataSource = .current()) async -> [(day: String, value: Double)] {
-        let resolved: [(day: String, value: Double)]
-        switch mode {
-        case .importOnly:
-            resolved = await repo.resolvedSeries(key: "steps", source: Repository.appleHealthSource, from: from, to: to).values
-        case .strapFirst, .merged:
-            resolved = await repo.resolvedSteps(from: from, to: to).values
-        }
-        var byDay = Dictionary(resolved.map { ($0.day, $0.value) }, uniquingKeysWith: { first, _ in first })
-        for p in BaselineDays.series(key: "steps", days: days(repo, mode: mode)) where byDay[p.day] == nil
-            && p.day >= from && p.day <= to {
+    /// The sources an imports-only read of steps keeps: the phone's. Health Connect is Android's twin of
+    /// Apple Health in NOOP's candidate list, never written on iOS; harmless to allow.
+    static let importedStepSources: Set<String> = [Repository.appleHealthSource, Repository.healthConnectSource]
+
+    /// The pure half of `stepReadings(_:from:to:mode:)`: `resolved` is the resolver's per-day points,
+    /// `funnel` the funnel table's `steps` column under the same mode. Under imports-only only the phone's
+    /// points survive (`importedStepSources`): NOOP's Apple-preferred candidate list appends the strap's
+    /// computed steps (`Repository.sourceCandidates`, `noopComputedCanFillAppleMetric("steps")`), which
+    /// the mode promises to drop, so without this filter a strap-only wearer, or any day the phone did
+    /// not cover, would show strap counts under "Imports only" on Home and Trends. Days the resolver has
+    /// no point for fall back to `funnel` inside `from`…`to` (previews and tests that assign `repo.days`
+    /// directly have no store behind the resolver).
+    static func stepReadings(mode: BaselineDataSource, resolved: [ResolvedMetricPoint],
+                             funnel: [(day: String, value: Double)], from: String, to: String) -> [(day: String, value: Double)] {
+        let kept = mode == .importOnly ? resolved.filter { importedStepSources.contains($0.source) } : resolved
+        var byDay = Dictionary(kept.map { ($0.day, $0.value) }, uniquingKeysWith: { first, _ in first })
+        for p in funnel where byDay[p.day] == nil && p.day >= from && p.day <= to {
             byDay[p.day] = p.value
         }
         return byDay.map { (day: $0.key, value: $0.value) }.sorted { $0.day < $1.day }
+    }
+
+    /// `(day, steps)` readings over `from`…`to` (inclusive day keys) with the funnel's precedence: under
+    /// strap-first / merged NOOP's own resolver (`repo.resolvedSteps`: the strap's counted steps, then
+    /// the phone's, then the strap's calibrated estimate, first non-nil per day, so live-HealthKit steps
+    /// and the 4.0 estimate are seen); under imports-only the phone's points alone, the strap's computed
+    /// steps that NOOP's Apple-preferred resolver appends filtered out (`stepReadings(mode:resolved:…)`).
+    /// Days the resolver has no point for fall back to the funnel table's `steps` column.
+    @MainActor
+    static func stepReadings(_ repo: Repository, from: String, to: String,
+                             mode: BaselineDataSource = .current()) async -> [(day: String, value: Double)] {
+        let resolved: [ResolvedMetricPoint]
+        switch mode {
+        case .importOnly:
+            resolved = await repo.resolvedSeries(key: "steps", source: Repository.appleHealthSource, from: from, to: to).points
+        case .strapFirst, .merged:
+            resolved = await repo.resolvedSteps(from: from, to: to).points
+        }
+        return stepReadings(mode: mode, resolved: resolved,
+                            funnel: BaselineDays.series(key: "steps", days: days(repo, mode: mode)), from: from, to: to)
     }
 
     /// The steps readout for `day` (31 calendar days of readings ending on it).
@@ -611,13 +680,33 @@ extension BaselineReadouts {
         return stressDay(result, day: day)
     }
 
+    /// Settings › Profile's "entered" marker: `baseline.profileSet` in `UserDefaults.standard`, true once
+    /// the person has picked a date of birth or sex there (or confirmed the ones shown). NOOP's
+    /// `ProfileStore` seeds a 30-year-old male when nothing is stored and persists that default on its
+    /// first read, so the store itself cannot tell "never set" from "set"; this flag can. Until it is
+    /// true every fitness consumer passes a nil age and sex (`ProgressProfile.lifted(from:entered:)`, the
+    /// one resolver), so the Fitness card asks for them instead of estimating a stranger's VO2 max.
+    enum ProfileSet {
+        /// Written true by Settings › Profile (`@AppStorage`) on a date-of-birth or sex change, or by
+        /// its "Use these" confirmation; the screenshot harness seeds it through the argument domain
+        /// (`-baseline.profileSet YES`) so the demo seed still renders the Fitness card.
+        static let key = "baseline.profileSet"
+
+        /// Whether the person has entered a date of birth and sex, read from `defaults`.
+        static func current(_ defaults: UserDefaults = .standard) -> Bool {
+            defaults.bool(forKey: key)
+        }
+    }
+
     /// The fitness readout from the profile the app keeps (`ProfileStore`: date of birth, sex, waist,
-    /// height and weight) over the funnel's days.
+    /// height and weight) over the funnel's days. `entered` is `ProfileSet`: until the person has set a
+    /// date of birth and sex the store's seeded 30 / "male" are not used and the readout is nil.
     @MainActor
     static func fitness(_ repo: Repository, profile: ProfileStore, for day: String,
-                        mode: BaselineDataSource = .current()) -> FitnessReadout? {
-        fitness(for: day, days: days(repo, mode: mode), age: profile.age, sex: profile.sex,
-                waistCm: profile.waistCm, hasHeightWeight: profile.heightCm > 0 && profile.weightKg > 0)
+                        mode: BaselineDataSource = .current(), entered: Bool = ProfileSet.current()) -> FitnessReadout? {
+        let p = ProgressProfile.lifted(from: profile, entered: entered)
+        return fitness(for: day, days: days(repo, mode: mode), age: p.age, sex: p.sex,
+                       waistCm: p.waistCm, hasHeightWeight: p.hasHeightWeight)
     }
 }
 #endif

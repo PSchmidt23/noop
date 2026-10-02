@@ -18,7 +18,8 @@ struct SettingsScreen: View {
             SettingsSection(label: "Data") { SettingsDataCard() }
             SettingsSection(label: "Profile") {
                 SettingsProfileCard()
-                // The window the Sleep tab's regularity reads against (`BaselineReadouts.SleepWindow`).
+                // The target window the Sleep tab's strip bands and counts nights against
+                // (`BaselineReadouts.SleepWindow`); the regularity index does not read it.
                 SettingsSleepWindowCard()
             }
             SettingsSection(label: "Notifications") { SettingsNotificationsCard() }
@@ -174,6 +175,8 @@ private struct SettingsDataCard: View {
 private struct SettingsProfileCard: View {
     @EnvironmentObject private var profile: ProfileStore
     @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
+    /// `ProfileStore` seeds 30 / male when nothing was entered; the row says so instead of printing them.
+    @AppStorage(BaselineReadouts.ProfileSet.key) private var profileSet = false
 
     var body: some View {
         BaselineCard {
@@ -191,12 +194,12 @@ private struct SettingsProfileCard: View {
         case "male":   sex = "Male"
         default:       sex = "Other"
         }
-        return [
-            "\(profile.age) yrs", sex,
+        let aboutYou = profileSet ? ["\(profile.age) yrs", sex] : ["Age and sex not set"]
+        return (aboutYou + [
             UnitFormatter.heightFromCentimeters(profile.heightCm, system: system),
             UnitFormatter.massFromKilograms(profile.weightKg, system: system),
             "max HR \(profile.hrMax)"
-        ].joined(separator: " · ")
+        ]).joined(separator: " · ")
     }
 }
 

@@ -2,11 +2,13 @@
 import SwiftUI
 import StrandAnalytics
 
-/// One vocabulary for the HRV readiness tier wherever a screen names it: Today's pill and sentence, the
-/// Trends strip, its legend, the morning summary's subtitle and VoiceOver. The tier is a SEVEN-night
+/// One vocabulary for the seven-night HRV tier wherever a screen names it: the HRV tile's week phrase
+/// (`TodayReadiness.weekPhrase`), the Trends strip, its legend and VoiceOver. The tier is a SEVEN-night
 /// reading (`HRVReadiness.baseline7Ms` against the longer normal range), so every phrase here says
 /// "week": a week "on baseline" and a single night "above your band" (the hero tile) are then two facts
-/// about two spans, not a contradiction.
+/// about two spans, not a contradiction. It is never printed under the word "Readiness" on its own:
+/// that word is the 0–100 score (`TodayReadinessScore`) on Home, in the morning summary's subtitle and
+/// in the widgets, so one noun never names two measures.
 extension ReadinessTier {
     /// Pill and legend label.
     var baselineLabel: String {
@@ -34,8 +36,5 @@ extension ReadinessTier {
         case .suppressed: return "Your week is below your normal range. The last seven nights of HRV run low; go gently today."
         }
     }
-
-    /// The morning summary's subtitle: the tier never appears without its noun.
-    var baselineNotificationSubtitle: String { "Readiness · \(baselineLabel)" }
 }
 #endif

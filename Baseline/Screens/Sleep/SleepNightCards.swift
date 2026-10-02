@@ -116,20 +116,24 @@ struct SleepHeroCard: View {
 
 // MARK: - Hypnogram
 
-/// Stage timeline plus minutes per stage, titled "Stages (approximate)" with `AccuracyBadge(metric:
-/// "sleepStages")` (Low: deep and REM are misread a third to half of the time) and ONE caveat line under
-/// the chart, so the stages read as a sketch of the night, not a goal. The chart's slot carries a quiet
-/// note instead when the night has no timeline (daily-row or imported nights). The stage cells and the
-/// proportional bar stay whenever totals exist. Stage colours are fills and dots only: the cell values
-/// are ink (light and wake fail as text).
+/// Stage timeline plus minutes per stage, titled "Stages" (a UI-test anchor kept by name) with
+/// `AccuracyBadge(metric: "sleepStages")` in the accessory slot. The badge is the ONE place the card
+/// says the stages are a low-accuracy estimate (its popover carries the literature caveat); the title
+/// and the body never repeat it. A `SleepCardNote` under the chart appears only when the night was
+/// staged on sparse motion, which is per-night information the badge does not carry. The chart's slot
+/// carries a quiet note instead when the night has no timeline (daily-row or imported nights). The
+/// stage cells and the proportional bar stay whenever totals exist. Stage colours are fills and dots
+/// only: the cell values are ink (light and wake fail as text).
 struct SleepHypnogramCard: View {
     let night: SleepNight
 
     var body: some View {
-        BaselineCard(title: "Stages (approximate)", accessory: AccuracyBadge(metric: "sleepStages").map { AnyView($0) }) {
+        BaselineCard(title: "Stages", accessory: AccuracyBadge(metric: "sleepStages").map { AnyView($0) }) {
             if let onset = night.onset, let wake = night.wake, night.hasTimeline {
                 BaselineHypnogram(segments: night.segments, onset: onset, wake: wake)
-                SleepCardNote(text: caveat)
+                if night.stagingSparse {
+                    SleepCardNote(text: "Staged on sparse motion this night")
+                }
             } else {
                 SleepCardNote(text: "Stage timeline not available for this night")
             }
@@ -152,13 +156,6 @@ struct SleepHypnogramCard: View {
         StatCell(label: "REM", value: BaselineReadouts.durationText(minutes: night.remMin), dot: BaselineTheme.stageColor("rem"))
         StatCell(label: "Light", value: BaselineReadouts.durationText(minutes: night.lightMin), dot: BaselineTheme.stageColor("light"))
         StatCell(label: "Awake", value: BaselineReadouts.durationText(minutes: night.awakeMin), dot: BaselineTheme.stageColor("wake"))
-    }
-
-    /// The one caveat: sparse motion folds into it rather than adding a second line.
-    private var caveat: String {
-        night.stagingSparse
-            ? "Staged on sparse motion this night; read deep and REM as a sketch, not a goal"
-            : "Wearables often misread deep and REM; read them as a sketch, not a goal"
     }
 }
 

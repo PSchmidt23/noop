@@ -46,14 +46,13 @@ It reads your strap over Bluetooth and shows heart rate variability (HRV) and re
 Works with WHOOP 4.0, 5.0 and MG straps. Not affiliated with WHOOP.
 
 TODAY
-HRV and resting heart rate as large tiles: today's value, the difference from your baseline and whether it sits inside your band. Readiness as a score from 0 to 100 on a track, with the inputs that lifted or held it back written out, never a verdict on what to do. Then last night's sleep, today's effort and workouts, steps against your 7-day and 30-day average, calories against your 30-day average, and an hour-by-hour stress curve estimated from heart rate, labelled as the estimate it is.
-
+Readiness first: a score from 0 to 100 on a track, with the inputs that lifted or held it back written out, never a verdict on what to do. Then HRV and resting heart rate as large tiles: today's value, the difference from your baseline and whether it sits inside your band. Then steps against your 7-day average, last night's sleep, an hour-by-hour stress curve estimated from heart rate and labelled as an estimate, and today's effort, calories against your 30-day average and workouts.
 
 TRENDS
-Seven, thirty or ninety days of HRV and resting heart rate with your baseline band drawn in, sleep duration and effort as bars. Tap any point for that day's numbers.
+Seven, thirty or ninety days of HRV and resting heart rate with your baseline band drawn in, effort under the readiness line, sleep and steps as bars. Tap any point for that day's numbers.
 
 PROGRESS
-Is your baseline itself moving? Months at a glance for HRV, resting heart rate, sleep and sleep timing, in a sentence and a chart.
+Is your baseline itself moving? Months at a glance for HRV, resting heart rate, sleep, sleep timing and an estimated VO2 max from resting heart rate, in a sentence and a chart.
 
 SLEEP
 Last night stage by stage: a hypnogram, time in each stage, efficiency, duration against your thirty-day average, and every night in a list. Timing too: average bedtime, average wake time and a regularity score, drawn night by night against the sleep window you set, built on sleep and wake only, the part a strap gets right.
@@ -83,7 +82,7 @@ Two optional local notifications, both off until you turn them on: a morning sum
 Baseline is not a medical device and nothing it shows is medical advice. Every number is an estimate from published methods; the methods are documented in the open-source project. Talk to a professional about health decisions.
 ```
 
-(about 3,920 characters; keep under 4,000 after edits)
+(about 3,990 characters; keep under 4,000 after edits)
 
 ## Keywords [100]
 

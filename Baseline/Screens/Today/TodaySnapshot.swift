@@ -93,7 +93,8 @@ struct TodayWorkout: Identifiable {
     }
 }
 
-/// The readiness line under the date. `HRVReadiness` refuses to score below 14 valid nights, so the
+/// The week's HRV tier, the phrase on the HRV ring tile (`weekPhrase`); never called Readiness on its
+/// own, which is the score below. `HRVReadiness` refuses to score below 14 valid nights, so the
 /// calibrating case carries the honest count rather than a fabricated tier. `stale` is the HRV tile's
 /// carry cap applied here too: once the newest HRV night is older than `Baselines.vitalCarryDays`, a
 /// tier evaluated from it must not read as this morning's.
@@ -131,14 +132,19 @@ enum TodayReadinessScore {
     case missing
 
     /// `days` is the funnel table (oldest → newest); `readiness` is the snapshot's HRV tier state, the
-    /// one place the carry rule is already decided.
-    static func build(for day: String, days: [DailyMetric], readiness: TodayReadiness) -> TodayReadinessScore {
+    /// one place the carry rule is already decided. `strapScores` is `BaselineReadouts.strapScores` over
+    /// `repo.vitalRows`, so a score an import supplied keeps its number but gets no drivers sentence
+    /// (the drivers explain NOOP's model only); nil takes every score as the strap's.
+    static func build(for day: String, days: [DailyMetric], readiness: TodayReadiness,
+                      strapScores: [String: Double]? = nil) -> TodayReadinessScore {
         if case .stale(let last) = readiness { return .stale(lastDay: last) }
-        if let r = BaselineReadouts.readinessScore(for: day, days: days) { return .score(r, wokeStamp: nil) }
+        if let r = BaselineReadouts.readinessScore(for: day, days: days, strapScores: strapScores) {
+            return .score(r, wokeStamp: nil)
+        }
         if let n = BaselineReadouts.readinessCalibrationNights(for: day, days: days) { return .calibrating(nights: n) }
         let scored = days.filter { $0.day <= day && $0.recovery != nil }.map { (day: $0.day, value: $0.recovery ?? 0) }
         if let carried = Baselines.freshestCarried(scored, todayKey: day),
-           let r = BaselineReadouts.readinessScore(for: carried.day, days: days) {
+           let r = BaselineReadouts.readinessScore(for: carried.day, days: days, strapScores: strapScores) {
             return .score(r, wokeStamp: TodayFormat.wokeStamp(day: carried.day, todayKey: day))
         }
         return .missing
@@ -147,6 +153,14 @@ enum TodayReadinessScore {
     var score: BaselineReadouts.ReadinessScore? {
         if case .score(let r, _) = self { return r }
         return nil
+    }
+
+    /// "Readiness 72 · Good": the one line a glance prints for a score, the morning summary's subtitle
+    /// and the words the widgets assemble from the same two fields. nil in every other state: Home
+    /// explains those in its own words, and a banner or a widget then says nothing about readiness
+    /// rather than something else under the same noun.
+    var summaryLine: String? {
+        score.map { "Readiness \($0.scoreText) · \($0.tone.label)" }
     }
 }
 
@@ -163,7 +177,12 @@ struct TodaySnapshot {
     let todayKey: String
     let hrv: TodayMetricReading?
     let restingHr: TodayMetricReading?
+    /// The week's HRV tier (the HRV tile's "Week on baseline" phrase), not the Readiness score.
     let readiness: TodayReadiness
+    /// The Readiness SCORE for `todayKey` (`TodayReadinessScore.build` over the same table), resolved
+    /// here once so Home's card, the morning summary's subtitle and the widgets print one number and one
+    /// word for the morning.
+    let readinessScore: TodayReadinessScore
     let sleep: TodaySleepReading?
     /// Today's effort 0-100 (`DailyMetric.strain`); nil until the strap has recorded part of the day.
     let effort: Double?
@@ -173,16 +192,21 @@ struct TodaySnapshot {
     /// `logicalKey` is NOOP's 04:00-rollover day (`Repository.logicalDayKey`), the row today's effort is
     /// read from through `Repository.resolveToday`, so the small hours after midnight still show the day
     /// that is being lived rather than an empty new row. Defaults to `todayKey` (the daytime case).
+    /// `strapScores` is `BaselineReadouts.strapScores(repo.vitalRows)`: the score card attaches NOOP's
+    /// drivers only to the strap's own score (an import's keeps its number alone); nil, the morning
+    /// summary's and the widgets' case, takes every score as the strap's (they print no drivers).
     static func build(days: [DailyMetric], nights: [SleepNight], todayKey: String,
-                      logicalKey: String? = nil) -> TodaySnapshot {
+                      logicalKey: String? = nil, strapScores: [String: Double]? = nil) -> TodaySnapshot {
         let scoped = days.filter { $0.day <= todayKey }
         let hrv = reading(scoped, todayKey: todayKey, cfg: Baselines.hrvCfg) { $0.avgHrv }
+        let tier = readiness(scoped, hrv: hrv)
         let effortRow = Repository.resolveToday(days: scoped, logicalKey: logicalKey ?? todayKey, localKey: todayKey)
         return TodaySnapshot(
             todayKey: todayKey,
             hrv: hrv,
             restingHr: reading(scoped, todayKey: todayKey, cfg: Baselines.restingHRCfg) { $0.restingHr.map(Double.init) },
-            readiness: readiness(scoped, hrv: hrv),
+            readiness: tier,
+            readinessScore: TodayReadinessScore.build(for: todayKey, days: scoped, readiness: tier, strapScores: strapScores),
             sleep: sleep(nights, todayKey: todayKey),
             effort: effortRow?.strain)
     }

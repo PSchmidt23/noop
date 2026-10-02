@@ -24,6 +24,10 @@ struct ProgressSection: View {
     @EnvironmentObject private var repo: Repository
     /// Age, sex and body fields for the fitness estimate (Settings › Profile); part of the reload key.
     @EnvironmentObject private var profile: ProfileStore
+    /// Whether the person has entered a date of birth and sex (`BaselineReadouts.ProfileSet`, written by
+    /// Settings › Profile); until then the store's seeded age and sex are not used. Part of the reload
+    /// key through `profileInputs`, so confirming the profile rebuilds the Fitness card at once.
+    @AppStorage(BaselineReadouts.ProfileSet.key) private var profileSet = false
     @AppStorage("baseline.progressHorizon") private var horizonRaw: Int = ProgressHorizon.quarter.rawValue
     /// Strap-first / merged / import-only precedence (Settings → Data); part of the reload key.
     @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
@@ -39,11 +43,10 @@ struct ProgressSection: View {
 
     private var horizon: ProgressHorizon { ProgressHorizon.resolve(horizonRaw) }
 
-    /// The profile as the pure model takes it: a waist of 0 is "none".
+    /// The profile as the pure model takes it, through the one resolver: age and sex only once entered,
+    /// a waist of 0 is "none".
     private var profileInputs: ProgressProfile {
-        ProgressProfile(age: profile.age, sex: profile.sex,
-                        waistCm: profile.waistCm > 0 ? profile.waistCm : nil,
-                        hasHeightWeight: profile.heightCm > 0 && profile.weightKg > 0)
+        ProgressProfile.lifted(from: profile, entered: profileSet)
     }
 
     var body: some View {

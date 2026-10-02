@@ -756,6 +756,28 @@ final class ProgressModelTests: BaselineEngineTestCase {
         XCTAssertEqual(ProgressFitness.points(days: four, todayKey: today, profile: waist).first?.fallback, false)
     }
 
+    /// The app-level wiring: `ProfileStore` seeds age 30 / "male" (and 178 cm / 75 kg) when nothing was
+    /// ever entered, so `ProgressProfile.lifted` must pass nil age and sex until Settings › Profile's
+    /// `baseline.profileSet` flag is true, and the Fitness card must land on `.needsProfile` with those
+    /// seeded values, however many nights of resting HR exist. Once entered, the same fields score.
+    func testProfileLiftedNeedsTheEnteredFlag() {
+        let seeded = ProgressProfile.lifted(age: 30, sex: "male", waistCm: 0, heightCm: 178, weightKg: 75, entered: false)
+        XCTAssertEqual(seeded, ProgressProfile(age: nil, sex: nil, waistCm: nil, hasHeightWeight: true),
+                       "the store's defaults are not a profile until the flag says so; body fields pass through")
+        let week = rhrNights(1...7, rhr: 50)
+        XCTAssertEqual(ProgressFitness.build(days: week, todayKey: today, horizon: .quarter, profile: seeded), .needsProfile)
+        XCTAssertTrue(ProgressFitness.points(days: week, todayKey: today, profile: seeded).isEmpty)
+
+        let entered = ProgressProfile.lifted(age: 30, sex: "male", waistCm: 85, heightCm: 178, weightKg: 75, entered: true)
+        XCTAssertEqual(entered, ProgressProfile(age: 30, sex: "male", waistCm: 85, hasHeightWeight: true))
+        let status = ProgressFitness.build(days: week, todayKey: today, horizon: .quarter, profile: entered)
+        XCTAssertNotEqual(status, .needsProfile)
+        XCTAssertEqual(status.now?.chronoAge, 30)
+        XCTAssertEqual(status.now?.fallback, false, "a waist switches to the Nes estimate")
+        XCTAssertNil(ProgressProfile.lifted(age: 30, sex: "male", waistCm: 0, heightCm: 0, weightKg: 75, entered: true).waistCm)
+        XCTAssertFalse(ProgressProfile.lifted(age: 30, sex: "male", waistCm: 0, heightCm: 0, weightKg: 75, entered: true).hasHeightWeight)
+    }
+
     func testFitnessPointsWeekly() throws {
         // 120 nights: weeks ending today, today − 7, … while a week still has four nights of resting HR.
         let days = rhrNights(1...120, rhr: 50)

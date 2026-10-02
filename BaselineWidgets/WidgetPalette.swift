@@ -24,17 +24,19 @@ enum WidgetPalette {
     static let hrv = accent
     static let rhr = hex(0xC8412A)
     static let sleep = hex(0x4A4FD0)
-    /// `BaselineTheme.good` / `watch`.
+    /// `BaselineTheme.good` / `watch` / `low`: the three Readiness tones (`ReadinessBar`'s colours).
     static let good = hex(0x15803D)
     static let watch = hex(0xC2410C)
+    static let low = hex(0xB91C1C)
     /// `BaselineTheme.onAccent`: the label on a filled readiness pill.
     static let onAccent = hex(0xFFFFFF)
 
-    /// `BaselineWidgetSnapshot.readinessColorName` → colour (`ReadinessTier.baselineColor`'s tokens).
+    /// `BaselineWidgetSnapshot.readinessToneName` → colour (the tokens `ReadinessBar` uses for a tone).
     static func named(_ name: String?) -> Color {
         switch name {
         case "good": return good
         case "watch": return watch
+        case "low": return low
         case "accent": return accent
         default: return textTertiary
         }

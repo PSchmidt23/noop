@@ -23,8 +23,13 @@ struct ReadinessCard: View {
             case .score(let r, let stamp):
                 ReadinessBar(score: r.score, tone: r.tone, label: r.tone.label, context: Self.context(r, wokeStamp: stamp))
             case .calibrating(let n):
-                BaselinePill(text: "Readiness after \(BaselineReadouts.readinessSeedNights) nights · \(n) so far",
-                             color: BaselineTheme.textTertiary)
+                // A short pill and a wrapping caption: the count is a sentence, never ellipsised in a
+                // pill at accessibility sizes (the pattern the ring tiles and Progress use).
+                BaselinePill(text: "Calibrating", color: BaselineTheme.textTertiary)
+                Text(Self.calibratingLine(nights: n))
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             case .stale(let day):
                 BaselinePill(text: "Paused", color: BaselineTheme.textTertiary)
                 Text("No HRV since \(TodayFormat.dayLabel(day)). Readiness returns with the next synced night.")
@@ -50,14 +55,23 @@ struct ReadinessCard: View {
         return AnyView(badge)
     }
 
+    /// "Readiness after 4 nights · 2 so far": the caption under the Calibrating pill.
+    static func calibratingLine(nights n: Int) -> String {
+        "Readiness after \(BaselineReadouts.readinessSeedNights) nights · \(n) so far"
+    }
+
     /// The ONE context line under the bar: the readout's drivers sentence ("Lifted by heart rate
     /// variability (+6), held back by resting heart rate (−3).") when the night can be broken down,
-    /// else what the score was read from and how settled its baseline is. A carried score is dated
-    /// first ("Woke Mon 28 Sep · …"), the stamp every carried value on Home wears.
+    /// else what the score was read from and how settled its baseline is: "not yet usable" for the
+    /// least-settled score (`.calibrating`: an export's first mornings, before four HRV nights), "still
+    /// settling" while it builds, nothing more once it is trusted. A carried score is dated first
+    /// ("Woke Mon 28 Sep · …"), the stamp every carried value on Home wears.
     static func context(_ r: BaselineReadouts.ReadinessScore, wokeStamp: String? = nil) -> String {
         let text: String
         if let s = r.driversSentence {
             text = s
+        } else if r.confidence == .calibrating {
+            text = "From that night's HRV, resting HR and sleep · baseline not yet usable"
         } else if r.confidence == .building {
             text = "From that night's HRV, resting HR and sleep · baseline still settling"
         } else {
@@ -156,18 +170,19 @@ struct TodayRingTile: View {
 // MARK: - Steps
 
 /// The day's steps under the rings: `StepsTile` (numeral, "avg 6,000", seven bars, ONE line against the
-/// 7-day average) with the literature's badge at the top right. The tile prints its own "Steps" header,
-/// so the card carries no title. The screen omits the card when no source ever recorded a step
+/// 7-day average) under the card's own "Steps" title with the literature's badge in the header row,
+/// like every other card; the tile's header is off (`showsHeader: false`) so the badge never shares a
+/// line with the hero numeral. On today the title reads "Steps so far" and the tile withholds its
+/// delta and judgement (`StepsTile.isToday`): the count is still accruing, as the Effort cell says with
+/// "Effort so far". The screen omits the card when no source ever recorded a step
 /// (`StepsReadout.hasRecordedSource`).
 struct StepsCard: View {
     let readout: BaselineReadouts.StepsReadout
+    var isToday: Bool = true
 
     var body: some View {
-        BaselineCard {
-            HStack(alignment: .top, spacing: 12) {
-                StepsTile(readout: readout, window: .week)
-                AccuracyBadge(metric: "steps")
-            }
+        BaselineCard(title: StepsTile.title(isToday: isToday), accessory: AccuracyBadge(metric: "steps").map { AnyView($0) }) {
+            StepsTile(readout: readout, window: .week, showsHeader: false, isToday: isToday)
         }
     }
 }

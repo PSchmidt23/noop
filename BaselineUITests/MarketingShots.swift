@@ -51,7 +51,7 @@ final class MarketingShots: XCTestCase {
 
         // 04 Sleep: the top of the tab.
         do {
-            let app = launchTab("sleep", firstCard: NSPredicate(format: "label == %@", "Stages"))
+            let app = launchTab("sleep", firstCard: NSPredicate(format: "label == %@", "Sleep timing"))
             try settleAndSave(app, as: "04-sleep")
         }
 
@@ -81,10 +81,12 @@ final class MarketingShots: XCTestCase {
     // MARK: - Drivers (mirrors ScreenshotTests; kept separate so the two files stay independent)
 
     /// Launches the seeded app on `tab` with onboarding skipped (and `--ui-testing`, which pins the tab
-    /// bar), waits for the navigation title `--tab` lands on and for `firstCard`.
+    /// bar), waits for the navigation title `--tab` lands on and for `firstCard`. `-baseline.profileSet
+    /// YES` seeds Settings › Profile's "entered" flag so `03-progress` shows the Fitness card estimating.
     private func launchTab(_ tab: String, firstCard: NSPredicate) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--tab", tab, "-baseline.marketing", "YES", "--ui-testing"]
+        app.launchArguments = ["--demo-seed", "--skip-onboarding", "--tab", tab, "-baseline.marketing", "YES",
+                               "-baseline.profileSet", "YES", "--ui-testing"]
         app.launch()
         let expected = Self.launchTitle(for: tab)
         let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", expected)).firstMatch
