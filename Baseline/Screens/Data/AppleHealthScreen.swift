@@ -8,6 +8,7 @@ import SwiftUI
 struct AppleHealthScreen: View {
     @EnvironmentObject private var health: HealthKitBridge
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var requesting = false
 
     var body: some View {
@@ -37,13 +38,16 @@ struct AppleHealthScreen: View {
 
     private var statusCard: some View {
         let pill = AppleHealthStatus.pill(for: health.auth)
+        let status = BaselinePill(text: health.syncing ? "Syncing" : pill.text, color: pill.color)
         return BaselineCard {
+            // The pill trails the title, or sits under it at accessibility sizes (never "Apple / Health").
             HStack(spacing: 14) {
                 SettingsIconTile(icon: "heart.text.square")
                 Text("Apple Health").font(BaselineTheme.headline).foregroundStyle(BaselineTheme.text)
-                Spacer()
-                BaselinePill(text: health.syncing ? "Syncing" : pill.text, color: pill.color)
+                Spacer(minLength: 8)
+                if !dynamicTypeSize.isAccessibilitySize { status }
             }
+            if dynamicTypeSize.isAccessibilitySize { status }
             Text(AppleHealthStatus.sentence(for: health.auth))
                 .font(BaselineTheme.caption)
                 .foregroundStyle(BaselineTheme.textSecondary)

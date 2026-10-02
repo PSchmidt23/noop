@@ -1,13 +1,15 @@
 #if os(iOS)
 import SwiftUI
+import Combine
 import StrandDesign
 import UserNotifications
 
 /// Baseline's entry point. Mirrors the required parts of NOOP's `StrandiOSApp` (which is excluded from
 /// this target) so the engine behaves identically: strap pairing, overnight offload, re-scoring and
-/// Apple Health write-back. Deliberately left out: widgets, watch, Live Activities, the Lift Log banner,
-/// Coach briefs, debug export and the update checker. Baseline's own notifications: the morning summary
-/// (`MorningSummaryNotifier`) and the evening check-in (`EveningCheckInScheduler`).
+/// Apple Health write-back. Deliberately left out: NOOP's widgets, watch, Live Activities, the Lift Log
+/// banner, Coach briefs, debug export and the update checker. Baseline's own notifications: the morning
+/// summary (`MorningSummaryNotifier`) and the evening check-in (`EveningCheckInScheduler`); Baseline's own
+/// widgets are fed by `BaselineWidgetPublisher` (the `BaselineWidgets` extension).
 @main
 struct BaselineApp: App {
     @StateObject private var model: AppModel
@@ -89,9 +91,29 @@ struct BaselineApp: App {
                 .onChange(of: health.auth) { _, auth in
                     HealthWritebackBackgroundScheduler.updateSchedule(isAuthorized: auth == .authorized)
                 }
+                // Widgets: republish the glance when the store changes, where NOOP's StrandiOSApp calls
+                // `WidgetSnapshot.publish`. Foreground-gated for the same budget reason (foreground-initiated
+                // WidgetKit reloads are exempt; a background bump is covered by the six-hour safety reload and
+                // the `.active` republish below). Debounced because an offload bumps `refreshSeq` once per
+                // slice, seconds apart; the publisher also dedups an unchanged glance before writing.
+                .onReceive(model.repo.$refreshSeq.dropFirst()
+                            .debounce(for: .seconds(2), scheduler: RunLoop.main)) { _ in
+                    guard scenePhase == .active else { return }
+                    BaselineWidgetPublisher.publish(repo: model.repo, live: model.live)
+                }
+                // The first activation usually lands before the store has loaded (the publisher declines
+                // on `!repo.loaded`), so the load itself is a publish trigger too.
+                .onReceive(model.repo.$loaded.removeDuplicates()) { loaded in
+                    guard loaded, scenePhase == .active else { return }
+                    BaselineWidgetPublisher.publish(repo: model.repo, live: model.live)
+                }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
+                #if DEBUG
+                BaselineWidgetStore.assertGroupProvisioned()
+                #endif
+                BaselineWidgetPublisher.publish(repo: model.repo, live: model.live)
                 model.applySmartAlarm()
                 model.ble.requestSync(.foreground)
                 Task { await model.runDeferredRescoreIfOwed() }

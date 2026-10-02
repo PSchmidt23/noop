@@ -4,10 +4,6 @@ import StrandAnalytics
 
 extension TrendsRange: BaselineRangeOption {}
 
-/// 7D / 30D / 90D segmented pill: the shared `BaselineRangePicker` (flat, at the top of the Trends
-/// section's content; `ProgressModelTests` asserts the alias).
-typealias TrendRangePicker = BaselineRangePicker<TrendsRange>
-
 /// HRV / Resting HR: baseline and average, the nightly line over its band. The range is in the picker
 /// above and "higher / lower is better" is the card's accessibility hint, so the header carries only
 /// the title and the trend pill; dragging the chart shows that night instead (date and value in the
@@ -40,7 +36,9 @@ struct TrendBandCard: View {
                 .onTapGesture {
                     if selected != nil { withAnimation(.easeOut(duration: 0.2)) { selected = nil } }
                 }
-                TrendsBandChart(points: metric.points, color: color, yDomain: metric.yDomain, selected: $selected)
+                TrendsBandChart(points: metric.points, color: color, yDomain: metric.yDomain, selected: $selected,
+                                accessibilitySummary: chartSummary,
+                                accessibilityHint: higherIsBetter ? "Higher is better" : "Lower is better")
                 if let footnote {
                     Text(footnote)
                         .font(BaselineTheme.caption)
@@ -49,7 +47,6 @@ struct TrendBandCard: View {
                 }
             }
         }
-        .accessibilityHint(higherIsBetter ? "Higher is better" : "Lower is better")
         .onChange(of: metric.points.map(\.id)) { _, _ in selected = nil }
     }
 
@@ -99,6 +96,18 @@ struct TrendBandCard: View {
         metric.average.map(TrendsFormat.whole) ?? "—"
     }
 
+    /// What VoiceOver reads for the chart: the window, the count and span of nights, the baseline and
+    /// the average, so nothing the band and the line show is lost to the touch-only scrub.
+    private var chartSummary: String {
+        let values = metric.points.map(\.value)
+        var s = "\(title), last \(range.days) days: \(metric.points.count) nights"
+        if let lo = values.min(), let hi = values.max() {
+            s += " from \(TrendsFormat.whole(lo)) to \(TrendsFormat.whole(hi)) \(unit)"
+        }
+        s += "; baseline \(baselineText) \(unit), average \(averageText) \(unit)"
+        return s
+    }
+
     /// Only while scrubbing: the selected night against the band it was judged by.
     private var subtitle: String? {
         guard let s = selected else { return nil }
@@ -132,8 +141,10 @@ struct TrendBandCard: View {
         let amount = "\(TrendsFormat.whole(abs(t))) \(unit)"
         let text = steady ? "Steady" : "\(direction) \(amount) · \(range.days) days"
         let spoken = steady ? "steady" : "\(direction.lowercased()) \(amount)"
+        // The pill's good / watch colour, said: VoiceOver otherwise hears "up 4 bpm" with no judgement.
+        let judgement = steady ? "" : (improving ? ", improving" : ", worsening")
         return AnyView(BaselinePill(text: text, color: pillColor)
-            .accessibilityLabel("\(title) trend: \(spoken) across the last \(range.days) days"))
+            .accessibilityLabel("\(title) trend: \(spoken) across the last \(range.days) days\(judgement)"))
     }
 
     /// nil once the band is trusted; the provisional / calibrating sentence until then.
@@ -181,7 +192,7 @@ struct TrendBarCard: View {
                         StatCell(label: stat.label, value: stat.value, unit: stat.unit)
                     }
                 }
-                TrendsBarChart(bars: bars, color: color, average: average)
+                TrendsBarChart(bars: bars, color: color, average: average, accessibilitySummary: chartSummary)
             }
             if showsAllWorkouts {
                 Divider().overlay(BaselineTheme.hairline)
@@ -196,7 +207,17 @@ struct TrendBarCard: View {
         Text(text)
             .font(BaselineTheme.caption)
             .foregroundStyle(BaselineTheme.textTertiary)
-            .lineLimit(1)
+            .multilineTextAlignment(.trailing)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The chart's one VoiceOver sentence: the stats the header already prints ("Sleep: Average 7h 12m,
+    /// Nights 28"), so a swipe never lands on one bar after another.
+    private var chartSummary: String {
+        let parts = stats.map { stat in
+            stat.unit.map { "\(stat.label) \(stat.value) \($0)" } ?? "\(stat.label) \(stat.value)"
+        }
+        return "\(title): " + parts.joined(separator: ", ")
     }
 }
 #endif

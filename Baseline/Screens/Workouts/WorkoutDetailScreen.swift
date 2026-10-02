@@ -142,19 +142,26 @@ struct WorkoutHeaderCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(BaselineReadouts.durationText(seconds: item.durationS))
-                    .font(BaselineTheme.hero(36))
-                    .foregroundStyle(BaselineTheme.text)
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.75)
-                    .lineLimit(1)
-                Text("duration")
-                    .font(BaselineTheme.headline)
-                    .foregroundStyle(BaselineTheme.textSecondary)
+            // "1h 12m duration" on one line while it fits; the word drops under the numeral at larger type.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) { durationHero }
+                VStack(alignment: .leading, spacing: 0) { durationHero }
             }
             .accessibilityElement(children: .combine)
         }
+    }
+}
+
+extension WorkoutHeaderCard {
+    @ViewBuilder fileprivate var durationHero: some View {
+        Text(BaselineReadouts.durationText(seconds: item.durationS))
+            .font(BaselineTheme.hero(36))
+            .foregroundStyle(BaselineTheme.text)
+            .monospacedDigit()
+            .lineLimit(1)
+        Text("duration")
+            .font(BaselineTheme.headline)
+            .foregroundStyle(BaselineTheme.textSecondary)
     }
 }
 
@@ -162,10 +169,11 @@ struct WorkoutHeaderCard: View {
 /// duration is the header's numeral). The "Session" title is the UI test's first-card anchor.
 struct WorkoutSessionCard: View {
     let item: WorkoutItem
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         BaselineCard(title: "Session") {
-            HStack(alignment: .top, spacing: 12) {
+            BaselineStatRow {
                 StatCell(label: "Avg HR", value: item.row.avgHr.map { "\($0)" } ?? "–",
                          unit: item.row.avgHr != nil ? "bpm" : nil, color: BaselineTheme.rhr)
                 StatCell(label: "Max HR", value: item.row.maxHr.map { "\($0)" } ?? "–",
@@ -174,10 +182,13 @@ struct WorkoutSessionCard: View {
                          unit: BaselineReadouts.effortUnit, color: BaselineTheme.effort)
             }
             if let kcal = item.row.energyKcal, kcal > 0 {
-                HStack(alignment: .top, spacing: 12) {
+                // The same column as the cells above (a third of the row; half at accessibility sizes).
+                BaselineStatRow {
                     StatCell(label: "Calories", value: WorkoutsFormat.grouped(kcal), unit: "kcal")
-                    Spacer().frame(maxWidth: .infinity)
-                    Spacer().frame(maxWidth: .infinity)
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Spacer().frame(maxWidth: .infinity)
+                        Spacer().frame(maxWidth: .infinity)
+                    }
                 }
             }
             Text(item.row.strain == nil

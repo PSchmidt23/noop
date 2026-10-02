@@ -46,11 +46,9 @@ final class ScreenshotTests: XCTestCase {
         let card = app.staticTexts["Habits"].firstMatch
         let cardShown = card.waitForExistence(timeout: 20)
         Thread.sleep(forTimeInterval: 0.6)
+        // The sheet has one medium detent, so the one frame is the whole capture.
         try save(XCUIScreen.main.screenshot(), as: "journal-0")
-        let lifted = liftSheet(app, titled: "Journal")
-        try save(XCUIScreen.main.screenshot(), as: "journal-1")
         XCTAssertTrue(cardShown, "journal: first card (Habits) did not appear (screenshots still written)")
-        XCTAssertTrue(lifted, "journal: sheet did not lift to its large detent (screenshots still written)")
     }
 
     func testSettings() throws {
@@ -304,19 +302,6 @@ final class ScreenshotTests: XCTestCase {
         }
         XCTFail("trends: \(label) segment did not become selected")
         return false
-    }
-
-    /// Lifts the presented sheet whose bar reads `title` from its medium detent to the large one: the same
-    /// held gutter drag the scroll loop uses, which the sheet takes as a pan on itself while its content
-    /// has nowhere to scroll (a `swipeUp()` on the bar's title does not move it). True when the bar moved up.
-    @discardableResult
-    private func liftSheet(_ app: XCUIApplication, titled title: String) -> Bool {
-        let bar = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", title)).firstMatch
-        guard bar.waitForExistence(timeout: 10) else { return false }
-        let before = bar.frame.minY
-        scrollUp(app)
-        Thread.sleep(forTimeInterval: 0.8)
-        return bar.exists && bar.frame.minY < before
     }
 
     /// A screen pushed by a tap: waits for `title` (when given) and `firstCard`, then captures top and

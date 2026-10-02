@@ -108,8 +108,7 @@ struct JournalHabitsCard: View {
     }
 }
 
-/// One day's habits card with its own model and the add-habit sheet: the body of `JournalSheet`, and
-/// of the thin `JournalScreen` wrapper. `day` is the engine's "yyyy-MM-dd" key; the card reloads when
+/// One day's habits card with its own model and the add-habit sheet: the body of `JournalSheet`. `day` is the engine's "yyyy-MM-dd" key; the card reloads when
 /// the store refreshes or the day changes.
 struct JournalDayHabits: View {
     @EnvironmentObject private var repo: Repository

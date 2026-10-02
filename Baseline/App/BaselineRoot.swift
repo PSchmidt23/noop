@@ -135,6 +135,16 @@ struct BaselineRoot: View {
         // check covers a flag written while the app was suspended and never observed.
         .onChange(of: pendingTab, initial: true) { _, _ in consumePendingTab() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { consumePendingTab() } }
+        // A widget tap (`baseline://home`, the one `widgetURL` the BaselineWidgets extension sets; the
+        // scheme is registered in project.yml's Baseline block). Any other scheme or host is ignored.
+        .onOpenURL { url in
+            guard let destination = BaselineDeepLink.destination(for: url) else { return }
+            switch destination {
+            case .home: tab = .home
+            case .trends: tab = .trends
+            case .sleep: tab = .sleep
+            }
+        }
     }
 
     /// Open what a notification asked for, once, then clear the request so the same tap cannot re-fire

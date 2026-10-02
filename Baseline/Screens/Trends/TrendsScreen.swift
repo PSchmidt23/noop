@@ -50,7 +50,7 @@ struct TrendsScreen: View {
         BaselineScreen(title: "Trends", titleMode: .inline, pinned: {
             // Segment labels are the spoken labels too: `buttons["Progress"]` is a UI-test anchor.
             BaselineSegmentedPicker(options: TrendsSection.allCases, selection: $section,
-                                    label: { $0.label }, style: .glass)
+                                    label: { $0.label }, groupLabel: "Section", style: .glass)
         }) {
             switch section {
             case .trends:
@@ -85,7 +85,7 @@ struct TrendsScreen: View {
                 emptyState
             } else {
                 // Flat, inside the content: the pinned row is the section control (one pinned row per screen).
-                TrendRangePicker(selection: Binding(get: { range }, set: { rangeRaw = $0.rawValue }), style: .flat)
+                BaselineRangePicker<TrendsRange>(selection: Binding(get: { range }, set: { rangeRaw = $0.rawValue }), style: .flat)
                 cards(series)
             }
         } else {

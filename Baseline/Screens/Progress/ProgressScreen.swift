@@ -47,7 +47,7 @@ struct ProgressSection: View {
                     if s.hasHorizonContent {
                         BaselineRangePicker<ProgressHorizon>(
                             selection: Binding(get: { horizon }, set: { horizonRaw = $0.rawValue }),
-                            style: .flat)
+                            groupLabel: "Horizon", style: .flat)
                     }
                     cards(s)
                     if s.recalibratedOn != nil {

@@ -9,6 +9,7 @@ struct BaselineChip: View {
     let label: String
     let state: Bool?
     let action: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Button(action: action) {
@@ -21,7 +22,7 @@ struct BaselineChip: View {
                 Text(label)
                     .font(BaselineTheme.label)
                     .foregroundStyle(textColor)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
             }
             .padding(.horizontal, 14).padding(.vertical, 9)
             .background(fill, in: Capsule())
@@ -60,9 +61,6 @@ struct BaselineChip: View {
     }
 }
 
-/// The Journal screens' name for the same chip.
-typealias JournalHabitChip = BaselineChip
-
 /// A stepper chip for a numeric habit: "Alcohol · 2" with − and + inside the capsule. The same three
 /// fills as `BaselineChip`. The magnitude is ink like the label (the flat-pill rule: colour as a fill,
 /// text in ink), semibold so the number still leads; the accent @ 0.12 fill alone carries the yes state.
@@ -75,6 +73,7 @@ struct JournalNumericChip: View {
     let state: Entry
     /// nil = clear, 0 = no, ≥ 1 = value.
     let onChange: (Double?) -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var value: Double? { if case let .value(v) = state { return v } else { return nil } }
     private var isYes: Bool { value != nil }
@@ -99,9 +98,9 @@ struct JournalNumericChip: View {
                         Image(systemName: "xmark").font(BaselineTheme.symbolSmall.weight(.bold))
                             .foregroundStyle(BaselineTheme.textTertiary)
                     }
-                    Text(label).lineLimit(1)
+                    Text(label).lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                     if let value {
-                        Text("·").foregroundStyle(BaselineTheme.textTertiary)
+                        Text("·").foregroundStyle(BaselineTheme.textTertiary).accessibilityHidden(true)
                         Text(JournalLabels.magnitude(value))
                             .font(BaselineTheme.label.weight(.semibold))
                             .foregroundStyle(BaselineTheme.text)
@@ -118,6 +117,9 @@ struct JournalNumericChip: View {
                 .padding(.vertical, 9)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(label)
+            .accessibilityValue(accessibilityValueText)
+            .accessibilityHint(state == .unanswered ? "Logs one" : "")
             stepButton("plus") { onChange((value ?? 0) + 1) }
         }
         .background(fill, in: Capsule())
@@ -125,6 +127,16 @@ struct JournalNumericChip: View {
         .animation(.easeOut(duration: 0.15), value: state)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(label)
+    }
+
+    private var accessibilityValueText: String {
+        switch state {
+        case .unanswered: return "not answered"
+        case .no: return "no"
+        case .value(let v):
+            guard let unit, !unit.isEmpty else { return JournalLabels.magnitude(v) }
+            return "\(JournalLabels.magnitude(v)) \(unit)"
+        }
     }
 
     private var fill: Color {
@@ -162,12 +174,14 @@ struct BaselineAddChip: View {
     let title: String
     var wide: Bool = false
     let action: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Image(systemName: "plus").font(BaselineTheme.symbolSmall.weight(.bold))
-                Text(title).font(BaselineTheme.caption.weight(.semibold)).lineLimit(1)
+                Image(systemName: "plus").font(BaselineTheme.symbolSmall.weight(.bold)).accessibilityHidden(true)
+                Text(title).font(BaselineTheme.caption.weight(.semibold))
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
             }
             .foregroundStyle(BaselineTheme.accent)
             .padding(.horizontal, 14).padding(.vertical, 9)

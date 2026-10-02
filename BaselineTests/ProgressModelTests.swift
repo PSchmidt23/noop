@@ -658,8 +658,7 @@ final class ProgressModelTests: BaselineEngineTestCase {
         XCTAssertEqual(ProgressHorizon.allCases.map(\.agoPhrase), ["90 days ago", "180 days ago", "a year ago", nil])
         XCTAssertEqual(ProgressHorizon.allCases.map(\.days), [90, 180, 365, nil])
 
-        // TrendsRange is a BaselineRangeOption and the Trends picker is the shared pill (compile-time).
-        let _: BaselineRangePicker<TrendsRange>.Type = TrendRangePicker.self
+        // TrendsRange is a BaselineRangeOption, so the Trends picker is the shared `BaselineRangePicker`.
         func label<O: BaselineRangeOption>(_ o: O) -> String { o.label }
         XCTAssertEqual(label(TrendsRange.week), "7D")
         XCTAssertEqual(label(ProgressHorizon.half), "180D")

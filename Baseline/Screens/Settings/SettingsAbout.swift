@@ -123,7 +123,7 @@ struct SettingsTextSheet: View {
                         Link(destination: link) {
                             HStack(spacing: 6) {
                                 Text("Read online at \(link.host(percentEncoded: false) ?? link.absoluteString)")
-                                Image(systemName: "arrow.up.right")
+                                Image(systemName: "arrow.up.right").accessibilityHidden(true)
                             }
                             .font(BaselineTheme.label)
                             .foregroundStyle(BaselineTheme.accent)

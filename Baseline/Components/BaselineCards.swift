@@ -99,6 +99,26 @@ struct StatCell: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // One element: "Efficiency, 92 %", never the label and the value as two swipes.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(unit.map { "\(value) \($0)" } ?? value)
+    }
+}
+
+/// A row of three (or more) `StatCell`s: side by side by default, a two-column grid at accessibility
+/// Dynamic Type sizes, where a third column (~100pt) would break "132 bpm" between its digits.
+struct BaselineStatRow<Content: View>: View {
+    @ViewBuilder var content: Content
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                      alignment: .leading, spacing: 14) { content }
+        } else {
+            HStack(alignment: .top, spacing: 12) { content }
+        }
     }
 }
 
@@ -110,6 +130,7 @@ struct BaselinePill: View {
     var color: Color = BaselineTheme.accent
     var style: Style = .flat
     enum Style { case flat, glass }
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         switch style {
@@ -130,7 +151,8 @@ struct BaselinePill: View {
             Text(text)
                 .font(BaselineTheme.caption.weight(.semibold))
                 .foregroundStyle(BaselineTheme.text)
-                .lineLimit(1)
+                // Hosts move the pill under the title at accessibility sizes; two lines is the last resort.
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
         }
     }
 }

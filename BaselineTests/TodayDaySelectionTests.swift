@@ -2,8 +2,8 @@ import XCTest
 @testable import Baseline
 
 /// `TodayDaySelection`: Home's day-by-day model. Never a future day, never a day before the first stored
-/// night (today only while the store is empty), a selection that was today follows the midnight roll,
-/// and the keys handed to the funnels are the selected day's. Dates are built in the machine's own
+/// night (today only while the store is empty), the midnight roll jumps back to the new today (the same
+/// day rolled again moves nothing), and the keys handed to the funnels are the selected day's. Dates are built in the machine's own
 /// calendar at noon, so nothing here straddles a DST edge.
 final class TodayDaySelectionTests: XCTestCase {
 
@@ -113,14 +113,24 @@ final class TodayDaySelectionTests: XCTestCase {
         XCTAssertTrue(s.isToday)
     }
 
-    func testRollKeepsAnOlderDay() {
+    func testRollJumpsAnOlderDayBackToTheNewToday() {
         var s = TodayDaySelection(now: now, earliest: noon(2026, 9, 1))
         s.step(-1)
         s.roll(now: noon(2026, 10, 2, hour: 0))
+        XCTAssertEqual(s.today, start(2026, 10, 2))
+        XCTAssertEqual(s.day, start(2026, 10, 2))
+        XCTAssertTrue(s.isToday)
+        XCTAssertEqual(s.title, "Today")
+        XCTAssertFalse(s.canGoForward, "never a future day")
+    }
+
+    func testRollOnTheSameDayLeavesAnOlderDayAlone() {
+        var s = TodayDaySelection(now: now, earliest: noon(2026, 9, 1))
+        s.step(-1)
+        s.roll(now: noon(2026, 10, 1, hour: 17))
+        XCTAssertEqual(s.today, start(2026, 10, 1))
         XCTAssertEqual(s.day, start(2026, 9, 30))
-        XCTAssertEqual(s.offset, 2)
         XCTAssertFalse(s.isToday)
-        XCTAssertNotEqual(s.title, "Yesterday")
     }
 
     // MARK: Keys for the funnels

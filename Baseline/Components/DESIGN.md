@@ -23,8 +23,8 @@ Journal is NOT a tab.
 
 Journal (`Screens/Journal/`) exposes exactly two entry points: `JournalSheet(day: String)` (a sheet:
 day label, that day's habit chips, "Add habit", Done) and `JournalPatternsView()` (the effects card(s)
-+ dose rows + empty states, built to sit inside Trends' `LazyVStack`). Nothing links to the old
-`JournalScreen` root. Settings and everything under it (Devices, Apple Health, Import, Compare, Export,
++ dose rows + empty states, built to sit inside Trends' `LazyVStack`). The old `JournalScreen` root is
+gone. Settings and everything under it (Devices, Apple Health, Import, Compare, Export,
 Profile, Notifications, About) is unchanged in structure.
 
 Name contracts between builders: `JournalSheet(day:)`, `JournalPatternsView()`, `SettingsScreen()`,
@@ -116,9 +116,9 @@ this for you; stage `StatCell` values are ink with `dot: stageColor`.
 
 | Token | Definition | Use |
 |---|---|---|
-| `hero(_ size = 44)` | semibold rounded | 44 inside Home's rings; 36 for a duration numeral ("7h 24m": Last-night row, Sleep ring, Workout header); Welcome keeps `hero(54)` / `hero(34)` |
-| `title` | `.title2` rounded semibold (22) | Welcome only |
-| `stat` | 20 semibold rounded | every `StatCell` value, Journal day number, effect delta, timing-grid values |
+| `hero(_ size = 44)` | semibold rounded, scales with Dynamic Type (large-title curve, capped at 1.5×) | 44 inside Home's rings (the ring grows to 168 at accessibility sizes); 36 for a duration numeral ("7h 24m": Last-night row, Sleep ring, Workout header); Welcome keeps `hero(54)` / `hero(34)` |
+| `title` | `.title2` rounded semibold (22) | Workout detail's sport title |
+| `stat` | 20 semibold rounded, scales with Dynamic Type (title3 curve, capped at 2×) | every `StatCell` value, Journal day number, effect delta, timing-grid values |
 | `headline` | `.headline` rounded (17) | sentences that lead a card, CTA labels |
 | `body` | `.body` rounded (17) | the one sentence in a card |
 | `label` | `.subheadline` rounded medium (15) | card titles, chips, row titles |
@@ -295,7 +295,7 @@ whole control. `.flat` = `fill` track + `fillStroke`. Selected segment: ink text
 ### `BaselineChip`, `JournalNumericChip`, `BaselineAddChip` — `BaselineChip.swift`
 
 ```swift
-BaselineChip(label: "Alcohol", state: answers[id]) { cycle(id) }          // nil / true / false; typealias JournalHabitChip
+BaselineChip(label: "Alcohol", state: answers[id]) { cycle(id) }          // nil / true / false
 JournalNumericChip(label: "Caffeine", unit: "cups", state: .value(2)) { onChange($0) }   // API unchanged
 BaselineAddChip(title: "Add", wide: items.isEmpty) { showAddHabit = true }
 ```
@@ -304,10 +304,8 @@ Flat capsules, 44pt hit target (h 14 / v 9). nil: card fill + 1pt `inactive` str
 true: `accent @ 0.12`, bold check in accent, ink; false: `chipFill`, x in tertiary, tertiary text.
 `accessibilityValue` yes / no / not answered. `JournalNumericChip`'s magnitude ("Caffeine · 2") is INK,
 semibold, monospaced digits: accent text on the yes fill measures ≈ 4.4:1, under the card floor, so the
-fill alone carries the yes state. **Journal builder, mandatory: delete `JournalHabitChip`,
-`JournalNumericChip` and `addChip` from `Screens/Journal/JournalHabitsCard.swift`** — they now live
-here and the project will not link with both declarations ("invalid redeclaration"). `JournalNumericChip`
-still formats its magnitude through `JournalLabels.magnitude` (`Screens/Journal/JournalSupport.swift`);
+fill alone carries the yes state. The chips live only here (no `JournalHabitChip` alias any more).
+`JournalNumericChip` still formats its magnitude through `JournalLabels.magnitude` (`Screens/Journal/JournalSupport.swift`);
 keep that helper. `BaselineFlowLayout` stays in `JournalSupport.swift` (Home and Journal both use it).
 
 ### `BaselineCTA`, `GlassCTA`, `BaselineToolbarLink`, `StrapStatusPill` — `BaselineButtons.swift`

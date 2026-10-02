@@ -76,11 +76,15 @@ struct TodayRingTile: View {
     let reading: TodayMetricReading?
     /// The selected day's key: a reading dated earlier is a carried value.
     let dayKey: String
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         BaselineCard(padding: 16) {
+            // The tiles stack at accessibility sizes (`TodayScreen.rings`), so the ring can take the
+            // width the scaled numeral needs.
             MetricRing(value: reading?.value, domain: domain, color: color, label: title, unit: unit,
-                       context: contextText, band: band, baseline: baseline, tone: tone)
+                       context: contextText, band: band, baseline: baseline, tone: tone,
+                       size: dynamicTypeSize.isAccessibilitySize ? 168 : BaselineTheme.ringSize)
         }
     }
 
@@ -100,8 +104,12 @@ struct TodayRingTile: View {
         return r.baseline
     }
 
-    private var contextText: String {
-        guard let r = reading else { return "Waiting for the first night" }
+    private var contextText: String { Self.contextText(reading, unit: unit, dayKey: dayKey) }
+
+    /// The ONE context sentence under a ring. Static so the widget publisher
+    /// (`BaselineWidgetPublisher.contextText`) prints exactly these words and can never drift.
+    static func contextText(_ r: TodayMetricReading?, unit: String, dayKey: String) -> String {
+        guard let r else { return "Waiting for the first night" }
         if r.isStale { return "No night since \(TodayFormat.dayLabel(r.day))" }
         let text: String
         if r.state.usable, let d = r.deviation {
@@ -188,21 +196,21 @@ struct LastNightCard: View {
     var body: some View {
         BaselineCard(title: isToday ? "Last night" : "Night", accessory: accessory) {
             if let s = sleep {
-                HStack(alignment: .lastTextBaseline, spacing: 4) {
-                    Text(BaselineReadouts.durationText(minutes: s.totalMin))
-                        .font(BaselineTheme.hero(36))
-                        .foregroundStyle(BaselineTheme.text)
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
-                    Text("asleep")
-                        .font(BaselineTheme.headline)
-                        .foregroundStyle(BaselineTheme.textSecondary)
-                    Spacer(minLength: 8)
-                    if let e = s.efficiencyPct {
-                        StatCell(label: "Efficiency", value: "\(Int(e.rounded()))%")
-                            .fixedSize()
+                // One element: "6h 42m asleep, Efficiency, 92 %" instead of three swipes. The
+                // efficiency cell trails the numeral while the row fits; at larger type it drops under it,
+                // so "6h 49m" never breaks across two lines.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .lastTextBaseline, spacing: 4) {
+                        durationLine(s)
+                        Spacer(minLength: 8)
+                        efficiencyCell(s)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .lastTextBaseline, spacing: 4) { durationLine(s) }
+                        efficiencyCell(s)
                     }
                 }
+                .accessibilityElement(children: .combine)
                 if s.hasStages {
                     TodayStageBar(stages: s.stages)
                 }
@@ -215,6 +223,25 @@ struct LastNightCard: View {
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textSecondary)
             }
+        }
+    }
+
+    @ViewBuilder private func durationLine(_ s: TodaySleepReading) -> some View {
+        Text(BaselineReadouts.durationText(minutes: s.totalMin))
+            .font(BaselineTheme.hero(36))
+            .foregroundStyle(BaselineTheme.text)
+            .monospacedDigit()
+            .lineLimit(1)
+            .contentTransition(.numericText())
+        Text("asleep")
+            .font(BaselineTheme.headline)
+            .foregroundStyle(BaselineTheme.textSecondary)
+    }
+
+    @ViewBuilder private func efficiencyCell(_ s: TodaySleepReading) -> some View {
+        if let e = s.efficiencyPct {
+            StatCell(label: "Efficiency", value: "\(Int(e.rounded()))%")
+                .fixedSize()
         }
     }
 
@@ -255,7 +282,12 @@ struct TodayStageBar: View {
             }
         }
         .frame(height: 10)
-        .accessibilityHidden(true)
+        // The split exists only as colour; VoiceOver gets it as "Sleep stages: Deep 1h 12m, REM 1h 40m, ...".
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Sleep stages")
+        .accessibilityValue(stages.filter { $0.minutes > 0 }
+            .map { "\(BaselineTheme.stageName($0.id)) \(BaselineReadouts.durationText(minutes: $0.minutes))" }
+            .joined(separator: ", "))
     }
 }
 

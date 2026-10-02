@@ -5,10 +5,15 @@
 #   ONLY=ScreenshotTests/testTrends Baseline/scripts/ui-shots.sh   # one test (anything after -only-testing:BaselineUITests/)
 #   MARKETING_SIM=1 Baseline/scripts/ui-shots.sh [shots dir] # only MarketingShots/testMarketingSet, on a 6.9-inch
 #                                                             # "Baseline Marketing" simulator (created if missing)
+#   AX=1 Baseline/scripts/ui-shots.sh [shots dir]            # accessibility capture: the Dynamic Type content size is
+#                                                             # set to accessibility-extra-large (AX3) for the run and
+#                                                             # reset to medium afterwards; shots land in <dir>/ax/
 #
-# Steps: (1) boot the simulator, (2) `simctl status_bar override`, (3) `xcodebuild test` with
-# TEST_RUNNER_BASELINE_SHOTS_DIR, (4) clear the override, (5) shut the simulator down. The override is cleared
-# and the simulator shut down even when the suite fails. XCUITest cannot call simctl from inside the
+# Steps: (1) boot the simulator, (2) `simctl status_bar override` (and, with AX, `simctl ui content_size`),
+# (3) `xcodebuild test` with TEST_RUNNER_BASELINE_SHOTS_DIR, (4) clear the override (and reset the content
+# size), (5) shut the simulator down. The override is cleared and the simulator shut down even when the
+# suite fails. The tests themselves are unchanged in AX mode: every launch still passes `--ui-testing`
+# (pinned tab bar), so the frame comparison stays deterministic at the larger text size. XCUITest cannot call simctl from inside the
 # simulator, which is why the override lives here and not in the test's setUp.
 #
 # The script touches only two simulators, ever: $SIM_UDID (default: the Baseline iPhone) and, with
@@ -23,6 +28,12 @@ DD="${DERIVED_DATA:-$ROOT/.build-baseline}"
 MARKETING_NAME="Baseline Marketing"
 MARKETING_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max"
 ONLY="${ONLY:-}"
+AX="${AX:-}"
+AX_SIZE="accessibility-extra-large"
+if [[ -n "$AX" ]]; then
+  SHOTS="$SHOTS/ax"
+  [[ -z "$ONLY" ]] && ONLY="ScreenshotTests"   # the marketing frames are a size check, not a type-size one
+fi
 cd "$ROOT"
 
 log() { print -u2 -- "ui-shots: $*"; }
@@ -58,6 +69,9 @@ fi
 
 cleanup() {
   xcrun simctl status_bar "$UDID" clear >/dev/null 2>&1 || true
+  if [[ -n "$AX" ]]; then
+    xcrun simctl ui "$UDID" content_size medium >/dev/null 2>&1 || log "could not reset content size on $UDID"
+  fi
   xcrun simctl shutdown "$UDID" >/dev/null 2>&1 || true
   log "status bar cleared, $UDID shut down"
 }
@@ -78,6 +92,12 @@ xcrun simctl bootstatus "$UDID" -b >/dev/null 2>&1 || true
 # Baseline is light-only (`.preferredColorScheme(.light)`); the system sheets and alerts it presents
 # follow the simulator's appearance, so pin it to light for the captures.
 xcrun simctl ui "$UDID" appearance light >/dev/null 2>&1 || log "could not set light appearance on $UDID"
+if [[ -n "$AX" ]]; then
+  # Dynamic Type at AX3; reset to medium in cleanup. The app reads the size at launch, and every test
+  # launches the app itself, so no reboot is needed.
+  xcrun simctl ui "$UDID" content_size "$AX_SIZE" || { log "could not set content size $AX_SIZE"; exit 1; }
+  log "content size: $AX_SIZE (reset to medium on exit)"
+fi
 
 xcrun simctl status_bar "$UDID" override \
   --time 9:41 \

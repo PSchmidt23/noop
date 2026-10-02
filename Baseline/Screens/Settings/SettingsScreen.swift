@@ -28,6 +28,7 @@ struct SettingsScreen: View {
 // MARK: - Strap
 
 private struct SettingsStrapCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var ble: BLEManager
     @EnvironmentObject private var live: LiveState
 
@@ -44,10 +45,13 @@ private struct SettingsStrapCard: View {
                 Text(live.connected ? "Connected" : "Not connected")
                     .font(BaselineTheme.headline)
                     .foregroundStyle(BaselineTheme.text)
-                Spacer()
-                if let battery {
+                Spacer(minLength: 8)
+                if let battery, !dynamicTypeSize.isAccessibilitySize {
                     BaselinePill(text: battery.text, color: battery.color)
                 }
+            }
+            if let battery, dynamicTypeSize.isAccessibilitySize {
+                BaselinePill(text: battery.text, color: battery.color)
             }
             Text(lastSyncLine)
                 .font(BaselineTheme.caption)
@@ -354,7 +358,11 @@ struct SettingsRowLabel<Trailing: View>: View {
     let icon: String
     let title: String
     var subtitle: String? = nil
+    /// A status pill: trailing beside the chevron, or under the subtitle at accessibility sizes, where
+    /// a pill beside a 40pt title would squeeze both ("Apple / Health", "Not s…").
+    var badge: (text: String, color: Color)? = nil
     @ViewBuilder var trailing: () -> Trailing
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         HStack(spacing: 14) {
@@ -365,8 +373,14 @@ struct SettingsRowLabel<Trailing: View>: View {
                     Text(subtitle).font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if let badge, dynamicTypeSize.isAccessibilitySize {
+                    BaselinePill(text: badge.text, color: badge.color).padding(.top, 4)
+                }
             }
             Spacer(minLength: 8)
+            if let badge, !dynamicTypeSize.isAccessibilitySize {
+                BaselinePill(text: badge.text, color: badge.color)
+            }
             trailing()
         }
         .padding(.vertical, 4)
@@ -396,8 +410,7 @@ struct SettingsLinkRow<Destination: View>: View {
         NavigationLink {
             destination()
         } label: {
-            SettingsRowLabel(icon: icon, title: title, subtitle: subtitle) {
-                if let badge { BaselinePill(text: badge.text, color: badge.color) }
+            SettingsRowLabel(icon: icon, title: title, subtitle: subtitle, badge: badge) {
                 SettingsChevron()
             }
         }

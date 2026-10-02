@@ -14,6 +14,9 @@ struct TrendsBandChart: View {
     let yDomain: ClosedRange<Double>
     var height: CGFloat = 180
     @Binding var selected: BandPoint?
+    /// The one VoiceOver sentence for the whole chart (the scrub gesture is touch-only).
+    var accessibilitySummary: String? = nil
+    var accessibilityHint: String? = nil
 
     var body: some View {
         Chart {
@@ -68,6 +71,8 @@ struct TrendsBandChart: View {
             }
         }
         .frame(height: height)
+        .modifier(BaselineChartSummary(summary: accessibilitySummary))
+        .modifier(OptionalAccessibilityHint(hint: accessibilityHint))
     }
 }
 
@@ -77,6 +82,7 @@ struct TrendsBarChart: View {
     let color: Color
     var average: Double? = nil
     var height: CGFloat = 140
+    var accessibilitySummary: String? = nil
 
     var body: some View {
         Chart {
@@ -96,6 +102,7 @@ struct TrendsBarChart: View {
         .chartXScale(range: .plotDimension(endPadding: 18))
         .chartPlotStyle { $0.background(.clear) }
         .frame(height: height)
+        .modifier(BaselineChartSummary(summary: accessibilitySummary))
     }
 }
 #endif

@@ -178,7 +178,7 @@ private struct StrapCard: View {
                 if isActive { BaselinePill(text: "Active") }
                 menu
             }
-            HStack(alignment: .top, spacing: 12) {
+            BaselineStatRow {
                 StatCell(label: "Battery", value: battery?.text ?? "–", color: battery?.color ?? BaselineTheme.text)
                 StatCell(label: "Firmware", value: firmware ?? "–")
                 StatCell(label: "Status", value: connected ? "Connected" : (isActive ? "Not connected" : "Paired"))

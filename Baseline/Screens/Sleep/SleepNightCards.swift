@@ -16,6 +16,7 @@ struct SleepHeroCard: View {
     let average: Double?
     /// The day label as the card's accessory. `NightDetailScreen` passes false: its title is the day.
     var showsDayLabel: Bool = true
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// Width of the ring column in the side-by-side layout (the 168pt ring plus its line caps), so the
     /// three cells keep a predictable column beside it.
@@ -32,7 +33,7 @@ struct SleepHeroCard: View {
                 }
                 VStack(spacing: 16) {
                     ring
-                    HStack(alignment: .top, spacing: 12) { cells }
+                    BaselineStatRow { cells }
                 }
             }
         }
@@ -57,7 +58,9 @@ struct SleepHeroCard: View {
                    band: average.map { ($0 - 30)...($0 + 30) },
                    baseline: average,
                    tone: tone,
-                   size: 168,
+                   // 200 at accessibility sizes: the scaled "6h 49m" needs the room (the ring is on its
+                   // own row there, so the width is free).
+                   size: dynamicTypeSize.isAccessibilitySize ? 200 : 168,
                    lineWidth: 12,
                    valueText: BaselineReadouts.durationText(minutes: night.asleepMin),
                    numeralFont: BaselineTheme.hero(36))
@@ -210,6 +213,9 @@ struct BaselineHypnogram: View {
         }
         .chartPlotStyle { $0.background(.clear) }
         .frame(height: height)
+        // One element: the stage cells below carry the totals, so a span is all the timeline needs to say.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Stage timeline from \(SleepFormat.clock(onset)) to \(SleepFormat.clock(wake))")
     }
 }
 
@@ -251,23 +257,19 @@ struct SleepNightRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 7) {
-                Text(SleepFormat.dayLabel(night.dayDate))
-                    .font(BaselineTheme.label)
-                    .foregroundStyle(BaselineTheme.text)
-                SleepStageBar(night: night)
-                    .frame(height: 4)
+            // Date and bar lead, the numbers trail on the same line while they fit; at larger type the
+            // numbers drop under the date so "92%" is never squeezed or truncated.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    dateAndBar
+                    Spacer(minLength: 8)
+                    numbers
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    dateAndBar
+                    numbers
+                }
             }
-            Spacer(minLength: 8)
-            Text(BaselineReadouts.durationText(minutes: night.asleepMin))
-                .font(BaselineTheme.body.weight(.semibold))
-                .monospacedDigit()
-                .foregroundStyle(BaselineTheme.text)
-            Text(SleepFormat.percent(night.efficiency) ?? "\u{2014}")
-                .font(BaselineTheme.caption)
-                .monospacedDigit()
-                .foregroundStyle(BaselineTheme.textSecondary)
-                .frame(width: 38, alignment: .trailing)
             Image(systemName: "chevron.right")
                 .font(BaselineTheme.symbolSmall)
                 .foregroundStyle(BaselineTheme.textTertiary)
@@ -277,6 +279,31 @@ struct SleepNightRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens the night's stages and vitals")
+    }
+
+    private var dateAndBar: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(SleepFormat.dayLabel(night.dayDate))
+                .font(BaselineTheme.label)
+                .foregroundStyle(BaselineTheme.text)
+            SleepStageBar(night: night)
+                .frame(height: 4)
+        }
+    }
+
+    private var numbers: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(BaselineReadouts.durationText(minutes: night.asleepMin))
+                .font(BaselineTheme.body.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(BaselineTheme.text)
+            Text(SleepFormat.percent(night.efficiency) ?? "\u{2014}")
+                .font(BaselineTheme.caption)
+                .monospacedDigit()
+                .foregroundStyle(BaselineTheme.textSecondary)
+                .frame(minWidth: 38, alignment: .trailing)
+        }
+        .fixedSize()
     }
 }
 

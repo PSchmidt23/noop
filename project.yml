@@ -459,12 +459,17 @@ targets:
         # areActivitiesEnabled, false without the key), NSAppTransportSecurity's local-networking
         # exemption (the AI coach is deferred and Baseline makes no network connections),
         # UIFileSharingEnabled / LSSupportsOpeningDocumentsInPlace (the Siri Shortcut drop file and
-        # folder backups are deferred, so Documents stays private), the OURA_* OAuth keys and the URL
-        # schemes (every Oura reader is under #if OURA_CLOUD_IMPORT, which no tracked build sets, and
+        # folder backups are deferred, so Documents stays private), the OURA_* OAuth keys and the `noop`
+        # URL scheme (every Oura reader is under #if OURA_CLOUD_IMPORT, which no tracked build sets, and
         # OuraCredentials.fromBundle returns nil on absent keys; the `noop://import-health` Shortcut
         # import is wired by `.onOpenURL` in StrandiOSApp.swift, which Baseline excludes, so
         # ShortcutHealthImport is never reached). Every NS*UsageDescription for a framework the binary
         # links stays: a missing one is a hard crash the moment that NOOP code path runs.
+        # Baseline's OWN scheme, added back for the widgets: every BaselineWidgets tap opens
+        # `baseline://home` (BaselineDeepLink.home), which BaselineRoot consumes with `.onOpenURL`. Not
+        # `noop`, so a NOOP install on the same phone never claims a Baseline widget's tap.
+        CFBundleURLTypes:
+          - CFBundleURLSchemes: [baseline]
         # Baseline is an iPhone app (TARGETED_DEVICE_FAMILY 1 below): portrait only, and no
         # ~ipad orientation list, because it runs on iPad in iPhone-compatibility mode.
         UISupportedInterfaceOrientations:
@@ -553,6 +558,9 @@ targets:
       # into WhoopStore's static product, so the app fails to link.
       - package: OuraProtocol
       - package: PolarProtocol
+      # Embeds the WidgetKit extension (Baseline.app/PlugIns/BaselineWidgets.appex), as NOOPiOS embeds
+      # NOOPiOSWidgets.
+      - target: BaselineWidgets
 
   # Unit tests for Baseline's pure builders (TodaySnapshot, TrendsSeries, SleepNightBuilder, the
   # Journal helpers). Hosted in the app so `@testable import Baseline` links against the real module;
@@ -603,6 +611,57 @@ targets:
         DEVELOPMENT_TEAM: 25RC553RGP
         # Matches the host app (iPhone only).
         TARGETED_DEVICE_FAMILY: "1"
+
+  # Baseline's WidgetKit extension (BaselineWidgets/): the Home Screen HRV widget and the Lock Screen
+  # readiness accessories. Modelled on NOOPiOSWidgets below, but it links NO NOOP package: the only
+  # file it shares with the app is the plain Codable `BaselineWidgetSnapshot` (listed in both targets'
+  # sources), which the app writes as JSON into the App Group (BaselineWidgetPublisher) and the
+  # extension reads. Embedded by the `- target: BaselineWidgets` dependency on Baseline above.
+  BaselineWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: BaselineWidgets
+        excludes:
+          - "Info.plist"
+          - "BaselineWidgets.entitlements"
+      # The one shared file: Foundation only, no engine import, so the extension stays tiny.
+      - path: Baseline/App/BaselineWidgetSnapshot.swift
+    info:
+      path: BaselineWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Baseline
+        # Version keys live HERE, not hand-edited into the file, because xcodegen regenerates the plist
+        # (the NOOPiOSWidgets rationale, #416): the extension's version must match the parent app's or
+        # iOS warns, and both read the Baseline target's own 1.0 (1) line through the settings below.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Mirrors the app target: exposes APP_GROUP_ID to the extension at runtime
+        # (BaselineWidgetStore.appGroupID reads the AppGroupIdentifier key from its OWN bundle).
+        AppGroupIdentifier: "$(APP_GROUP_ID)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: BaselineWidgets/BaselineWidgets.entitlements
+      properties:
+        # The same group as the app (both resolve $(APP_GROUP_ID) to group.com.patrickschmidt.baseline).
+        com.apple.security.application-groups:
+          - $(APP_GROUP_ID)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.patrickschmidt.baseline.widgets
+        PRODUCT_NAME: BaselineWidgets
+        # Target-level, like the app: the project-level APP_GROUP_ID is NOOP's staging group.
+        APP_GROUP_ID: group.com.patrickschmidt.baseline
+        DEVELOPMENT_TEAM: 25RC553RGP
+        # Lockstep with the Baseline target's version line (see its settings).
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        # iPhone only, matching the host app.
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_EMIT_LOC_STRINGS: YES
 
   # WidgetKit + Live Activity extension — the iOS analogue of the macOS menu-bar
   # extra. Reads a tiny snapshot the app publishes into the shared App Group.

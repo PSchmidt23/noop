@@ -73,6 +73,8 @@ struct BaselineBarChart: View {
     let color: Color
     var average: Double? = nil
     var height: CGFloat = 140
+    /// One sentence VoiceOver reads for the whole chart instead of one element per bar.
+    var accessibilitySummary: String? = nil
 
     var body: some View {
         Chart {
@@ -91,6 +93,20 @@ struct BaselineBarChart: View {
         .chartXAxis { BaselineChartStyle.dayAxis(desiredCount: 4) }
         .chartPlotStyle { $0.background(.clear) }
         .frame(height: height)
+        .modifier(BaselineChartSummary(summary: accessibilitySummary))
+    }
+}
+
+/// Collapses a chart into ONE VoiceOver element with `summary` as its label, when a summary was given
+/// (Swift Charts otherwise exposes every mark as "Day, Sep 28, Value, 7.2" with no metric or unit).
+struct BaselineChartSummary: ViewModifier {
+    let summary: String?
+    func body(content: Content) -> some View {
+        if let summary {
+            content.accessibilityElement(children: .ignore).accessibilityLabel(summary)
+        } else {
+            content
+        }
     }
 }
 #endif

@@ -74,6 +74,16 @@ enum BaselineTheme {
     static let stageLight = Color(baselineHex: 0x8FB3F2)
     static let stageWake = Color(baselineHex: 0xF0B37E)
 
+    /// The spoken / printed name of a stage key ("deep" -> "Deep", "rem" -> "REM", "wake" -> "Awake").
+    static func stageName(_ stage: String) -> String {
+        switch stage.lowercased() {
+        case "deep": return "Deep"
+        case "rem": return "REM"
+        case "light": return "Light"
+        default: return "Awake"
+        }
+    }
+
     static func stageColor(_ stage: String) -> Color {
         switch stage.lowercased() {
         case "deep": return stageDeep
@@ -103,12 +113,23 @@ enum BaselineTheme {
     }
 
     // MARK: Type (SF Rounded everywhere; exactly these tokens, nothing ad hoc)
-    /// Ring numerals (44 in Today's rings, 36 for a duration numeral); Welcome keeps 54 / 34.
-    static func hero(_ size: CGFloat = 44) -> Font { .system(size: size, weight: .semibold, design: .rounded) }
+    /// Ring numerals (44 in Today's rings, 36 for a duration numeral); Welcome keeps 54 / 34. Scales with
+    /// Dynamic Type on the large-title curve, capped at 1.5x so a numeral still fits its ring (the ring
+    /// also grows at accessibility sizes); without the cap AX5 would put a 77pt "7h 24m" in a 168pt ring.
+    static func hero(_ size: CGFloat = 44) -> Font {
+        .system(size: scaled(size, textStyle: .largeTitle, maxFactor: 1.5), weight: .semibold, design: .rounded)
+    }
+    /// `size` scaled by the Dynamic Type setting on `textStyle`'s curve, never beyond `maxFactor` x.
+    private static func scaled(_ size: CGFloat, textStyle: UIFont.TextStyle, maxFactor: CGFloat) -> CGFloat {
+        min(UIFontMetrics(forTextStyle: textStyle).scaledValue(for: size), size * maxFactor)
+    }
     /// 22 semibold. Welcome only.
     static let title = Font.system(.title2, design: .rounded).weight(.semibold)
     /// 20 semibold: every StatCell value, the Journal day number, effect deltas, timing-grid values.
-    static let stat = Font.system(size: 20, weight: .semibold, design: .rounded)
+    /// Scales with Dynamic Type on the title3 curve, so a value never ends up smaller than its caption.
+    static var stat: Font {
+        .system(size: scaled(20, textStyle: .title3, maxFactor: 1.6), weight: .semibold, design: .rounded)
+    }
     /// 17 semibold.
     static let headline = Font.system(.headline, design: .rounded)
     /// 17.
@@ -151,8 +172,8 @@ struct BaselineBackground: View {
 /// Scroll container with Baseline's background, gutter and spacing. Use for every tab root and pushed
 /// screen. The content is a `LazyVStack(pinnedViews: [.sectionHeaders])`, so a `Section { } header: { }`
 /// inside it pins its header (Settings). `pinned` is the one-row bar under the navigation bar
-/// (`safeAreaBar(edge: .top)`): the Trends / Progress range picker. `subtitle` becomes the navigation
-/// subtitle (Today's date and sync stamp). No `.toolbarColorScheme`: the bars are the system's glass.
+/// (`safeAreaBar(edge: .top)`): Home's day switcher, Trends' section control. `subtitle` becomes the
+/// navigation subtitle (Home's sync stamp, the journal sheet's night label). No `.toolbarColorScheme`: the bars are the system's glass.
 struct BaselineScreen<Content: View, Pinned: View>: View {
     let title: String
     var titleMode: NavigationBarItem.TitleDisplayMode = .large
@@ -201,7 +222,7 @@ struct BaselineScreen<Content: View, Pinned: View>: View {
 }
 
 extension BaselineScreen where Pinned == EmptyView {
-    /// A screen with nothing pinned under the bar (every screen but Trends and Progress).
+    /// A screen with nothing pinned under the bar (every screen but Home and Trends).
     init(title: String, titleMode: NavigationBarItem.TitleDisplayMode = .large, subtitle: String? = nil,
          @ViewBuilder content: @escaping () -> Content) {
         self.init(title: title, titleMode: titleMode, subtitle: subtitle, hasPinned: false,

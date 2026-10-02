@@ -12,8 +12,8 @@ support that story. Nothing clutters it.
 
 ## Rules of the fork
 
-- **Never edit NOOP's files.** All Baseline code lives in `Baseline/` plus one target block in
-  `project.yml`. Upstream merges (`git fetch upstream && git merge upstream/main`) must stay trivial.
+- **Never edit NOOP's files.** All Baseline code lives in `Baseline/`, `BaselineTests/`, `BaselineUITests/`
+  and `BaselineWidgets/` plus their target blocks in `project.yml`. Upstream merges (`git fetch upstream && git merge upstream/main`) must stay trivial.
   If NOOP's engine needs a change, make it as a pull request upstream, not a local patch.
 - **License is PolyForm Noncommercial 1.0.0.** Baseline is free, with no in-app purchases, ads,
   or paid tiers, ever. Keep `LICENSE`, `NOTICE`, `ATTRIBUTION.md` and `DISCLAIMER.md` in the repo and
@@ -88,6 +88,33 @@ support that story. Nothing clutters it.
   `baseline.pendingTab = "journal"`, which `BaselineRoot` consumes through `@AppStorage` (cold starts included)
   by selecting Home and bumping its `journalRequest`. `EveningCheckInTests`.
 
+- **Widgets** (`BaselineWidgets/`, target `BaselineWidgets`, bundle id `com.patrickschmidt.baseline.widgets`,
+  embedded by the Baseline target's `- target: BaselineWidgets` dependency): a WidgetKit extension on NOOP's
+  pattern (`StrandiOSShared/WidgetSnapshot.swift` + `StrandiOSWidgets/`), but it links **no NOOP package**.
+  The one file both targets compile is `Baseline/App/BaselineWidgetSnapshot.swift` (Foundation only): the
+  Codable glance (`dayKey`, HRV value / day / baseline / band / pre-computed ring fraction / Home's context
+  sentence / band position, resting HR, readiness label + `BaselineTheme` colour *name* or the calibrating
+  count, last night's minutes + 30-night average, `lastSyncedAt`, `generatedAt`), the App Group JSON store
+  (`BaselineWidgetStore`: `baseline-widget-snapshot.json` in
+  `containerURL(forSecurityApplicationGroupIdentifier:)`, the id read from each bundle's own
+  `AppGroupIdentifier` Info.plist key, which both targets set to `$(APP_GROUP_ID)` =
+  `group.com.patrickschmidt.baseline`, the same value as both entitlements) and `BaselineDeepLink`.
+  `Baseline/App/BaselineWidgetPublisher.swift` (app only) builds it with `BaselineWidgetSnapshot.make(from:)`
+  from the **same** `TodaySnapshot` Home draws, through the strap-first funnel `MorningSummaryNotifier.summary`
+  uses, so a widget never disagrees with the tab behind it; `publish` dedups an unchanged glance
+  (`rendersSame(as:)`, the clock excluded), writes atomically and calls `WidgetCenter.reloadAllTimelines()`.
+  `BaselineApp` publishes on scene active, when the store loads and on `repo.refreshSeq` (debounced 2 s,
+  foreground-gated: NOOP's budget rule). Widgets: `HRVWidget` (small: HRV ring + number + "ms" + context
+  line + readiness pill; medium: adds Resting HR and last night's sleep) and `ReadinessLockWidget`
+  (`accessoryCircular` ring + number, `accessoryRectangular` readiness tier + HRV + RHR, `.primary` /
+  `.secondary` only because the lock screen renders vibrant). Colours are literal copies of `BaselineTheme`
+  in `WidgetPalette` (the theme is app-target code); change both. Single-entry timeline, `.after(6h)` as a
+  safety net for a background publish (the app reloads on every publish, so no shorter schedule). Empty
+  state "Open Baseline to sync" until the first publish; gallery previews use `BaselineWidgetSnapshot.gallery`
+  only under `context.isPreview`. Every tap opens `baseline://home`: the `baseline` URL scheme is back in the
+  Baseline Info.plist (`CFBundleURLTypes` in project.yml) and `BaselineRoot` consumes it with `.onOpenURL`.
+  `WidgetSnapshotTests` holds the builder against `TodaySnapshot` for a fixture.
+
 ### `baseline.*` UserDefaults keys (`.standard`; NOOP's own keys are `noop.*`)
 
 | Key | Set by | Meaning |
@@ -127,7 +154,7 @@ bar. The journal is not a tab: it is a sheet from Home, and its patterns are a s
    About + licenses + disclaimer.
 
 ### Deferred
-AI coach, widgets, Apple Watch, Live Activities, lift log, hydration, caffeine, cycle tracking,
+AI coach, Apple Watch, Live Activities, lift log, hydration, caffeine, cycle tracking,
 breathing, Oura/Polar/Xiaomi devices, Siri Shortcuts, backups. All still compile in from NOOP and can
 be exposed later.
 
@@ -180,12 +207,32 @@ DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch
   flow on that page.
 - `defaults write com.patrickschmidt.baseline baseline.onboarded -bool true` (via `simctl spawn`) skips the welcome flow.
 
+## Accessibility (what the app guarantees)
+
+- **VoiceOver.** Every chart is ONE element with a sentence (`BaselineChartSummary`): Trends' band charts
+  say the window, the night count and span, the baseline and the average, with "Higher / Lower is better"
+  as the hint (the scrub is touch-only); bar charts say their header stats; the hypnogram says its span.
+  Rings: the metric name is a heading, then one element "64 ms, +6 ms vs baseline · above your band".
+  Stage bars (Home's night card) read "Sleep stages: Deep 1h 12m, REM …" (`BaselineTheme.stageName`).
+  Every `StatCell` is one element (label, value + unit); Home's sleep hero line is one element. Colour
+  judgements are spoken: a trend pill says ", improving" / ", worsening", an effect delta ", better" /
+  ", worse". Segmented controls are groups ("Section", "Range", "Horizon" → "1 of 3"); numeric journal
+  chips carry label / value / "Logs one" hint and never speak the "·" separator. Decorative symbols
+  (check marks, plus and link arrows) are hidden; an invisible control (Welcome's "Skip for now" once
+  paired) leaves the VoiceOver order.
+- **Dynamic Type up to AX5.** `BaselineTheme.hero` scales on the large-title curve (capped at 1.5×) and
+  `stat` on title3 (capped at 2×), so a numeral is never smaller than its caption; Home's ring tiles stack
+  and the ring grows to 168pt at accessibility sizes. Rows reflow instead of truncating (`ViewThatFits`:
+  Sleep's night rows, the workout duration hero, Trends' card headers; Compare's rows go two-line); chips
+  allow two lines; range pills use `shortLabel`. Captures at AX3: `AX=1 Baseline/scripts/ui-shots.sh`
+  (shots in `<dir>/ax/`, content size reset to medium on exit).
+
 ## Screenshot harness (BaselineUITests)
 
 `BaselineUITests/ScreenshotTests.swift` captures every screen headlessly so a scrolled screen can be
 checked without a person at the simulator. One test per tab (`home`, `trends`, `sleep`, seeded with
 `--demo-seed --skip-onboarding --ui-testing`), `journal` (Home's floating "Journal" button → the sheet,
-captured at its medium detent then lifted to the large one and scrolled), `settings` (the gear on Home),
+one frame at its only, medium, detent), `settings` (the gear on Home),
 Trends' embedded sections (`progress` and `habits` via the pinned segments; the bar still reads "Trends", the
 segment's selected trait is the signal), the pushed screens (`workouts` and `workout-detail` via Home's "All
 workouts" link and the newest row), Settings' `devices` / `apple-health` / `import` / `compare` (the empty

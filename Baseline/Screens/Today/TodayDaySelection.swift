@@ -4,8 +4,8 @@ import Foundation
 /// Home's day-by-day navigation, pure and testable: which calendar day the screen shows, how far back
 /// it may go, and the keys the funnels are asked for. Every date here is a `startOfDay` in `calendar`.
 /// Rules: never a future day; never a day before the first stored night (`earliest`); with no stored
-/// night at all only today is reachable; at midnight a selection that was "today" follows the new day,
-/// any other day stays put. `TodayDaySelectionTests`.
+/// night at all only today is reachable; when the calendar day changes the selection jumps back to the
+/// new today (a roll on the same day changes nothing). `TodayDaySelectionTests`.
 struct TodayDaySelection: Equatable {
     /// The selected day.
     private(set) var day: Date
@@ -72,12 +72,15 @@ struct TodayDaySelection: Equatable {
         clamp()
     }
 
-    /// The calendar day changed (`.NSCalendarDayChanged`, or the app came back after midnight). A
-    /// selection that was today moves with it; an older day stays, still clamped.
+    /// The calendar day changed (`.NSCalendarDayChanged`, or the app came back after midnight): the
+    /// selection jumps back to the new today, whatever day was showing, and the upper bound moves with
+    /// it. A roll that lands on the same day (the app returning the same afternoon) leaves the selection
+    /// where it is.
     mutating func roll(now: Date) {
-        let wasToday = isToday
-        today = calendar.startOfDay(for: now)
-        if wasToday { day = today }
+        let next = calendar.startOfDay(for: now)
+        guard next != today else { clamp(); return }
+        today = next
+        day = today
         clamp()
     }
 

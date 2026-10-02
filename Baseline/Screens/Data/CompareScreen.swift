@@ -325,33 +325,67 @@ private struct CompareNightRow: View {
     let pair: ComparePair
     let metric: CompareMetric
     let source: CompareSource
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(TrendsFormat.shortDate(pair.date))
-                .font(BaselineTheme.label)
-                .foregroundStyle(BaselineTheme.text)
-            Spacer(minLength: 0)
-            Text(metric.valueText(pair.baseline))
-                .font(BaselineTheme.headline)
-                .monospacedDigit()
-                .foregroundStyle(BaselineTheme.text)
-                .frame(width: Self.columnWidth, alignment: .trailing)
-            Text(metric.valueText(pair.other))
-                .font(BaselineTheme.body)
-                .monospacedDigit()
-                .foregroundStyle(BaselineTheme.textSecondary)
-                .frame(width: Self.columnWidth, alignment: .trailing)
-            Text(metric.differenceText(pair.difference))
-                .font(BaselineTheme.body)
-                .monospacedDigit()
-                .foregroundStyle(BaselineTheme.text)
-                .frame(width: Self.columnWidth, alignment: .trailing)
-                .lineLimit(1).minimumScaleFactor(0.7)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                // Three fixed 64pt columns cannot hold "62 bpm" at accessibility sizes: the date takes its
+                // own line and the three values share the row equally.
+                VStack(alignment: .leading, spacing: 4) {
+                    date
+                    HStack(spacing: 8) {
+                        values(flexible: true)
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    date
+                    Spacer(minLength: 0)
+                    values(flexible: false)
+                }
+            }
         }
         .padding(.vertical, 10)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spoken)
+    }
+
+    private var date: some View {
+        Text(TrendsFormat.shortDate(pair.date))
+            .font(BaselineTheme.label)
+            .foregroundStyle(BaselineTheme.text)
+    }
+
+    @ViewBuilder private func values(flexible: Bool) -> some View {
+        Text(metric.valueText(pair.baseline))
+            .font(BaselineTheme.headline)
+            .monospacedDigit()
+            .foregroundStyle(BaselineTheme.text)
+            .modifier(Column(flexible: flexible))
+        Text(metric.valueText(pair.other))
+            .font(BaselineTheme.body)
+            .monospacedDigit()
+            .foregroundStyle(BaselineTheme.textSecondary)
+            .modifier(Column(flexible: flexible))
+        Text(metric.differenceText(pair.difference))
+            .font(BaselineTheme.body)
+            .monospacedDigit()
+            .foregroundStyle(BaselineTheme.text)
+            .modifier(Column(flexible: flexible))
+            .lineLimit(1).minimumScaleFactor(0.7)
+    }
+
+    /// A fixed `columnWidth` column, or an equal share of the row at accessibility sizes.
+    private struct Column: ViewModifier {
+        let flexible: Bool
+        func body(content: Content) -> some View {
+            if flexible {
+                content.frame(maxWidth: .infinity, alignment: .trailing)
+            } else {
+                content.frame(width: CompareNightRow.columnWidth, alignment: .trailing)
+            }
+        }
     }
 
     private var spoken: String {

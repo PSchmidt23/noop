@@ -56,38 +56,64 @@ struct JournalEffectRow: View {
     let effect: RankedEffect
     let label: String
     let outcome: JournalOutcome
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var delta: Double { effect.effect.delta }
+    private var steady: Bool { abs(delta) < 0.5 }
+    private var good: Bool { outcome.higherIsBetter ? delta > 0 : delta < 0 }
     private var deltaColor: Color {
-        if abs(delta) < 0.5 { return BaselineTheme.textSecondary }
-        let good = outcome.higherIsBetter ? delta > 0 : delta < 0
+        if steady { return BaselineTheme.textSecondary }
         return good ? BaselineTheme.good : BaselineTheme.watch
+    }
+    /// The colour's judgement, said: "+4 ms, better".
+    private var deltaSpoken: String {
+        let text = JournalLabels.signedDelta(delta, unit: outcome.unit)
+        return steady ? text : "\(text), \(good ? "better" : "worse")"
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(label)
-                    .font(BaselineTheme.body)
-                    .foregroundStyle(BaselineTheme.text)
-                    .lineLimit(2)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    JournalConfidencePill(confidence: effect.confidence)
-                    Text(detail)
-                        .font(BaselineTheme.caption)
-                        .foregroundStyle(BaselineTheme.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                // The scaled delta would squeeze the name and pill into a word-per-line column.
+                VStack(alignment: .leading, spacing: 6) {
+                    name
+                    deltaText
+                }
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    name
+                    Spacer(minLength: 12)
+                    deltaText
                 }
             }
-            Spacer(minLength: 12)
-            Text(JournalLabels.signedDelta(delta, unit: outcome.unit))
-                .font(BaselineTheme.stat)
-                .foregroundStyle(deltaColor)
-                .monospacedDigit()
-                .fixedSize()
-                .layoutPriority(1)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var name: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(BaselineTheme.body)
+                .foregroundStyle(BaselineTheme.text)
+                .lineLimit(2)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                JournalConfidencePill(confidence: effect.confidence)
+                Text(detail)
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var deltaText: some View {
+        Text(JournalLabels.signedDelta(delta, unit: outcome.unit))
+            .font(BaselineTheme.stat)
+            .foregroundStyle(deltaColor)
+            .monospacedDigit()
+            .fixedSize()
+            .layoutPriority(1)
+            .accessibilityLabel(deltaSpoken)
     }
 
     /// "13 vs 25 nights \u{00B7} next morning" (with-habit vs without-habit nights, then the lag).
@@ -113,6 +139,7 @@ struct JournalConfidencePill: View {
 /// figure: its outcome is a score Baseline never renders (see `JournalDose`).
 struct JournalDoseRow: View {
     let dose: JournalDose
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -129,25 +156,33 @@ struct JournalDoseRow: View {
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                // At accessibility sizes the figure sits under the sentence, never beside it.
+                if dynamicTypeSize.isAccessibilitySize { perUnit }
                 JournalConfidencePill(confidence: dose.response.confidence)
             }
-            if let stat = dose.perUnitStat {
+            if !dynamicTypeSize.isAccessibilitySize, dose.perUnitStat != nil {
                 Spacer(minLength: 12)
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(dose.perUnitText)
-                        .font(BaselineTheme.stat)
-                        .foregroundStyle(stat.color)
-                        .monospacedDigit()
-                    Text(stat.unit)
-                        .font(BaselineTheme.caption)
-                        .foregroundStyle(BaselineTheme.textSecondary)
-                }
-                .fixedSize()
-                .layoutPriority(1)
-                .accessibilityLabel("\(dose.perUnitText) \(stat.unit) \(stat.label.lowercased())")
+                perUnit
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder private var perUnit: some View {
+        if let stat = dose.perUnitStat {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(dose.perUnitText)
+                    .font(BaselineTheme.stat)
+                    .foregroundStyle(stat.color)
+                    .monospacedDigit()
+                Text(stat.unit)
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+            }
+            .fixedSize()
+            .layoutPriority(1)
+            .accessibilityLabel("\(dose.perUnitText) \(stat.unit) \(stat.label.lowercased())")
+        }
     }
 }
 #endif

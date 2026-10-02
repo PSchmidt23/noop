@@ -161,6 +161,7 @@ private struct WelcomePairButtons: View {
             .buttonStyle(WelcomeTextButtonStyle())
             .opacity(paired ? 0 : 1)
             .disabled(paired)
+            .accessibilityHidden(paired)
     }
 }
 
@@ -260,6 +261,7 @@ private struct WelcomeDoneRow: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(BaselineTheme.symbol)
                 .foregroundStyle(BaselineTheme.good)
+                .accessibilityHidden(true)
             Text(text)
                 .font(BaselineTheme.label)
                 .foregroundStyle(BaselineTheme.text)

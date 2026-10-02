@@ -100,11 +100,19 @@ struct WorkoutsScreen: View {
 /// also the list's "workout" UI-test anchor), its sessions as rows separated by hairlines.
 struct WorkoutWeekCard: View {
     let week: WorkoutWeek
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var summary: String {
+        WorkoutsFormat.weekSummary(count: week.count, totalDurationS: week.totalDurationS)
+    }
 
     var body: some View {
+        // The count and total trail the week label; at accessibility sizes they become the card's
+        // subtitle instead, so "3 workouts · 2h 10m" never truncates beside a wrapped "Sep 13 – Sep 19".
         BaselineCard(title: WorkoutsModel.weekLabel(start: week.start),
-                     accessory: AnyView(
-                        Text(WorkoutsFormat.weekSummary(count: week.count, totalDurationS: week.totalDurationS))
+                     subtitle: dynamicTypeSize.isAccessibilitySize ? summary : nil,
+                     accessory: dynamicTypeSize.isAccessibilitySize ? nil : AnyView(
+                        Text(summary)
                             .font(BaselineTheme.caption)
                             .foregroundStyle(BaselineTheme.textTertiary)
                             .lineLimit(1))) {

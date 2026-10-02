@@ -2,8 +2,8 @@
 import SwiftUI
 
 /// Segmented capsule with a sliding accent selection: ONE look for every segmented control in the app.
-/// `.glass` is the pinned control under the navigation bar (`BaselineScreen.pinned`: Trends' 7 / 30 / 90
-/// days, Progress' horizons) — ONE `.glassEffect` on the whole control inside ONE `GlassEffectContainer`,
+/// `.glass` is the pinned control under the navigation bar (`BaselineScreen.pinned`: Trends' section
+/// control) — ONE `.glassEffect` on the whole control inside ONE `GlassEffectContainer`,
 /// never per segment. `.flat` lives inside cards (Journal's outcome, the new-habit kind, Compare's
 /// metric / source) on a `fill` track. `label` is the pill text, `accessibilityLabel` the spoken form.
 /// Four segments fit at the narrowest supported width. Text on glass is ink, never dependent on the blur.
@@ -12,9 +12,13 @@ struct BaselineSegmentedPicker<Option: Hashable>: View {
     @Binding var selection: Option
     let label: (Option) -> String
     var accessibilityLabel: ((Option) -> String)? = nil
+    /// The control's own spoken name ("Section", "Range", "Horizon"): the segments become a VoiceOver
+    /// group, so a swipe announces "1 of 3" inside it. nil keeps the segments as loose buttons.
+    var groupLabel: String? = nil
     var style: Style = .glass
     enum Style { case glass, flat }
     @Namespace private var selectionSpace
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         switch style {
@@ -39,7 +43,9 @@ struct BaselineSegmentedPicker<Option: Hashable>: View {
                     Text(label(option))
                         .font(.system(.subheadline, design: .rounded).weight(.semibold))
                         .foregroundStyle(selection == option ? BaselineTheme.text : BaselineTheme.textSecondary)
-                        .lineLimit(1)
+                        .multilineTextAlignment(.center)
+                        // "Imports only" at AX3 wraps rather than ending in an ellipsis.
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                         .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -58,6 +64,19 @@ struct BaselineSegmentedPicker<Option: Hashable>: View {
             }
         }
         .padding(4)
+        .modifier(SegmentGroup(label: groupLabel))
+    }
+
+    /// `.accessibilityElement(children: .contain)` + the group's label, only when a label was given.
+    private struct SegmentGroup: ViewModifier {
+        let label: String?
+        func body(content: Content) -> some View {
+            if let label {
+                content.accessibilityElement(children: .contain).accessibilityLabel(label)
+            } else {
+                content
+            }
+        }
     }
 }
 
@@ -80,9 +99,12 @@ extension BaselineRangeOption {
 
 /// The range control (Trends' 7 / 30 / 90 days, Progress' 90 / 180 / 365 / all): `BaselineSegmentedPicker`
 /// over every case, with the verbose `subtitle` for VoiceOver and `shortLabel` at accessibility sizes.
-/// `.glass` when pinned under the bar; `.flat` inside a card (Compare).
+/// `.flat` inside the content (Trends' 7 / 30 / 90 days, Progress' horizons, Compare); `.glass` only if
+/// one is ever pinned under the bar.
 struct BaselineRangePicker<Option: BaselineRangeOption>: View {
     @Binding var selection: Option
+    /// The control's spoken name ("Range", "Horizon"); see `BaselineSegmentedPicker.groupLabel`.
+    var groupLabel: String? = "Range"
     var style: BaselineSegmentedPicker<Option>.Style = .glass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -90,6 +112,7 @@ struct BaselineRangePicker<Option: BaselineRangeOption>: View {
         BaselineSegmentedPicker(options: Array(Option.allCases), selection: $selection,
                                 label: { dynamicTypeSize.isAccessibilitySize ? $0.shortLabel : $0.label },
                                 accessibilityLabel: { $0.subtitle },
+                                groupLabel: groupLabel,
                                 style: style)
     }
 }

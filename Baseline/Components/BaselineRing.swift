@@ -95,6 +95,7 @@ struct MetricRing: View {
             HStack(spacing: 6) {
                 Circle().fill(color).frame(width: 6, height: 6).accessibilityHidden(true)
                 Text(label).font(BaselineTheme.label).foregroundStyle(BaselineTheme.textSecondary)
+                    .accessibilityAddTraits(.isHeader)
             }
             VStack(spacing: 8) {
                 ring
@@ -117,9 +118,10 @@ struct MetricRing: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// The label is its own heading element just above, so it is not repeated here.
     private var accessibilityText: String {
         let units = unit.isEmpty ? numeral : "\(numeral) \(unit)"
-        return "\(label) \(units), \(context)"
+        return "\(units), \(context)"
     }
 
     private var ring: some View {
@@ -152,7 +154,8 @@ struct MetricRing: View {
                     .foregroundStyle(BaselineTheme.text)
                     .monospacedDigit()
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+                    // 0.6: a scaled duration numeral ("6h 49m" at AX5) shrinks before it ever truncates.
+                    .minimumScaleFactor(0.6)
                     .contentTransition(.numericText())
                 if !unit.isEmpty {
                     Text(unit).font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textSecondary)

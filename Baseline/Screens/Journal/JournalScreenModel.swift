@@ -122,18 +122,6 @@ final class JournalScreenModel: ObservableObject {
 
     // MARK: Load
 
-    /// Everything: the outcome series, the imported questions, the journal and `day`'s rows (the thin
-    /// `JournalScreen` wrapper).
-    func load(repo: Repository, day: String) async {
-        daySeq += 1
-        let gen = daySeq
-        loadOutcomes(repo: repo)
-        await loadImported(repo: repo)
-        await reloadJournal(repo: repo)
-        await readDay(repo: repo, day: day, gen: gen)
-        loaded = true
-    }
-
     /// The sheet: `day`'s rows and the imported questions the catalog resolves against. No ranking.
     func loadDay(repo: Repository, day: String) async {
         daySeq += 1
