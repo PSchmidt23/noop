@@ -608,6 +608,7 @@ MetricRange.allCases.map(\.label)   // "1D" "7D" "4W" "1Y"; .days 1 / 7 / 28 / 3
 BaselineRangePicker(selection: $range, style: .glass)       // MetricRange is a BaselineRangeOption (shortLabel == label: "1D" "7D" "4W" "1Y" at AX sizes too)
 MetricKey: hrv, rhr, readiness, sleepDuration, sleepEfficiency, bedtime, wake, steps, effort, calories, stressAvg, intensityMinutes, heartRate
 k.name, k.seriesKey (NOOP's daily column or nil), k.isCountLike (bars), k.isClockTime, k.higherIsBetter, k.isIntradayDerived
+k.sumsPerBucket (Intensity minutes only: weekly TOTALS against a goal, never a mean of recorded days); range.bucket(for: k) (.week on a sum key's 4W / 1Y), range.sumWeeks (4W 4, 1Y 52)
 
 // The one bucketing function every range goes through (missing days excluded, empty buckets absent, n per point):
 BaselineRangeSeries.buckets([MetricDayValue], from:to:bucket: .day | .week | .month) -> [RangePoint { id, date, value, min, max, n, band }]
@@ -626,6 +627,15 @@ let s = await BaselineReadouts.metricSeries(repo, profile: profile, key: .intens
 BaselineReadouts.metricContext(series: s, noun: "HRV", unit: "ms", format: whole)
 BaselineReadouts.metricChartSummary(series: s, name: "HRV", unit: "ms", format: whole)   // the chart's one VoiceOver sentence
 BaselineReadouts.metricChangeText(+4, format: whole, unit: "ms") == "+4 ms"
+
+// Sum metrics (k.sumsPerBucket): one week builder for Home's Intensity card, Trends' Intensity card and the detail
+BaselineRangeSeries.weekTotals([MetricDayValue], from:to:) -> [MetricWeekTotal { id (Monday), date, days [Double?] Mon…Sun, inProgress; total, recordedDays, activeDays, hasData, reached(goal) }]
+MetricGoal(value: 150, period: .week)   // .perWeek 150, .perDay 21.4 (the 7D "daily pace")
+s.sums: MetricSums { weeks, windowDays, activeDays, dayValue, dayBefore, moderate, vigorous, basis; thisWeek, weeksWithData, weeksAtGoal(goal), averageWeek }
+BaselineReadouts.metricWindow(key: .intensityMinutes, range: .fourWeeks, endKey:)   // whole Monday weeks: 4W from the Monday 3 weeks back, 1Y 51
+BaselineReadouts.metricSeries(key:range:endKey:readings:dayFacts:)                  // dayFacts: intradayValues(records), the split and basis per day
+BaselineReadouts.metricSumHero(series: s, goal: g, noun:, unit: "min", format:, isToday:)   // MetricSumHero { cells, sentence, footnote; cellsText }
+BaselineReadouts.metricSumChartSummary(series: s, goal: g, name:, unit:, format:)
 ```
 
 Rules: 7D and 4W are daily points; 1Y is weekly averages over ISO weeks keyed by the Monday (the same
@@ -636,6 +646,22 @@ it (≥ 3 days on both sides; a 1D window compares with the day before). Efficie
 bedtime is kept as minutes after the previous noon and wake as minutes after midnight
 (`MetricKey.isClockTime`, `clockValueText` prints them back), so clock averages never wrap. The data
 funnel applies to every daily column; the intraday keys are strap-only facts.
+
+Sum metrics (`MetricKey.sumsPerBucket`, Intensity minutes; steps stay a per-day mean because their norm is
+a day): a week is its TOTAL against the weekly goal (`MetricDetailSpec.goal`), never a mean of the days
+that recorded. A day the strap scored with nothing credited is 0; only a day with no data at all is
+missing (no bar; a week without one reading is no bar and is judged by nobody). 7D keeps the seven daily
+bars ending on the selected day, the days before this week's Monday lighter, under a dashed "daily pace
+21" rule (goal / 7); hero "This week 112 of 150 min" (Monday → the day) and "Days active 4 of 7". 4W is
+four Monday weeks and 1Y fifty-two, one bar per week at its total (the week in progress lighter, "The
+lighter bar is this week, still in progress."), the dashed "goal 150" line; hero "Weeks at goal 2 of 4"
+(weeks with data whose total reached the goal; a week in progress counts once it has) and "Average week
+131 min" (finished weeks with data). Under the cells the split ("38 moderate · 37 vigorous, counted
+double"; on 4W / 1Y "Over 4 weeks: …") and the basis line. 1D: "This day" is 0 on a scored day with
+nothing credited ("No moderate or vigorous minutes today.", Home's "0 min today"), and today counts from
+0 like Home's card; only a finished day with no heart rate (or workout credit) is "–" ("No heart rate
+recorded on this day."). Home's track, Trends' "This week" and the 7D hero sum through the same
+`weekTotals` (`IntensityWeeklyTests` holds the three to one fixture week).
 
 ### `IntradayHeartRate` — `BaselineReadoutsIntraday.swift`
 
@@ -679,7 +705,7 @@ t.basis.caption   // "40 % / 60 % of your heart-rate reserve (resting 52, max 18
 
 let r = await BaselineReadouts.intensity(repo, profile: profile, for: day)   // IntensityReadout; entered: defaults to ProfileSet.current()
 r.creditedToday, r.moderateMin, r.vigorousMin, r.weekStart, r.weekDays ([Int], Mon … day), r.weekCredited, r.weekGoal, r.weekFraction,
-r.weekText ("112 / 150 this week"), r.splitText ("38 moderate · 37 vigorous (×2)"), r.basis, r.scoredMinutes, r.partialDay
+r.weekText ("112 / 150 this week"), r.splitText ("38 moderate · 37 vigorous, counted double"), r.basis, r.scoredMinutes, r.partialDay
 BaselineReadouts.IntensityReadout.caveat   // "Minutes near the moderate line and strength sessions are uncertain." (Medium accuracy)
 ```
 
@@ -734,8 +760,9 @@ only days already scored, never 365 raw days.
 NavigationLink { MetricDetailScreen(spec: TodayDetail.spec(.hrv), day: dayKey) } label: { … }   // from any card (Home, Trends): the ONE route table, .standard(key) plus the 1D views (Sleep's night, Effort's workouts, Stress' curve, Intensity's week); day defaults to today
 MetricDetailScreen(spec: .standard(.heartRate), day: dayKey, initialRange: .day)
 var spec = MetricDetailSpec.standard(.steps); spec.dayView = { day in AnyView(MyStepsDayCard(day: day)) }   // a custom 1D view (any view the caller owns)
-MetricDetailSpec(key:, title:, noun:, unit:, color:, higherIsBetter:, accuracyKey:, accuracy: (tier, caveat)?, format:, formatDelta:, bandProvider:, dayView:, about:)
-MetricRangeChart(series: s, color: color, selected: $selected, yLabel: spec.format, accessibilitySummary: …, accessibilityHint: "Higher is better")
+MetricDetailSpec(key:, title:, noun:, unit:, color:, higherIsBetter:, accuracyKey:, accuracy: (tier, caveat)?, format:, formatDelta:, bandProvider:, dayView:, about:, goal:)
+spec.goal?()   // a sum metric's live target: MetricGoal(value: IntensityMinutes.goal(), period: .week); re-read on UserDefaults.didChangeNotification
+MetricRangeChart(series: s, color: color, selected: $selected, yLabel: spec.format, goal: g, accessibilitySummary: …, accessibilityHint: "Higher is better")
 IntradayHRChart(trace: t, color: BaselineTheme.rhr, accessibilitySummary: BaselineReadouts.intradaySummary(t))
 ```
 
@@ -748,7 +775,9 @@ difference from the day before, never the day's value again), or for heart rate 
 the chart card (1D: `spec.dayView`, else `IntradayHRChart` for heart rate under "Through the day" (its legend reads
 the shading; a caption only when nothing is shaded), else NO second card: the hero already is the day's number; 7D / 4W:
 `MetricRangeChart` as a line over the personal band when the points carry one or bars for `isCountLike`
-keys; 1Y: the weekly line with the lows-to-highs envelope), and "About this metric" (`spec.aboutText`:
+keys, a weekly bar an explicit span of its Monday-to-Sunday week (a `.weekOfYear` unit bins on the locale's
+week, Sunday first in the US); 1Y: the weekly line with the lows-to-highs envelope; a sum metric draws the week totals
+and goal rule above instead of a mean), and "About this metric" (`spec.aboutText`:
 the `MetricAccuracy` caveat, or the spec's own). The range chart card is untitled (the pinned pill
 already names the window, as on Trends); scrubbing writes "Sep 28 · 64 ms" / "Week of Sep 22 · average
 64 ms over 6 days" at its top while a finger is on it. Every chart is one VoiceOver element. `standard(_:)` carries

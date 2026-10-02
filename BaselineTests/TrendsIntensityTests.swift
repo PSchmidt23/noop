@@ -37,6 +37,7 @@ final class TrendsIntensityTests: XCTestCase {
         XCTAssertEqual(t.weeks.map(\.credited), [0, 0, 0, 0, 0])
         XCTAssertEqual(try XCTUnwrap(t.thisWeek).id, "2026-02-16")
         XCTAssertEqual(t.completedWeeks, 4)
+        XCTAssertEqual(t.weeksWithData, 0, "no recorded day: every week is missing, not a zero")
         XCTAssertEqual(t.weeksAtGoal, 0)
         XCTAssertFalse(t.hasAny, "nothing recorded: the screen leaves the card out")
         XCTAssertNil(t.basis)
@@ -63,19 +64,21 @@ final class TrendsIntensityTests: XCTestCase {
         XCTAssertEqual(t.thisWeek?.credited, 112)
         XCTAssertEqual(t.thisWeekText, "112 / 150")
         XCTAssertEqual(t.completedWeeks, 4)
-        XCTAssertEqual(t.weeksAtGoal, 1, "only the first finished week reached 150")
+        XCTAssertEqual(t.weeksWithData, 3, "two empty weeks in the middle are missing")
+        XCTAssertEqual(t.weeksAtGoal, 1, "only the first week reached 150")
         XCTAssertTrue(t.hasAny)
         XCTAssertEqual(t.basis, hrr, "the newest recorded day's basis")
     }
 
-    func testWeekInProgress_isNeverJudgedAgainstTheGoal() {
+    func testWeekInProgress_countsOnceItReachesTheGoal_likeTheDetail() {
         let days = [day("2026-02-16", credited: 100), day("2026-02-17", credited: 60)]
         let t = TrendsIntensity.build(days: days, startKey: startKey(.week), todayKey: today, goal: 150)
         // 7D from Thursday 2026-02-12: last week (Feb 9) whole, this week (Feb 16) in progress.
         XCTAssertEqual(t.weeks.map(\.id), ["2026-02-09", "2026-02-16"])
         XCTAssertEqual(t.thisWeek?.credited, 160)
         XCTAssertEqual(t.completedWeeks, 1)
-        XCTAssertEqual(t.weeksAtGoal, 0, "160 this week is above the goal, but the week has not ended")
+        XCTAssertEqual(t.weeksWithData, 1, "last week recorded nothing")
+        XCTAssertEqual(t.weeksAtGoal, 1, "160 this week already met the goal: a met goal stays met")
     }
 
     func testSunday_closesTheWeekSoNothingIsInProgress() {
@@ -85,6 +88,7 @@ final class TrendsIntensityTests: XCTestCase {
         XCTAssertEqual(t.weeks.map(\.id), ["2026-02-16"])
         XCTAssertEqual(t.weeks.map(\.inProgress), [false])
         XCTAssertEqual(t.completedWeeks, 1)
+        XCTAssertEqual(t.weeksWithData, 1)
         XCTAssertEqual(t.weeksAtGoal, 1)
     }
 
@@ -131,13 +135,13 @@ final class TrendsIntensityTests: XCTestCase {
         let days = [day("2026-01-19", credited: 160), day("2026-02-18", credited: 112)]
         let t = TrendsIntensity.build(days: days, startKey: startKey(.month), todayKey: today, goal: 150)
         let s = t.chartSummary(range: .month)
-        XCTAssertEqual(s, "Intensity minutes, last 30 days: 5 weeks, 1 of 4 full weeks at the 150-minute goal; this week 112 of 150.")
+        XCTAssertEqual(s, "Intensity minutes, last 30 days: 5 weeks, 1 of 2 weeks at the 150-minute goal; this week 112 of 150.")
         for word in forbidden { XCTAssertFalse(s.lowercased().contains(word), word) }
 
         let sunday = "2026-02-22"
         let closed = TrendsIntensity.build(days: [day(sunday, credited: 20)],
                                            startKey: Baselines.cutoffKey(todayKey: sunday, carryDays: 6), todayKey: sunday, goal: 150)
-        XCTAssertEqual(closed.chartSummary(range: .week), "Intensity minutes, last 7 days: 1 week, 0 of 1 full week at the 150-minute goal.")
+        XCTAssertEqual(closed.chartSummary(range: .week), "Intensity minutes, last 7 days: 1 week, 0 of 1 week at the 150-minute goal.")
     }
 
     func testDetailRange_isTheDetailWindowNearestThePicker() {

@@ -259,8 +259,8 @@ Health "exercise minutes" are not read in v1 (×1 only, different threshold; wou
 `IntensityCard` under the Steps card: title "Intensity minutes", hero `"23 min"` with caption `"today"`, and a
 single horizontal track (never a ring; Readiness and the two metric rings already own the screen's budget)
 labelled `"112 / 150 this week"`, Monday ticks on the track. Tapping opens the week: seven bars (credited
-minutes, `effort` colour at `barOpacity`, vigorous share at full opacity), the split "38 moderate · 37 vigorous
-(×2)", the basis line "40 % / 60 % of your heart-rate reserve (resting 52, max 182)", the `AccuracyBadge`
+minutes, `effort` colour at `barOpacity`, vigorous share at full opacity), the split "38 moderate · 37 vigorous,
+counted double", the basis line "40 % / 60 % of your heart-rate reserve (resting 52, max 182)", the `AccuracyBadge`
 (Medium) and the one caveat: "Minutes near the moderate line and strength sessions are uncertain." No
 "Active Zone Minutes", "Exercise ring" or "Strain" anywhere in copy; "Intensity minutes" is the generic term.
 

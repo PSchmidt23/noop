@@ -241,9 +241,10 @@ struct TodayStressDayView: View {
 // MARK: - 1D: the Intensity-minutes week
 
 /// The intensity detail's day card: the week `day` falls in as seven bars (credited minutes Monday →
-/// Sunday, the days after `day` empty), the dashed goal pace (the weekly goal spread over seven days),
+/// Sunday, the days after `day` empty), the dashed daily pace (the weekly goal spread over seven days),
 /// the week's track, the day's split and the basis the minutes were scored on. The badge and the caveat
-/// sit on the detail's own cards, so neither is repeated here.
+/// sit on the detail's own cards, and a day with nothing credited is said by the hero above ("No
+/// moderate or vigorous minutes today."), so none of them is repeated here.
 struct TodayIntensityWeekView: View {
     let day: String
     @EnvironmentObject private var repo: Repository
@@ -270,10 +271,12 @@ struct TodayIntensityWeekView: View {
             } else if let r = readout, r.basis != .needsAge {
                 TodayIntensityWeekChart(readout: r)
                 IntensityTrack(readout: r)
-                Text(Self.splitLine(r))
-                    .font(BaselineTheme.caption)
-                    .foregroundStyle(BaselineTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let split = Self.splitLine(r) {
+                    Text(split)
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text(r.basis.caption)
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textTertiary)
@@ -293,16 +296,17 @@ struct TodayIntensityWeekView: View {
         }
     }
 
-    /// "Mon 28 Sep: 38 moderate · 37 vigorous (×2)" for the selected day, or that nothing was credited.
-    static func splitLine(_ r: BaselineReadouts.IntensityReadout) -> String {
-        let label = TodayFormat.dayLabel(r.day)
-        guard r.creditedToday > 0 else { return "\(label): no minutes at moderate intensity or above" }
-        return "\(label): \(r.splitText)"
+    /// "Mon 28 Sep: 38 moderate · 37 vigorous, counted double" for the selected day; nil when nothing was
+    /// credited, which the hero's sentence already says.
+    static func splitLine(_ r: BaselineReadouts.IntensityReadout) -> String? {
+        guard r.creditedToday > 0 else { return nil }
+        return "\(TodayFormat.dayLabel(r.day)): \(r.splitText)"
     }
 }
 
-/// Seven bars for the readout's week (Monday first), the dashed goal pace across them. The bars after
-/// the selected day are absent, never zero. One VoiceOver element.
+/// Seven bars for the readout's week (Monday first), the dashed daily pace across them (the 7D range
+/// chart's rule, `MetricGoal.perDay`). The bars after the selected day are absent, never zero. One
+/// VoiceOver element.
 struct TodayIntensityWeekChart: View {
     let readout: BaselineReadouts.IntensityReadout
     var height: CGFloat = 150
@@ -323,7 +327,7 @@ struct TodayIntensityWeekChart: View {
     }
 
     /// The weekly goal spread over seven days: the pace that reaches it.
-    var goalPace: Double { Double(readout.weekGoal) / 7 }
+    var goalPace: Double { MetricGoal(value: Double(readout.weekGoal), period: .week).perDay }
 
     var body: some View {
         Chart {
@@ -332,11 +336,11 @@ struct TodayIntensityWeekChart: View {
                     .foregroundStyle(BaselineTheme.effort.opacity(BaselineChartStyle.barOpacity))
                     .cornerRadius(BaselineChartStyle.barRadius)
             }
-            RuleMark(y: .value("Goal pace", goalPace))
+            RuleMark(y: .value("Daily pace", goalPace))
                 .foregroundStyle(BaselineTheme.effort.opacity(BaselineChartStyle.baselineOpacity))
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                 .annotation(position: .top, alignment: .trailing) {
-                    Text("goal pace \(Int(goalPace.rounded())) a day")
+                    Text("daily pace \(Int(goalPace.rounded()))")
                         .font(BaselineTheme.caption)
                         .foregroundStyle(BaselineTheme.textTertiary)
                 }
@@ -355,10 +359,10 @@ struct TodayIntensityWeekChart: View {
         .modifier(BaselineChartSummary(summary: summary))
     }
 
-    /// "Intensity minutes this week: Mon 40, Tue 0, Wed 23; 63 of 150, goal pace 21 a day."
+    /// "Intensity minutes this week: Mon 40, Tue 0, Wed 23; 63 of 150, daily pace 21."
     private var summary: String {
         let days = bars.map { "\($0.label) \($0.minutes)" }.joined(separator: ", ")
-        return "Intensity minutes this week: \(days); \(readout.weekCredited) of \(readout.weekGoal), goal pace \(Int(goalPace.rounded())) a day."
+        return "Intensity minutes this week: \(days); \(readout.weekCredited) of \(readout.weekGoal), daily pace \(Int(goalPace.rounded()))."
     }
 }
 

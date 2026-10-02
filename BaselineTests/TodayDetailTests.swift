@@ -124,13 +124,13 @@ final class TodayDetailTests: XCTestCase {
 
     func testIntensityCaption_splitForACreditedDay_andTheReasonForNone() {
         XCTAssertEqual(IntensityCard.caption(readout(moderate: 15, vigorous: 8, scored: 900), isToday: true),
-                       "15 moderate · 8 vigorous (×2)")
+                       "15 moderate · 8 vigorous, counted double")
         XCTAssertEqual(IntensityCard.caption(readout(moderate: 15, vigorous: 8, scored: 100), isToday: true),
-                       "15 moderate · 8 vigorous (×2)", "today is never called a partial day")
+                       "15 moderate · 8 vigorous, counted double", "today is never called a partial day")
         XCTAssertEqual(IntensityCard.caption(readout(moderate: 15, vigorous: 8, scored: 100), isToday: false),
-                       "15 moderate · 8 vigorous (×2) · partial day")
+                       "15 moderate · 8 vigorous, counted double · partial day")
         XCTAssertEqual(IntensityCard.caption(readout(moderate: 20, vigorous: 0, scored: 0, basis: .workoutsOnly), isToday: false),
-                       "20 moderate · 0 vigorous (×2) · from workouts only")
+                       "20 moderate · 0 vigorous, counted double · from workouts only")
         XCTAssertEqual(IntensityCard.caption(readout(moderate: 0, vigorous: 0, scored: 30), isToday: true),
                        "Builds through the day as the strap records moderate and vigorous minutes.")
         XCTAssertEqual(IntensityCard.caption(readout(moderate: 0, vigorous: 0, scored: 0), isToday: false),
@@ -176,9 +176,9 @@ final class TodayDetailTests: XCTestCase {
 
     func testIntensityWeekSplitLine_namesTheDayOnce() {
         let r = readout(moderate: 38, vigorous: 37, scored: 900)
-        XCTAssertEqual(TodayIntensityWeekView.splitLine(r), "\(TodayFormat.dayLabel(today)): 38 moderate · 37 vigorous (×2)")
+        XCTAssertEqual(TodayIntensityWeekView.splitLine(r), "\(TodayFormat.dayLabel(today)): 38 moderate · 37 vigorous, counted double")
         let none = readout(moderate: 0, vigorous: 0, scored: 900)
-        XCTAssertEqual(TodayIntensityWeekView.splitLine(none), "\(TodayFormat.dayLabel(today)): no minutes at moderate intensity or above")
+        XCTAssertNil(TodayIntensityWeekView.splitLine(none), "a day with nothing credited is the hero's sentence, said once")
     }
 
     // MARK: Cache

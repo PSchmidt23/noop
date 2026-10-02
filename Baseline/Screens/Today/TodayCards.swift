@@ -306,7 +306,7 @@ struct IntensityCard: View {
         }
     }
 
-    /// ONE caption under the track: the day's split ("15 moderate · 8 vigorous (×2)"), "from workouts
+    /// ONE caption under the track: the day's split ("15 moderate · 8 vigorous, counted double"), "from workouts
     /// only" for an imported day, "partial day" when the strap recorded under four hours of a past day,
     /// or why nothing was credited.
     static func caption(_ r: BaselineReadouts.IntensityReadout, isToday: Bool) -> String {

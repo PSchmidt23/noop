@@ -382,17 +382,24 @@ struct TrendIntensityCard: View {
                 BaselineStatRow {
                     // "of 150 min", the "Weeks at goal" cell's own wording: VoiceOver reads "112 of 150
                     // min", never "112 slash 150".
-                    StatCell(label: "This week", value: "\(intensity.thisWeek?.credited ?? 0)",
-                             unit: "of \(intensity.goal) min", color: BaselineTheme.effort)
-                    if intensity.completedWeeks > 0 {
+                    let week = Self.thisWeekCell(intensity)
+                    StatCell(label: "This week", value: week.value, unit: week.unit, color: BaselineTheme.effort)
+                    if intensity.weeksWithData > 0 {
                         StatCell(label: "Weeks at goal", value: "\(intensity.weeksAtGoal)",
-                                 unit: "of \(intensity.completedWeeks)")
+                                 unit: "of \(intensity.weeksWithData)")
                     }
                 }
                 TrendsWeekBarChart(weeks: intensity.weeks, goal: intensity.goal,
                                    accessibilitySummary: intensity.chartSummary(range: range))
             }
         }
+    }
+
+    /// The "This week" cell: "112" / "of 150 min", the week total Home's track ("112 / 150 this week")
+    /// and the detail's 7D hero ("This week 112 of 150 min") print, all three summed by
+    /// `BaselineRangeSeries.weekTotals`.
+    static func thisWeekCell(_ intensity: TrendsIntensity) -> (value: String, unit: String) {
+        ("\(intensity.thisWeek?.credited ?? 0)", "of \(intensity.goal) min")
     }
 }
 #endif

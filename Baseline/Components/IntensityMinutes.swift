@@ -407,6 +407,19 @@ enum IntensityMinutes {
         BaselineReadouts.dayKeys(from: weekStart(of: day, calendar: calendar), to: day)
     }
 
+    /// The week `day` falls in, Monday → `day`, over per-day credited minutes (`readings`: one per
+    /// recorded day): `BaselineRangeSeries.weekTotals`, the one week builder Home's card, Trends' card and
+    /// the detail's hero all sum through. nil only for an unparseable key.
+    static func week(ending day: String, readings: [MetricDayValue], calendar: Calendar = .current) -> MetricWeekTotal? {
+        BaselineRangeSeries.weekTotals(readings, from: day, to: day, calendar: calendar).last
+    }
+
+    /// "38 moderate · 37 vigorous, counted double": raw minutes, the vigorous ones credited twice. The one
+    /// spelling of the split (Home's card, the 1D week card, the range hero).
+    static func splitText(moderate: Int, vigorous: Int) -> String {
+        "\(moderate) moderate · \(vigorous) vigorous, counted double"
+    }
+
     /// `baseline.intensityGoalMinutes` in `UserDefaults.standard`: credited minutes per week, default 150
     /// (WHO 2020 / HHS 2018), editable `goalRange` in steps of `goalStep`.
     static let goalKey = "baseline.intensityGoalMinutes"
@@ -455,27 +468,46 @@ extension BaselineReadouts {
 
         /// "112 / 150 this week".
         var weekText: String { "\(weekCredited) / \(weekGoal) this week" }
-        /// "38 moderate · 37 vigorous (×2)".
-        var splitText: String { "\(moderateMin) moderate · \(vigorousMin) vigorous (×2)" }
+        /// "38 moderate · 37 vigorous, counted double" (`IntensityMinutes.splitText`).
+        var splitText: String { IntensityMinutes.splitText(moderate: moderateMin, vigorous: vigorousMin) }
         /// The one caveat under the detail (`MetricAccuracy`-style; the metric is Medium).
         static let caveat = "Minutes near the moderate line and strength sessions are uncertain."
     }
 
-    /// The readout for `day` over the per-day records (`IntradayDayStore`), the week summed Monday → `day`.
+    /// The readout for `day` over the per-day records (`IntradayDayStore`), the week summed Monday → `day`
+    /// through `IntensityMinutes.week(ending:readings:)` (the week builder Trends and the detail share).
     /// Pure: `records` is day key → result, `goal` the stored weekly goal. `basis` is the day's own; a
     /// day without a record reads as zero scored minutes under `fallbackBasis`.
     static func intensity(for day: String, records: [String: IntensityMinutes.DayResult], goal: Int,
                           fallbackBasis: IntensityMinutes.Basis, calendar: Calendar = .current) -> IntensityReadout {
         let keys = IntensityMinutes.weekDays(ending: day, calendar: calendar)
         let today = records[day]
+        // One reading per recorded day (the predicate the detail and Trends count with); a day without
+        // one is 0 on the track's bars and in the total.
+        let readings = records.compactMap { key, r -> MetricDayValue? in
+            IntradayDayRecord.isRecorded(scoredMinutes: r.scoredMinutes, credited: r.credited)
+                ? MetricDayValue(day: key, value: Double(r.credited)) : nil
+        }
+        let week = IntensityMinutes.week(ending: day, readings: readings, calendar: calendar)
+        let weekDays = (week?.days ?? []).prefix(keys.count).map { Int(($0 ?? 0).rounded()) }
         return IntensityReadout(day: day,
                                 moderateMin: today?.moderateMin ?? 0,
                                 vigorousMin: today?.vigorousMin ?? 0,
-                                weekStart: keys.first ?? day,
-                                weekDays: keys.map { records[$0]?.credited ?? 0 },
+                                weekStart: week?.id ?? keys.first ?? day,
+                                weekDays: weekDays.isEmpty ? keys.map { _ in 0 } : weekDays,
                                 weekGoal: goal,
                                 basis: today?.basis ?? fallbackBasis,
                                 scoredMinutes: today?.scoredMinutes ?? 0)
+    }
+
+    /// The readout over the day store's records (`IntradayDayStore.records`): the days scored on a basis
+    /// (never a `.needsAge` day's zeros), then `intensity(for:records:…)`. Pure; what the repository
+    /// accessor below returns.
+    static func intensity(for day: String, dayRecords: [String: IntradayDayRecord], goal: Int,
+                          fallbackBasis: IntensityMinutes.Basis, calendar: Calendar = .current) -> IntensityReadout {
+        var results: [String: IntensityMinutes.DayResult] = [:]
+        for (k, r) in dayRecords where r.basisIsScored { results[k] = r.dayResult }
+        return intensity(for: day, records: results, goal: goal, fallbackBasis: fallbackBasis, calendar: calendar)
     }
 
     /// The profile the Intensity classifier may use, nil until `IntensityMinutes.mayScore` holds (a date
@@ -501,11 +533,9 @@ extension BaselineReadouts {
         let records = await IntradayDayStore.shared.records(repo, profile: profile, days: keys, mode: mode,
                                                             entered: entered, computeStress: false,
                                                             calendar: calendar, now: now)
-        var results: [String: IntensityMinutes.DayResult] = [:]
-        for (k, r) in records where r.basisIsScored { results[k] = r.dayResult }
         let hrMax = intensityProfile(profile, entered: entered)?.effortHRmax ?? 0
         let fallback: IntensityMinutes.Basis = hrMax > 0 ? .hrMax(hrMax: Int(hrMax.rounded())) : .needsAge
-        return intensity(for: day, records: results, goal: IntensityMinutes.goal(), fallbackBasis: fallback, calendar: calendar)
+        return intensity(for: day, dayRecords: records, goal: IntensityMinutes.goal(), fallbackBasis: fallback, calendar: calendar)
     }
 }
 #endif

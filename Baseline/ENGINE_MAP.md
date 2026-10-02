@@ -123,7 +123,8 @@ and go through the funnel). The NOOP entry point behind each is listed so nobody
   `creditFromWorkouts(day:rows:)` from `WorkoutZones` when a day has no heart rate. `mayScore(entered:hrMaxOverride:)`
   is the one gate (nothing is scored before an age or a manual max HR). Goal: `goal()` / `saveGoal(_:)` on
   `baseline.intensityGoalMinutes`. Readout: `BaselineReadouts.intensity(_ repo:profile:for:mode:)` →
-  `IntensityReadout { moderateMin, vigorousMin, weekDays, weekGoal, basis; weekText, splitText }`.
+  `IntensityReadout { moderateMin, vigorousMin, weekDays, weekGoal, basis; weekText, splitText }`; its week,
+  Trends' weeks and the detail's 7D / 4W / 1Y totals all come from `BaselineRangeSeries.weekTotals`.
 - Per-day cache (`IntradayDayStore.swift`): `IntradayDayStore.shared.records(_ repo:profile:days:mode:entered:…)`
   → `[String: IntradayDayRecord]` (Intensity minutes, heart-rate low / mean / high, Stress day mean), persisted
   at `<Application Support>/Baseline/intraday-days.json`; `reset()` is Settings › Data › "Recompute heart-rate

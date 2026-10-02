@@ -263,7 +263,7 @@ final class IntensityMinutesTests: XCTestCase {
         XCTAssertEqual(r.weekCredited, 93)
         XCTAssertEqual(r.creditedToday, 23)
         XCTAssertEqual(r.weekText, "93 / 150 this week")
-        XCTAssertEqual(r.splitText, "23 moderate · 0 vigorous (×2)")
+        XCTAssertEqual(r.splitText, "23 moderate · 0 vigorous, counted double")
         XCTAssertEqual(r.basis, .hrr(restingHr: 52, hrMax: 182))
         XCTAssertFalse(r.partialDay)
         XCTAssertEqual(r.weekFraction, 93.0 / 150.0, accuracy: 1e-9)

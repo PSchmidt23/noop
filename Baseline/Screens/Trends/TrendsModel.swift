@@ -397,9 +397,12 @@ struct TrendsIntensity: Equatable {
     let goal: Int
     /// The week today falls in (the last of `weeks`).
     let thisWeek: Week?
-    /// Weeks that have ended, and how many of them reached the goal. The week in progress is judged by
-    /// nobody until its Sunday.
+    /// Weeks that have ended.
     let completedWeeks: Int
+    /// Weeks with at least one recorded day, and how many of them reached the goal: the same rule as the
+    /// metric detail's hero (`MetricSums.weeksAtGoal`), so the two never disagree. The week in progress
+    /// counts once it has reached the goal (a met goal stays met); a week with no recorded day is missing.
+    let weeksWithData: Int
     let weeksAtGoal: Int
     /// The newest recorded day's basis: `.needsAge` means the strap recorded heart rate but no age or
     /// max heart rate exists to judge it, so the card asks instead of drawing zero bars.
@@ -422,41 +425,34 @@ struct TrendsIntensity: Equatable {
     static func build(days: [Day], startKey: String, todayKey: String, goal: Int,
                       calendar: Calendar = .current) -> TrendsIntensity {
         let firstMonday = lookbackKey(startKey: startKey, calendar: calendar)
-        let lastMonday = IntensityMinutes.weekStart(of: todayKey, calendar: calendar)
         var byDay: [String: Day] = [:]
         for d in days where d.day >= firstMonday && d.day <= todayKey { byDay[d.day] = d }
 
-        var weeks: [Week] = []
-        var monday = firstMonday
-        while monday <= lastMonday, let date = BaselineReadouts.localMidnight(of: monday) {
-            // Negative carryDays adds days: the week's Sunday and the Monday after it.
-            let sunday = Baselines.cutoffKey(todayKey: monday, carryDays: -6)
-            var credited = 0
-            var recorded = 0
-            for key in BaselineReadouts.dayKeys(from: monday, to: min(sunday, todayKey)) {
-                guard let d = byDay[key] else { continue }
-                credited += d.credited
-                if d.recorded { recorded += 1 }
-            }
-            weeks.append(Week(id: monday, date: date, credited: credited, recordedDays: recorded,
-                              inProgress: sunday > todayKey))
-            monday = Baselines.cutoffKey(todayKey: monday, carryDays: -7)
+        // The weeks through the one week builder Home's card and the detail's hero sum with
+        // (`BaselineRangeSeries.weekTotals`): one reading per recorded day, so the week in progress
+        // here is the "This week" both of them print.
+        let readings = byDay.values.filter(\.recorded).map { MetricDayValue(day: $0.day, value: Double($0.credited)) }
+        let weeks = BaselineRangeSeries.weekTotals(readings, from: firstMonday, to: todayKey, calendar: calendar).map { w in
+            Week(id: w.id, date: w.date, credited: Int(w.total.rounded()), recordedDays: w.recordedDays,
+                 inProgress: w.inProgress)
         }
 
         let completed = weeks.filter { !$0.inProgress }
+        let withData = weeks.filter { $0.recordedDays > 0 }
         let newest = byDay.values.filter(\.recorded).max { $0.day < $1.day }
         return TrendsIntensity(weeks: weeks, goal: goal, thisWeek: weeks.last,
                                completedWeeks: completed.count,
-                               weeksAtGoal: completed.filter { $0.credited >= goal }.count,
+                               weeksWithData: withData.count,
+                               weeksAtGoal: withData.filter { $0.credited >= goal }.count,
                                basis: newest?.basis, hasAny: newest != nil)
     }
 
-    /// What VoiceOver reads for the chart: "Intensity minutes, last 30 days: 5 weeks, 3 of 4 full weeks
-    /// at the 150-minute goal; this week 112 of 150."
+    /// What VoiceOver reads for the chart: "Intensity minutes, last 30 days: 5 weeks, 3 of 4 weeks at
+    /// the 150-minute goal; this week 112 of 150."
     func chartSummary(range: TrendsRange) -> String {
         var s = "Intensity minutes, last \(range.days) days: \(weeks.count) week\(weeks.count == 1 ? "" : "s")"
-        if completedWeeks > 0 {
-            s += ", \(weeksAtGoal) of \(completedWeeks) full week\(completedWeeks == 1 ? "" : "s") at the \(goal)-minute goal"
+        if weeksWithData > 0 {
+            s += ", \(weeksAtGoal) of \(weeksWithData) week\(weeksWithData == 1 ? "" : "s") at the \(goal)-minute goal"
         }
         if let w = thisWeek, w.inProgress {
             s += "; this week \(w.credited) of \(goal)"

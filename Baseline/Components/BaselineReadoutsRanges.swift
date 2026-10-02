@@ -55,6 +55,22 @@ enum MetricRange: String, CaseIterable, Identifiable, BaselineRangeOption {
     /// How the window's days are grouped into points.
     var bucket: RangeBucket { self == .year ? .week : .day }
 
+    /// How the window's days are grouped for `key`: a sum metric's (`MetricKey.sumsPerBucket`) 4W and 1Y
+    /// are weekly TOTALS, one bar per Monday-to-Sunday week; every other key keeps `bucket`.
+    func bucket(for key: MetricKey) -> RangeBucket {
+        key.sumsPerBucket && sumWeeks != nil ? .week : bucket
+    }
+
+    /// The whole weeks a sum metric's window spans: 4W four Monday weeks, 1Y fifty-two, the last the week
+    /// the selected day falls in. nil for 1D and 7D, which stay day windows.
+    var sumWeeks: Int? {
+        switch self {
+        case .fourWeeks: return 4
+        case .year: return 52
+        case .day, .week: return nil
+        }
+    }
+
     /// The window as a phrase for a sentence: "today" / "the last 7 days" / "the last 4 weeks" / "the last year".
     var phrase: String {
         switch self {
@@ -126,6 +142,14 @@ enum MetricKey: String, CaseIterable, Identifiable {
         default: return false
         }
     }
+
+    /// Adds up over a week against a weekly goal instead of being averaged over the days that happened
+    /// to record: the 7D / 4W / 1Y detail reads it as Monday-to-Sunday week TOTALS (`MetricSums`, judged
+    /// against `MetricDetailSpec.goal`), a day the strap scored with nothing credited is a 0 and only a
+    /// day with no data at all is missing. Intensity minutes only. Steps stay a per-day mean: their norm
+    /// is per day (Home's tile judges a day against the 7-day average), so the mean of the recorded days
+    /// is the number the person asks for, and a 1Y bar reads "average 8,412 over 6 days".
+    var sumsPerBucket: Bool { self == .intensityMinutes }
 
     /// A clock time: bedtime is kept as minutes after the previous NOON (23:30 → 690, 00:30 → 750) and
     /// wake as minutes after midnight, so averages, lows and highs are plain arithmetic with no wrap.
@@ -214,8 +238,91 @@ struct MetricSeries {
     let stats: MetricStats
     /// The newest bucket does not yet hold its full span of days (a week still in progress).
     let lastBucketPartial: Bool
+    /// A sum metric's weeks and days (`MetricKey.sumsPerBucket`); nil for every other key.
+    var sums: MetricSums? = nil
 
     var isEmpty: Bool { points.isEmpty }
+
+    /// How `points` are grouped: the range's bucket, or weeks for a sum metric's 4W / 1Y.
+    var bucket: RangeBucket { range.bucket(for: key) }
+}
+
+// MARK: - Sum metrics: weeks against a goal
+
+/// A target per period for a sum metric (`MetricKey.sumsPerBucket`, `MetricDetailSpec.goal`): Intensity
+/// minutes' weekly goal (Settings › Profile › Intensity goal, `IntensityMinutes.goal()`, default 150).
+struct MetricGoal: Equatable {
+    enum Period: Equatable {
+        case day, week
+    }
+
+    let value: Double
+    let period: Period
+
+    /// The goal for a Monday-to-Sunday week (a daily goal times seven).
+    var perWeek: Double { period == .week ? value : value * 7 }
+    /// The pace per day that reaches it: the 7D chart's dashed "daily pace" rule (a weekly goal over seven).
+    var perDay: Double { period == .day ? value : value / 7 }
+}
+
+/// One Monday-to-Sunday week of a sum metric, cut at the window's end day: the week `BaselineRangeSeries
+/// .weekTotals` builds for Home's Intensity card, Trends' Intensity card and the detail alike.
+struct MetricWeekTotal: Identifiable, Equatable {
+    /// The Monday's day key.
+    let id: String
+    /// Local midnight of the Monday.
+    let date: Date
+    /// Monday … Sunday: the day's value, nil for a day without a reading or after the end day. A day the
+    /// strap scored with nothing credited is 0, never nil.
+    let days: [Double?]
+    /// The week's Sunday is after the end day.
+    let inProgress: Bool
+
+    var total: Double { days.compactMap { $0 }.reduce(0, +) }
+    /// Days with a reading (a recorded zero included).
+    var recordedDays: Int { days.compactMap { $0 }.count }
+    /// Days with a value above zero.
+    var activeDays: Int { days.filter { ($0 ?? 0) > 0 }.count }
+    /// No day of the week has a reading: a missing week, drawn as no bar and judged by nobody.
+    var hasData: Bool { recordedDays > 0 }
+
+    /// The week's total reached the goal. A week still in progress counts once it has: a met goal stays met.
+    func reached(_ goal: MetricGoal) -> Bool { total >= goal.perWeek }
+}
+
+/// A sum metric's window read as totals (`MetricKey.sumsPerBucket`): the whole weeks it covers and its
+/// own days. Goal-free: the hero (`metricSumHero`) and the chart judge the weeks against the live goal.
+struct MetricSums: Equatable {
+    /// Whole Monday weeks, oldest first; the last is the week the end day falls in (in progress until its
+    /// Sunday). 1D and 7D: that week alone (7D's "This week"); 4W four; 1Y fifty-two.
+    let weeks: [MetricWeekTotal]
+    /// Calendar days in the window (1 / 7 / 28 / 364) and those with a value above zero ("Days active").
+    let windowDays: Int
+    let activeDays: Int
+    /// The end day's value (nil: no reading) and the day before's.
+    let dayValue: Double?
+    let dayBefore: Double?
+    /// Intensity minutes only: raw moderate and vigorous minutes over the span the hero speaks for (1D the
+    /// day, 7D this week, 4W / 1Y the weeks drawn) and the basis of the window's newest recorded day.
+    var moderate: Int? = nil
+    var vigorous: Int? = nil
+    var basis: IntensityMinutes.Basis? = nil
+
+    /// The week the end day falls in.
+    var thisWeek: MetricWeekTotal? { weeks.last }
+    /// Weeks with at least one reading: the denominator of "Weeks at goal".
+    var weeksWithData: [MetricWeekTotal] { weeks.filter(\.hasData) }
+
+    /// Weeks with data whose total reached the goal (the week in progress once it has).
+    func weeksAtGoal(_ goal: MetricGoal) -> Int { weeksWithData.filter { $0.reached(goal) }.count }
+
+    /// The mean total of the FINISHED weeks with data: a week still in progress would pull it down
+    /// half-built, and a week with no reading at all is missing, not a zero. nil before one has ended.
+    var averageWeek: Double? {
+        let done = weeksWithData.filter { !$0.inProgress }
+        guard !done.isEmpty else { return nil }
+        return done.map(\.total).reduce(0, +) / Double(done.count)
+    }
 }
 
 /// A day's value with optional extremes (heart rate carries its low and high beside the mean).
@@ -329,6 +436,31 @@ enum BaselineRangeSeries {
         guard let a = TrendsDayKey.utc.date(from: from), let b = TrendsDayKey.utc.date(from: to), b >= a else { return 0 }
         return Int((b.timeIntervalSince(a) / 86_400).rounded()) + 1
     }
+
+    /// The ONE week builder of a sum metric: whole Monday-to-Sunday weeks (ISO, local, `bucketStart`)
+    /// from the week `from` falls in to the week `to` falls in, each day's value in its slot and the days
+    /// after `to` left empty. A day without a reading is nil (missing), a recorded zero is 0; values that
+    /// are not finite are skipped; a day listed twice keeps the last. Home's Intensity card
+    /// (`BaselineReadouts.intensity`), Trends' weeks (`TrendsIntensity.build`) and the detail
+    /// (`metricSeries`) all sum their weeks here, so the three cannot print different totals for one week.
+    static func weekTotals(_ values: [MetricDayValue], from: String, to: String,
+                           calendar: Calendar = .current) -> [MetricWeekTotal] {
+        guard let firstMonday = bucketStart(of: from, bucket: .week, calendar: calendar),
+              let lastMonday = bucketStart(of: to, bucket: .week, calendar: calendar),
+              firstMonday <= lastMonday else { return [] }
+        var byDay: [String: Double] = [:]
+        for v in values where v.value.isFinite && v.day >= firstMonday && v.day <= to { byDay[v.day] = v.value }
+        var out: [MetricWeekTotal] = []
+        var monday = firstMonday
+        while monday <= lastMonday, let date = BaselineReadouts.localMidnight(of: monday) {
+            // Negative carryDays adds days: Monday … Sunday, then the next Monday.
+            let keys = (0..<7).map { Baselines.cutoffKey(todayKey: monday, carryDays: -$0) }
+            out.append(MetricWeekTotal(id: monday, date: date, days: keys.map { $0 <= to ? byDay[$0] : nil },
+                                       inProgress: keys[6] > to))
+            monday = Baselines.cutoffKey(todayKey: monday, carryDays: -7)
+        }
+        return out
+    }
 }
 
 // MARK: - Readings per key (pure)
@@ -340,6 +472,10 @@ extension BaselineReadouts {
     struct IntradayDayValues {
         var stressMean: [String: Double] = [:]
         var intensityMinutes: [String: Double] = [:]
+        /// The same Intensity days' raw moderate and vigorous minutes and the basis they were scored on
+        /// (the detail's split and basis lines).
+        var intensityParts: [String: (moderate: Int, vigorous: Int)] = [:]
+        var intensityBasis: [String: IntensityMinutes.Basis] = [:]
         var heartRate: [String: (min: Double, avg: Double, max: Double)] = [:]
 
         static let none = IntradayDayValues()
@@ -394,14 +530,32 @@ extension BaselineReadouts {
         (Baselines.cutoffKey(todayKey: endKey, carryDays: range.days - 1), endKey)
     }
 
+    /// The window for `key`: a sum metric's 4W and 1Y are whole weeks (`MetricRange.sumWeeks`), from the
+    /// Monday three or fifty-one weeks before the end day's own; every other window as above.
+    static func metricWindow(key: MetricKey, range: MetricRange, endKey: String,
+                             calendar: Calendar = .current) -> (startKey: String, endKey: String) {
+        guard key.sumsPerBucket, let weeks = range.sumWeeks,
+              let monday = BaselineRangeSeries.bucketStart(of: endKey, bucket: .week, calendar: calendar) else {
+            return metricWindow(range: range, endKey: endKey)
+        }
+        return (Baselines.cutoffKey(todayKey: monday, carryDays: 7 * (weeks - 1)), endKey)
+    }
+
     /// The series for `key` over `range` ending on `endKey`, from readings already resolved
     /// (`metricReadings`). `bands` (day key → band, `metricBands`) is attached to day points by key and to
     /// week points as the mean band of their days. `intraday` supplies the 1D heart-rate trace: its
-    /// points become the series (one per sample) and its low / mean / high the stats.
+    /// points become the series (one per sample) and its low / mean / high the stats. A sum metric
+    /// (`MetricKey.sumsPerBucket`) also carries `sums` (`metricSums`; `dayFacts` gives Intensity minutes'
+    /// split and basis) and on 4W / 1Y its points are the weeks' TOTALS, one per week with data.
     static func metricSeries(key: MetricKey, range: MetricRange, endKey: String, readings: [MetricDayValue],
                              bands: [String: MetricBand] = [:], intraday: IntradayHeartRate? = nil,
+                             dayFacts: IntradayDayValues = .none,
                              calendar: Calendar = .current) -> MetricSeries {
-        let (startKey, _) = metricWindow(range: range, endKey: endKey)
+        let (startKey, _) = metricWindow(key: key, range: range, endKey: endKey, calendar: calendar)
+        if key.sumsPerBucket {
+            return sumSeries(key: key, range: range, startKey: startKey, endKey: endKey, readings: readings,
+                             dayFacts: dayFacts, calendar: calendar)
+        }
         if key == .heartRate, range == .day {
             let points = (intraday?.points ?? []).map { p in
                 RangePoint(id: "\(p.id)", date: p.date, value: p.bpm, min: p.minBpm, max: p.maxBpm, n: 1)
@@ -425,6 +579,52 @@ extension BaselineReadouts {
         }()
         return MetricSeries(key: key, range: range, startKey: startKey, endKey: endKey, points: points,
                             stats: stats, lastBucketPartial: partial)
+    }
+
+    /// A sum metric's series: 1D / 7D keep their daily points (each bar a day's credited minutes, a
+    /// recorded zero a zero), 4W / 1Y take one point per WEEK with data at the week's total (`n` its
+    /// recorded days), and `sums` carries the weeks, the window's active days, the day and the day
+    /// before, and Intensity minutes' split and basis. The stats stay over daily values (the chart's
+    /// VoiceOver sentence reads none of them as a week).
+    private static func sumSeries(key: MetricKey, range: MetricRange, startKey: String, endKey: String,
+                                  readings: [MetricDayValue], dayFacts: IntradayDayValues,
+                                  calendar: Calendar) -> MetricSeries {
+        // 1D and 7D speak for the end day's own week ("This week"); 4W and 1Y for every week they draw.
+        let weeksFrom = range.sumWeeks != nil ? startKey : endKey
+        let weeks = BaselineRangeSeries.weekTotals(readings, from: weeksFrom, to: endKey, calendar: calendar)
+        let points: [RangePoint]
+        if range.bucket(for: key) == .week {
+            points = weeks.filter(\.hasData).map { w in
+                RangePoint(id: w.id, date: w.date, value: w.total, min: nil, max: nil, n: w.recordedDays)
+            }
+        } else {
+            points = BaselineRangeSeries.buckets(readings, from: startKey, to: endKey, bucket: .day, calendar: calendar)
+        }
+        let inWindow = readings.filter { $0.day >= startKey && $0.day <= endKey && $0.value.isFinite }
+        let dayBeforeKey = Baselines.cutoffKey(todayKey: endKey, carryDays: 1)
+        var sums = MetricSums(weeks: weeks,
+                              windowDays: BaselineRangeSeries.dayCount(from: startKey, to: endKey),
+                              activeDays: Set(inWindow.filter { $0.value > 0 }.map(\.day)).count,
+                              dayValue: readings.last { $0.day == endKey && $0.value.isFinite }?.value,
+                              dayBefore: readings.last { $0.day == dayBeforeKey && $0.value.isFinite }?.value)
+        if key == .intensityMinutes {
+            let splitFrom: String
+            switch range {
+            case .day: splitFrom = endKey
+            case .week: splitFrom = weeks.last?.id ?? endKey
+            case .fourWeeks, .year: splitFrom = startKey
+            }
+            let split = dayFacts.intensityParts.filter { $0.key >= splitFrom && $0.key <= endKey }.values
+            sums.moderate = split.reduce(0) { $0 + $1.moderate }
+            sums.vigorous = split.reduce(0) { $0 + $1.vigorous }
+            sums.basis = dayFacts.intensityBasis.filter { $0.key >= startKey && $0.key <= endKey }
+                .max { $0.key < $1.key }?.value
+        }
+        let last = weeks.last
+        return MetricSeries(key: key, range: range, startKey: startKey, endKey: endKey, points: points,
+                            stats: BaselineRangeSeries.stats(readings, from: startKey, to: endKey),
+                            lastBucketPartial: range.sumWeeks != nil && (last?.inProgress ?? false) && (last?.hasData ?? false),
+                            sums: sums)
     }
 
     /// The personal band per day for HRV (`Baselines.hrvCfg`) or resting HR (`restingHRCfg`): the fold
@@ -547,6 +747,123 @@ extension BaselineReadouts {
         }
         return out
     }
+
+    // MARK: Sum metrics' hero
+
+    /// The hero of a sum metric's detail (`MetricKey.sumsPerBucket`): the cells, ONE sentence under them
+    /// and the basis footnote. What a week of Intensity minutes is judged by is its total against the
+    /// weekly goal, so no range prints a mean of the days that happened to record.
+    struct MetricSumHero: Equatable {
+        struct Cell: Equatable {
+            let label: String
+            let value: String
+            let unit: String?
+        }
+
+        let cells: [Cell]
+        /// Under the cells (secondary): the split, the zero day, or why the window is empty.
+        let sentence: String
+        /// What the minutes were scored on (tertiary); nil on 1D, whose week card prints it.
+        let footnote: String?
+
+        /// The cells as one line: "This week 112 of 150 min · Days active 4 of 7".
+        var cellsText: String {
+            cells.map { [$0.label, $0.value, $0.unit].compactMap { $0 }.joined(separator: " ") }.joined(separator: " · ")
+        }
+    }
+
+    /// The sum hero per range (`series.sums`; `goal` is the live goal, `isToday` whether the end day is today):
+    ///   • 1D: "This day" / "Day before". A day the strap scored with nothing credited is "0" with "No
+    ///     moderate or vigorous minutes today." (Home's card says "0 min today"); today counts from 0 like
+    ///     Home's card even before its first minute is banked; only a finished day with no heart rate (and
+    ///     no workout credit) at all is "–". A credited day gets the change against the day before.
+    ///   • 7D: "This week 112 of 150 min" (Monday → the end day, the number Home's track and Trends' card
+    ///     print) and "Days active 4 of 7" (days of the seven drawn with a minute), the week's split.
+    ///   • 4W / 1Y: "Weeks at goal 2 of 4" (weeks with data whose total reached the goal) and "Average
+    ///     week 131 min" (finished weeks with data), the split over the weeks drawn.
+    static func metricSumHero(series: MetricSeries, goal: MetricGoal?, noun: String, unit: String,
+                              format: (Double) -> String, isToday: Bool) -> MetricSumHero {
+        let u = unit.isEmpty ? nil : unit
+        let intensity = series.key == .intensityMinutes
+        guard let sums = series.sums else { return MetricSumHero(cells: [], sentence: "", footnote: nil) }
+        if series.range == .day {
+            let value = sums.dayValue ?? (isToday ? 0 : nil)
+            // A dash stands alone: "– min" reads as a number that failed to load.
+            let cells = [MetricSumHero.Cell(label: "This day", value: value.map(format) ?? "–", unit: value == nil ? nil : u),
+                         MetricSumHero.Cell(label: "Day before", value: sums.dayBefore.map(format) ?? "–",
+                                            unit: sums.dayBefore == nil ? nil : u)]
+            let sentence: String
+            if value == nil {
+                sentence = intensity ? "No heart rate recorded on this day." : "No \(noun) recorded for this day."
+            } else if value == 0 {
+                let what = intensity ? "moderate or vigorous minutes" : noun
+                sentence = isToday ? "No \(what) today." : "No \(what) on this day."
+            } else {
+                sentence = metricContext(series: series, noun: noun, unit: unit, format: format)
+            }
+            return MetricSumHero(cells: cells, sentence: sentence, footnote: nil)
+        }
+        // A window with no reading at all: the one sentence, no cells of dashes.
+        guard !series.isEmpty, let week = sums.thisWeek else {
+            return MetricSumHero(cells: [], sentence: metricContext(series: series, noun: noun, unit: unit, format: format),
+                                 footnote: nil)
+        }
+        let unitSuffix = u.map { " \($0)" } ?? ""
+        var cells: [MetricSumHero.Cell] = []
+        if series.range == .week {
+            cells.append(.init(label: "This week", value: format(week.total),
+                               unit: goal.map { "of \(format($0.perWeek))\(unitSuffix)" } ?? u))
+            cells.append(.init(label: "Days active", value: "\(sums.activeDays)", unit: "of \(sums.windowDays)"))
+        } else {
+            if let goal {
+                cells.append(.init(label: "Weeks at goal", value: "\(sums.weeksAtGoal(goal))",
+                                   unit: "of \(sums.weeksWithData.count)"))
+            }
+            cells.append(.init(label: "Average week", value: sums.averageWeek.map(format) ?? "–", unit: u))
+        }
+        return MetricSumHero(cells: cells, sentence: intensity ? intensitySplitSentence(series) : "",
+                             footnote: intensity ? sums.basis?.caption : nil)
+    }
+
+    /// The split under a range's hero: this week's on 7D ("38 moderate · 37 vigorous, counted double"),
+    /// the weeks with data on 4W / 1Y ("Over 18 weeks: …", the denominator "Weeks at goal" prints: a
+    /// week without a reading adds nothing and is not counted), or that there were none.
+    private static func intensitySplitSentence(_ series: MetricSeries) -> String {
+        let m = series.sums?.moderate ?? 0, v = series.sums?.vigorous ?? 0
+        let n = series.sums?.weeksWithData.count ?? 0
+        if series.range == .week {
+            return m + v > 0 ? IntensityMinutes.splitText(moderate: m, vigorous: v) : "No moderate or vigorous minutes this week."
+        }
+        let weeks = "\(n) week\(n == 1 ? "" : "s")"
+        return m + v > 0 ? "Over \(weeks): " + IntensityMinutes.splitText(moderate: m, vigorous: v)
+                         : "No moderate or vigorous minutes over \(weeks)."
+    }
+
+    /// The sum chart's one VoiceOver sentence. 7D: "Intensity minutes, last 7 days: 5 days recorded, 4
+    /// active, highest 40 min; this week 112 of 150 min; daily pace 21 min." Weeks: "Intensity minutes,
+    /// last 4 weeks: 4 weeks recorded, 2 at the goal of 150 min; average week 131 min; this week 75 min so far."
+    static func metricSumChartSummary(series: MetricSeries, goal: MetricGoal?, name: String, unit: String,
+                                      format: (Double) -> String) -> String {
+        guard let sums = series.sums else { return metricChartSummary(series: series, name: name, unit: unit, format: format) }
+        let u = unit.isEmpty ? "" : " \(unit)"
+        var out = "\(name), \(series.range.subtitle.lowercased()): "
+        if series.bucket == .week {
+            let n = sums.weeksWithData.count
+            out += "\(n) week\(n == 1 ? "" : "s") recorded"
+            if let goal { out += ", \(sums.weeksAtGoal(goal)) at the goal of \(format(goal.perWeek))\(u)" }
+            if let avg = sums.averageWeek { out += "; average week \(format(avg))\(u)" }
+            if let w = sums.thisWeek, w.inProgress { out += "; this week \(format(w.total))\(u) so far" }
+        } else {
+            let n = series.stats.count
+            out += "\(n) day\(n == 1 ? "" : "s") recorded, \(sums.activeDays) active"
+            if let hi = series.stats.max, hi > 0 { out += ", highest \(format(hi))\(u)" }
+            if let w = sums.thisWeek {
+                out += "; this week \(format(w.total))" + (goal.map { " of \(format($0.perWeek))" } ?? "") + u
+            }
+            if let goal { out += "; daily pace \(format(goal.perDay))\(u)" }
+        }
+        return out + "."
+    }
 }
 
 // MARK: - Repository accessor (@MainActor)
@@ -569,9 +886,16 @@ extension BaselineReadouts {
                              bandProvider: (([DailyMetric], String) -> [String: MetricBand])? = nil,
                              calendar: Calendar = .current, now: Date = Date()) async -> MetricSeries {
         let days = days(repo, mode: mode)
-        let (startKey, _) = metricWindow(range: range, endKey: endDay)
-        // Readings reach back one more window so the "vs the period before" comparison has its days.
-        let readFrom = Baselines.cutoffKey(todayKey: startKey, carryDays: range.days)
+        let (startKey, _) = metricWindow(key: key, range: range, endKey: endDay, calendar: calendar)
+        // Readings reach back one more window so the "vs the period before" comparison has its days; a
+        // sum metric's weekly windows compare nothing, so they read from their first Monday; its 1D and
+        // 7D reach back to the day before and to the Monday of the end day's week ("This week").
+        var readFrom = key.sumsPerBucket && range.sumWeeks != nil
+            ? startKey
+            : Baselines.cutoffKey(todayKey: startKey, carryDays: range.days)
+        if key.sumsPerBucket, let monday = BaselineRangeSeries.bucketStart(of: endDay, bucket: .week, calendar: calendar) {
+            readFrom = min(readFrom, monday)
+        }
 
         if key == .heartRate, range == .day {
             let trace = await intradayHeartRate(repo, for: endDay, nights: nights, mode: mode, calendar: calendar, now: now)
@@ -605,7 +929,8 @@ extension BaselineReadouts {
         let readings = metricReadings(key: key, days: days, nights: nightList, stepReadings: stepReadings,
                                       intraday: intraday, calendar: calendar)
         let bands = bandProvider?(days, endDay) ?? metricBands(key: key, days: days, endKey: endDay)
-        return metricSeries(key: key, range: range, endKey: endDay, readings: readings, bands: bands, calendar: calendar)
+        return metricSeries(key: key, range: range, endKey: endDay, readings: readings, bands: bands,
+                            dayFacts: intraday, calendar: calendar)
     }
 
     /// The intraday facts the range readings take from per-day records (pure): the Stress mean, the
@@ -617,7 +942,11 @@ extension BaselineReadouts {
         var out = IntradayDayValues.none
         for (day, r) in records {
             if let s = r.stressMean { out.stressMean[day] = s }
-            if r.recordedIntensity { out.intensityMinutes[day] = Double(r.credited) }
+            if r.recordedIntensity {
+                out.intensityMinutes[day] = Double(r.credited)
+                out.intensityParts[day] = (r.moderateMin, r.vigorousMin)
+                out.intensityBasis[day] = r.basis
+            }
             if let lo = r.hrMin, let avg = r.hrAvg, let hi = r.hrMax { out.heartRate[day] = (lo, avg, hi) }
         }
         return out

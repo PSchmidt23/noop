@@ -102,11 +102,14 @@ final class ScreenshotTests: XCTestCase {
                           open: { self.openCardDetail(app, card: "Heart rate") })
     }
 
-    /// Home › the Intensity minutes card › its detail on 1D (the week card: seven Monday-to-Sunday bars
-    /// with the goal pace, the week track, the day's split and basis line). The demo seed has no heart
-    /// rate, so the minutes are credited from the seeded workouts' zone minutes ("from workouts only");
-    /// the card shows on a day that has some, so the test steps back from today (at most 8 days) until
-    /// the card appears.
+    /// Home › the Intensity minutes card › its detail on every range: 1D (the hero's day and the week
+    /// card: seven Monday-to-Sunday bars with the daily pace, the week track, the day's split and basis
+    /// line), then 7D ("This week … of 150 min", "Days active", daily bars under the dashed daily pace),
+    /// 4W (four weekly totals against the goal line, "Weeks at goal", "Average week") and 1Y (52 weekly
+    /// totals). The demo seed has no heart rate, so the minutes are credited from the seeded workouts'
+    /// zone minutes ("from workouts only"); the card shows on a day that has some, so the test steps back
+    /// from today (at most 8 days) until the card appears. Each range waits for its own chart (the
+    /// chart's VoiceOver sentence names the window), since the hero cells of 4W and 1Y share labels.
     func testIntensity() throws {
         let app = launchTab("home")
         XCTAssertTrue(app.staticTexts["HRV"].firstMatch.waitForExistence(timeout: 20), "home: first card (HRV) did not appear")
@@ -130,9 +133,16 @@ final class ScreenshotTests: XCTestCase {
         try save(XCUIScreen.main.screenshot(), as: "intensity-card-0")
         XCTAssertTrue(tapUntilPushed(app, card, title: "Intensity minutes"), "home: the Intensity minutes card did not open its detail")
         try captureDetail(app, screen: "intensity-detail-1d", title: "Intensity minutes", firstLabel: "This day")
-        XCTAssertTrue(selectSegment(app, "Last 7 days", screen: "intensity-detail"), "intensity-detail: 7D was not selected")
-        scrollToTop(app)
-        try captureDetail(app, screen: "intensity-detail-7d", title: "Intensity minutes", firstLabel: "Latest")
+        for (spoken, suffix, words, label) in [("Last 7 days", "7d", "last 7 days", "Days active"),
+                                               ("Last 4 weeks", "4w", "last 4 weeks", "Weeks at goal"),
+                                               ("Last year", "1y", "last year", "Weeks at goal")] {
+            XCTAssertTrue(selectSegment(app, spoken, screen: "intensity-detail"), "intensity-detail: \(suffix) was not selected")
+            scrollToTop(app)
+            let chart = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label BEGINSWITH %@", "Intensity minutes, \(words)")).firstMatch
+            XCTAssertTrue(chart.waitForExistence(timeout: 30), "intensity-detail-\(suffix): the range's chart did not appear")
+            try captureDetail(app, screen: "intensity-detail-\(suffix)", title: "Intensity minutes", firstLabel: label)
+        }
     }
 
     /// Sleep › the timing card's "Bedtime and wake over time" row › `SleepTimingDetailScreen` on 7D: the

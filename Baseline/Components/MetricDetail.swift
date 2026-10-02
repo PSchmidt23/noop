@@ -39,6 +39,11 @@ struct MetricDetailSpec {
     var dayView: ((String) -> AnyView)?
     /// The "About this metric" footnote; defaults to the accuracy caveat.
     var about: String?
+    /// A sum metric's target per period (`MetricKey.sumsPerBucket`): Intensity minutes' weekly goal. Read
+    /// live, when the screen loads and whenever the defaults change, because Settings can move it while
+    /// a detail sits in another tab's stack. The 7D chart draws it as a daily pace (`perDay`), 4W / 1Y as
+    /// the weekly line, and the hero counts the weeks that reached it.
+    var goal: (() -> MetricGoal)? = nil
 
     /// The spec every key ships with: Baseline's colours, units, formatters and accuracy rows.
     static func standard(_ key: MetricKey) -> MetricDetailSpec {
@@ -90,7 +95,8 @@ struct MetricDetailSpec {
         case .intensityMinutes:
             return MetricDetailSpec(key: key, title: "Intensity minutes", noun: "intensity minutes", unit: "min",
                                     color: BaselineTheme.effort, higherIsBetter: true, accuracyKey: nil,
-                                    accuracy: (.medium, BaselineReadouts.IntensityReadout.caveat), format: whole)
+                                    accuracy: (.medium, BaselineReadouts.IntensityReadout.caveat), format: whole,
+                                    goal: { MetricGoal(value: Double(IntensityMinutes.goal()), period: .week) })
         case .heartRate:
             return MetricDetailSpec(key: key, title: "Heart rate", noun: "heart rate", unit: "bpm", color: BaselineTheme.rhr,
                                     higherIsBetter: nil, accuracyKey: nil,
@@ -134,6 +140,8 @@ struct MetricDetailScreen: View {
     @State private var selected: RangePoint?
     /// The 1D heart-rate trace (the day window and its spans), read once beside the series.
     @State private var dayTrace: BaselineReadouts.IntradayHeartRate?
+    /// `spec.goal`, resolved on load and again whenever the defaults change (Settings › Intensity goal).
+    @State private var goal: MetricGoal?
 
     init(spec: MetricDetailSpec, day: String = Repository.localDayKey(Date()), initialRange: MetricRange = .week) {
         self.spec = spec
@@ -179,10 +187,22 @@ struct MetricDetailScreen: View {
             await load()
         }
         .onChange(of: range) { _, _ in selected = nil }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            // Posted on the thread that wrote; the goal is screen state.
+            Task { @MainActor in resolveGoal() }
+        }
+    }
+
+    /// Re-reads `spec.goal`; a no-op while it stands.
+    @MainActor
+    private func resolveGoal() {
+        let g = spec.goal?()
+        if g != goal { goal = g }
     }
 
     @MainActor
     private func load() async {
+        resolveGoal()
         if spec.key == .heartRate, range == .day {
             // One bucket read: the trace feeds both the chart and the series' stats.
             let trace = await BaselineReadouts.intradayHeartRate(repo, for: day)
@@ -200,7 +220,9 @@ struct MetricDetailScreen: View {
     private func heroCard(_ s: MetricSeries) -> some View {
         BaselineCard(title: spec.title, accessory: spec.badge.map { AnyView($0) }) {
             let st = s.stats
-            if range == .day, spec.key != .heartRate {
+            if s.sums != nil, !unscored {
+                sumHero(s)
+            } else if range == .day, spec.key != .heartRate {
                 BaselineStatRow {
                     StatCell(label: "This day", value: st.latest.map(spec.format) ?? "–", unit: unitOrNil, color: spec.color)
                     StatCell(label: "Day before", value: st.previousAverage.map(spec.format) ?? "–", unit: unitOrNil)
@@ -214,11 +236,44 @@ struct MetricDetailScreen: View {
                     StatCell(label: "High", value: st.max.map(spec.format) ?? "–", unit: unitOrNil)
                 }
             }
-            Text(contextSentence(s))
+            if s.sums == nil || unscored {
+                Text(contextSentence(s))
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// A sum metric's hero (`BaselineReadouts.metricSumHero`): week totals against the goal, never a mean
+    /// of the days that recorded; the split under the cells and the basis it was scored on.
+    @ViewBuilder
+    private func sumHero(_ s: MetricSeries) -> some View {
+        let hero = BaselineReadouts.metricSumHero(series: s, goal: goal, noun: spec.noun, unit: spec.unit,
+                                                  format: spec.format, isToday: day == Repository.localDayKey(Date()))
+        if !hero.cells.isEmpty {
+            BaselineStatRow {
+                ForEach(Array(hero.cells.enumerated()), id: \.offset) { i, cell in
+                    StatCell(label: cell.label, value: cell.value, unit: cell.unit,
+                             color: i == 0 ? spec.color : BaselineTheme.text)
+                }
+            }
+        }
+        Text(hero.sentence)
+            .font(BaselineTheme.caption)
+            .foregroundStyle(BaselineTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        if let footnote = hero.footnote {
+            Text(footnote)
                 .font(BaselineTheme.caption)
-                .foregroundStyle(BaselineTheme.textSecondary)
+                .foregroundStyle(BaselineTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// Intensity minutes before an age or a max heart rate is set: nothing is scored, so the hero asks.
+    private var unscored: Bool {
+        spec.key == .intensityMinutes && !IntensityMinutes.mayScore(entered: profileSet, hrMaxOverride: profile.hrMaxOverride)
     }
 
     @ViewBuilder
@@ -257,16 +312,34 @@ struct MetricDetailScreen: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     MetricRangeChart(series: s, color: spec.color, selected: $selected,
-                                     yLabel: spec.format,
-                                     accessibilitySummary: BaselineReadouts.metricChartSummary(series: s, name: spec.title, unit: spec.unit, format: spec.format),
+                                     yLabel: spec.format, goal: goal,
+                                     accessibilitySummary: s.sums != nil
+                                        ? BaselineReadouts.metricSumChartSummary(series: s, goal: goal, name: spec.title, unit: spec.unit, format: spec.format)
+                                        : BaselineReadouts.metricChartSummary(series: s, name: spec.title, unit: spec.unit, format: spec.format),
                                      accessibilityHint: spec.higherIsBetter.map { $0 ? "Higher is better" : "Lower is better" })
-                    if s.lastBucketPartial {
-                        Text("The newest week is still in progress.")
+                    if let caption = Self.chartCaption(s) {
+                        Text(caption)
                             .font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
         }
+    }
+
+    /// The one line under a range chart, only when a bar or point is drawn differently from the rest: a
+    /// newest week still in progress (lighter on a sum metric's weekly bars), or on a sum metric's 7D the
+    /// days before this week's Monday (lighter: "This week" in the hero sums the others).
+    static func chartCaption(_ s: MetricSeries) -> String? {
+        if let sums = s.sums {
+            if s.bucket == .week {
+                return s.lastBucketPartial ? "The lighter bar is this week, still in progress." : nil
+            }
+            guard s.range == .week, let monday = sums.thisWeek?.id,
+                  s.points.contains(where: { $0.id < monday }) else { return nil }
+            return "Lighter bars are last week; this week starts on Monday."
+        }
+        return s.lastBucketPartial ? "The newest week is still in progress." : nil
     }
 
     // MARK: Text
@@ -296,11 +369,18 @@ struct MetricDetailScreen: View {
         return "Measured every second while the strap was worn."
     }
 
-    /// While scrubbing: the point's day (or week) and value.
+    /// While scrubbing: the point's day (or week) and value. A sum metric's week is its total against the
+    /// goal ("Week of Sep 22 · 131 of 150 min", "… so far" while in progress), never an average.
     private var scrubSubtitle: String? {
         guard let p = selected else { return nil }
         let v = spec.format(p.value) + (spec.unit.isEmpty ? "" : " \(spec.unit)")
-        if range.bucket == .week {
+        if let sums = series?.sums, series?.bucket == .week {
+            let unit = spec.unit.isEmpty ? "" : " \(spec.unit)"
+            let total = goal.map { "\(spec.format(p.value)) of \(spec.format($0.perWeek))\(unit)" } ?? v
+            let open = sums.thisWeek.map { $0.id == p.id && $0.inProgress } ?? false
+            return "Week of \(TrendsFormat.shortDate(p.date)) · \(total)\(open ? " so far" : "")"
+        }
+        if series?.bucket == .week {
             return "Week of \(TrendsFormat.shortDate(p.date)) · average \(v) over \(p.n) day\(p.n == 1 ? "" : "s")"
         }
         return "\(TrendsFormat.shortDate(p.date)) · \(v)"
@@ -319,23 +399,73 @@ struct MetricRangeChart: View {
     @Binding var selected: RangePoint?
     /// Axis labels in the metric's spelling.
     var yLabel: (Double) -> String = { "\(Int($0.rounded()))" }
+    /// A sum metric's goal (`MetricDetailSpec.goal`): the dashed rule replaces the average rule, at the
+    /// daily pace on 7D and at the weekly goal on the weekly bars.
+    var goal: MetricGoal? = nil
     var accessibilitySummary: String? = nil
     var accessibilityHint: String? = nil
 
     private var points: [RangePoint] { series.points }
     private var isBars: Bool { series.key.isCountLike }
-    private var isWeekly: Bool { series.range.bucket == .week }
+    private var isWeekly: Bool { series.bucket == .week }
+    private var isSum: Bool { series.sums != nil }
     private var hasEnvelope: Bool { !isBars && points.contains { $0.min != nil && $0.max != nil } }
+
+    /// The goal rule of a sum metric: "goal 150" over weekly bars, "daily pace 21" over a day's bars.
+    private var goalRule: (value: Double, label: String)? {
+        guard isSum, let goal else { return nil }
+        return isWeekly ? (goal.perWeek, "goal \(yLabel(goal.perWeek))") : (goal.perDay, "daily pace \(yLabel(goal.perDay))")
+    }
+
+    /// The seconds a bar's bucket spans (a day, or a week) and the share of it a weekly bar fills.
+    private var bucketSeconds: TimeInterval { isWeekly ? 7 * 86_400 : 86_400 }
+    private static let barFill = 0.7
+
+    /// A weekly bar from its Monday: the middle `barFill` of the week.
+    private func barSpan(_ p: RangePoint) -> ClosedRange<Date> {
+        let inset = bucketSeconds * (1 - Self.barFill) / 2
+        return p.date.addingTimeInterval(inset)...p.date.addingTimeInterval(bucketSeconds - inset)
+    }
+
+    /// Drawn lighter: a sum metric's week still in progress (weekly bars), or on its 7D the days before
+    /// this week's Monday, so the full bars are the ones "This week" adds up.
+    private func isMuted(_ p: RangePoint) -> Bool {
+        guard let week = series.sums?.thisWeek else { return false }
+        return isWeekly ? (p.id == week.id && week.inProgress) : p.id < week.id
+    }
 
     var body: some View {
         Chart {
             if isBars {
                 ForEach(points) { p in
-                    BarMark(x: .value("Day", p.date, unit: isWeekly ? .weekOfYear : .day), y: .value("Value", p.value))
-                        .foregroundStyle(color.opacity(BaselineChartStyle.barOpacity))
-                        .cornerRadius(BaselineChartStyle.barRadius)
+                    let opacity = isMuted(p) ? BaselineChartStyle.mutedBarOpacity : BaselineChartStyle.barOpacity
+                    if isWeekly {
+                        // An explicit span over the Monday-to-Sunday week: a `.weekOfYear` unit bins on
+                        // the locale's week (Sunday first in the US) even under an ISO environment
+                        // calendar, which drew every weekly bar a day early.
+                        let span = barSpan(p)
+                        RectangleMark(xStart: .value("From", span.lowerBound), xEnd: .value("To", span.upperBound),
+                                      yStart: .value("Zero", 0.0), yEnd: .value("Value", p.value))
+                            .foregroundStyle(color.opacity(opacity))
+                            .cornerRadius(BaselineChartStyle.barRadius)
+                    } else {
+                        BarMark(x: .value("Day", p.date, unit: .day), y: .value("Value", p.value))
+                            .foregroundStyle(color.opacity(opacity))
+                            .cornerRadius(BaselineChartStyle.barRadius)
+                    }
                 }
-                if let avg = series.stats.average {
+                if let rule = goalRule {
+                    RuleMark(y: .value("Goal", rule.value))
+                        .foregroundStyle(color.opacity(BaselineChartStyle.baselineOpacity))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        .annotation(position: .top, alignment: .leading, spacing: 2) {
+                            Text(rule.label)
+                                .font(BaselineTheme.caption)
+                                .foregroundStyle(BaselineTheme.textTertiary)
+                        }
+                } else if isSum {
+                    // A sum metric without a goal draws no average rule: its bars are totals, not a level.
+                } else if let avg = series.stats.average {
                     RuleMark(y: .value("Average", avg))
                         .foregroundStyle(color.opacity(BaselineChartStyle.baselineOpacity))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
@@ -373,9 +503,17 @@ struct MetricRangeChart: View {
                 }
             }
             if let s = selected {
-                RuleMark(x: .value("Day", s.date)).foregroundStyle(BaselineTheme.hairline)
-                PointMark(x: .value("Day", s.date), y: .value("Value", s.value))
-                    .symbol { BaselineChartStyle.selectedPoint(color) }
+                if isBars {
+                    // Over the middle of the bar its day or week spans.
+                    let mid = s.date.addingTimeInterval(bucketSeconds / 2)
+                    RuleMark(x: .value("Day", mid)).foregroundStyle(BaselineTheme.hairline)
+                    PointMark(x: .value("Day", mid), y: .value("Value", s.value))
+                        .symbol { BaselineChartStyle.selectedPoint(color) }
+                } else {
+                    RuleMark(x: .value("Day", s.date)).foregroundStyle(BaselineTheme.hairline)
+                    PointMark(x: .value("Day", s.date), y: .value("Value", s.value))
+                        .symbol { BaselineChartStyle.selectedPoint(color) }
+                }
             }
         }
         .chartYScale(domain: yDomain)
@@ -401,7 +539,13 @@ struct MetricRangeChart: View {
                             guard let plot = proxy.plotFrame else { return }
                             let x = g.location.x - geo[plot].origin.x
                             if let date: Date = proxy.value(atX: x) {
-                                selected = points.min(by: { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) })
+                                // A bar spans its day or week from `date`: measure to its middle, so the
+                                // finger picks the bar it is on rather than the next one's start.
+                                let mid: TimeInterval = isBars ? bucketSeconds / 2 : 0
+                                selected = points.min(by: {
+                                    abs($0.date.addingTimeInterval(mid).timeIntervalSince(date))
+                                        < abs($1.date.addingTimeInterval(mid).timeIntervalSince(date))
+                                })
                             }
                         }
                         .onEnded { _ in
@@ -419,7 +563,7 @@ struct MetricRangeChart: View {
     /// day-wide bar on a seven-day axis (a data-extent domain stretched that bar across the chart and
     /// printed its date twice). Bars reach the end of their last bucket; lines end on its start.
     private var xDomain: ClosedRange<Date> {
-        let bucket = series.range.bucket
+        let bucket = series.bucket
         let cal = Calendar.current
         if let s = BaselineRangeSeries.bucketStart(of: series.startKey, bucket: bucket),
            let e = BaselineRangeSeries.bucketStart(of: series.endKey, bucket: bucket),
@@ -435,12 +579,34 @@ struct MetricRangeChart: View {
     }
 
     private var xAxis: AnyAxisContent {
-        series.range == .year
+        if isSum, series.range == .week || series.range == .fourWeeks,
+           let start = BaselineReadouts.localMidnight(of: series.startKey) {
+            // A label under the middle of every bar: the weekday on 7D ("Thu … Wed", so the Monday a week
+            // starts on shows), the week's Monday on 4W ("Sep 8"). Marks sit mid-bar and the label prints
+            // the bar's own start.
+            let weekly = isWeekly
+            let count = weekly ? (series.range.sumWeeks ?? 4) : 7
+            let half = bucketSeconds / 2
+            let starts = (0..<count).compactMap { Calendar.current.date(byAdding: .day, value: $0 * (weekly ? 7 : 1), to: start) }
+            return AnyAxisContent(AxisMarks(values: starts.map { $0.addingTimeInterval(half) }) { v in
+                // Centred on the mark (a date label otherwise starts at it and runs into the y axis).
+                AxisValueLabel(anchor: .top) {
+                    if let d = v.as(Date.self) {
+                        let s = d.addingTimeInterval(-half)
+                        Text(weekly ? s.formatted(.dateTime.month(.abbreviated).day()) : s.formatted(.dateTime.weekday(.abbreviated)))
+                            .foregroundStyle(BaselineTheme.textTertiary)
+                            .font(BaselineTheme.caption)
+                    }
+                }
+            })
+        }
+        return series.range == .year
             ? AnyAxisContent(BaselineChartStyle.monthAxis(spansOverAYear: false))
             : AnyAxisContent(BaselineChartStyle.dayAxis(desiredCount: series.range == .week ? 3 : 4))
     }
 
-    /// Values, band edges and envelope with ~12% padding; bars start at zero.
+    /// Values, band edges and envelope with ~12% padding; bars start at zero and reach above a goal rule
+    /// with room for its label.
     private var yDomain: ClosedRange<Double> {
         var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
         for p in points {
@@ -448,7 +614,7 @@ struct MetricRangeChart: View {
             hi = max(hi, p.value, p.band?.high ?? p.value, hasEnvelope ? (p.max ?? p.value) : p.value)
         }
         guard lo <= hi else { return 0...1 }
-        if isBars { return 0...max(hi * 1.12, 1) }
+        if isBars { return 0...max(hi * 1.12, (goalRule?.value ?? 0) * 1.3, 1) }
         let pad = max(hi - lo, 1) * 0.12
         return max(0, lo - pad)...(hi + pad)
     }

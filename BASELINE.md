@@ -69,7 +69,11 @@ support that story. Nothing clutters it.
   `MetricKey` over 1D / 7D / 4W / 1Y (`MetricRange`): a hero row (Latest / Average / Low / High; This day /
   Day before on 1D), one context sentence with the change against the previous window of the same length,
   the range chart (7D / 4W daily points, 1Y weekly means over ISO weeks keyed by the Monday with the
-  lows-to-highs envelope; HRV / Resting HR over the personal band) and "About this metric". Data comes
+  lows-to-highs envelope; HRV / Resting HR over the personal band). Intensity minutes are a sum metric (`MetricKey.sumsPerBucket`) read against
+  the weekly goal (`MetricDetailSpec.goal`, Settings › Intensity goal): 7D daily bars with a daily-pace rule
+  and "This week 112 of 150 min" / "Days active", 4W and 1Y Monday-to-Sunday weekly totals with the goal
+  line and "Weeks at goal" / "Average week"; Home, Trends and the detail sum weeks through one function
+  (`BaselineRangeSeries.weekTotals`), so they print the same week and "About this metric". Data comes
   through `BaselineReadouts.metricSeries` over the same strap-first funnel. The route table is
   `TodayDetail.spec(_:)` (Home and Trends push the same screen; Sleep's 1D page is `SleepDetail.durationSpec()`,
   whose day view is `SleepNightDayView`). Sleep timing has its own `SleepTimingDetailScreen` (7D / 4W / 1Y).

@@ -120,6 +120,15 @@ struct TrendsWeekBarChart: View {
 
     /// The in-progress week's bar opacity.
     static let inProgressOpacity = BaselineChartStyle.mutedBarOpacity
+    /// Share of the week a bar fills; the rest is the gap between bars.
+    static let barFill = 0.7
+
+    /// The bar's span: the week from its Monday's local midnight, inset on both sides by the gap.
+    static func span(of w: TrendsIntensity.Week) -> ClosedRange<Date> {
+        let week = 7.0 * 86_400
+        let inset = week * (1 - barFill) / 2
+        return w.date.addingTimeInterval(inset)...w.date.addingTimeInterval(week - inset)
+    }
 
     private var yDomain: ClosedRange<Double> {
         let peak = Double(weeks.map(\.credited).max() ?? 0)
@@ -129,7 +138,12 @@ struct TrendsWeekBarChart: View {
     var body: some View {
         Chart {
             ForEach(weeks) { w in
-                BarMark(x: .value("Week", w.date, unit: .weekOfYear), y: .value("Minutes", w.credited))
+                // An explicit span over the Monday-to-Sunday week, as the metric detail draws it: a
+                // `.weekOfYear` unit bins on the locale's week (Sunday first in the US) even under an ISO
+                // environment calendar, which drew each bar a day early.
+                let span = Self.span(of: w)
+                RectangleMark(xStart: .value("From", span.lowerBound), xEnd: .value("To", span.upperBound),
+                              yStart: .value("Zero", 0.0), yEnd: .value("Minutes", Double(w.credited)))
                     .foregroundStyle(color.opacity(w.inProgress ? Self.inProgressOpacity : BaselineChartStyle.barOpacity))
                     .cornerRadius(BaselineChartStyle.barRadius)
             }
