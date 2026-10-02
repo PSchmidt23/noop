@@ -101,6 +101,62 @@ enum TodayReadiness {
     case calibrating(nights: Int)
     case stale(lastDay: String)
     case tier(ReadinessTier)
+
+    /// The short form of the week's HRV tier for the HRV ring tile's context line ("Week on baseline"),
+    /// so the seven-night reading sits beside the one-night delta it qualifies instead of competing
+    /// with the Readiness score card. nil while calibrating or stale: the tile's own line already says
+    /// what it is waiting for.
+    var weekPhrase: String? {
+        switch self {
+        case .calibrating, .stale: return nil
+        case .tier(.primed): return "Week primed"
+        case .tier(.normal): return "Week on baseline"
+        case .tier(.suppressed): return "Week below your range"
+        }
+    }
+}
+
+/// The Readiness SCORE card's state for one morning: NOOP's stored 0–100 composite read through
+/// `BaselineReadouts.readinessScore` (never recomputed), or the honest reason there is none. A morning
+/// without its own score carries the newest earlier one under the rings' carry rule
+/// (`Baselines.vitalCarryDays`) and wears its "Woke Mon 28 Sep" stamp, exactly as the HRV tile does;
+/// `stale` mirrors the tile's cap (`TodayReadiness.stale`): a score dated weeks ago must not read as
+/// this morning's. `missing` is a morning past the seed gate with nothing fresh to carry (the first
+/// synced night is still to come, or the days came from a source without a score).
+enum TodayReadinessScore {
+    /// `wokeStamp` is `TodayFormat.wokeStamp` when the score was carried from an earlier morning.
+    case score(BaselineReadouts.ReadinessScore, wokeStamp: String?)
+    case calibrating(nights: Int)
+    case stale(lastDay: String)
+    case missing
+
+    /// `days` is the funnel table (oldest → newest); `readiness` is the snapshot's HRV tier state, the
+    /// one place the carry rule is already decided.
+    static func build(for day: String, days: [DailyMetric], readiness: TodayReadiness) -> TodayReadinessScore {
+        if case .stale(let last) = readiness { return .stale(lastDay: last) }
+        if let r = BaselineReadouts.readinessScore(for: day, days: days) { return .score(r, wokeStamp: nil) }
+        if let n = BaselineReadouts.readinessCalibrationNights(for: day, days: days) { return .calibrating(nights: n) }
+        let scored = days.filter { $0.day <= day && $0.recovery != nil }.map { (day: $0.day, value: $0.recovery ?? 0) }
+        if let carried = Baselines.freshestCarried(scored, todayKey: day),
+           let r = BaselineReadouts.readinessScore(for: carried.day, days: days) {
+            return .score(r, wokeStamp: TodayFormat.wokeStamp(day: carried.day, todayKey: day))
+        }
+        return .missing
+    }
+
+    var score: BaselineReadouts.ReadinessScore? {
+        if case .score(let r, _) = self { return r }
+        return nil
+    }
+}
+
+extension BaselineReadouts.StepsReadout {
+    /// False when nothing recorded a step in the 31 days ending on the day (no strap counter, no phone
+    /// count): Home hides the Steps card rather than showing an empty sparkline for a source that does
+    /// not exist.
+    var hasRecordedSource: Bool {
+        steps != nil || observed30 > 0 || recent.contains { $0.value != nil }
+    }
 }
 
 struct TodaySnapshot {

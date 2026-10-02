@@ -6,23 +6,35 @@ import WhoopStore
 
 // MARK: - Readiness
 
-/// The first card of the day: the readiness tier as a flat pill, one sentence about the week, and the
-/// Progress chevron row once the HRV baseline has settled. Readiness is a pill and a sentence, never a
-/// ring. The tier is a seven-night reading, so its sentence speaks of the week and never contradicts the
-/// one-night delta under the HRV ring.
+/// The first card of the day: the Readiness SCORE (NOOP's 0–100 composite for that morning) as a number
+/// on a horizontal track (`ReadinessBar`), its tone, ONE drivers sentence from the readout, the accuracy
+/// badge and the Progress chevron row once the HRV baseline has settled. A number and a bar, never a
+/// ring. The week's HRV tier no longer lives here: it is the short phrase on the HRV ring tile
+/// (`TodayReadiness.weekPhrase`), so two readiness ideas never compete on one card.
 struct ReadinessCard: View {
-    let readiness: TodayReadiness
+    let readiness: TodayReadinessScore
     /// `ProgressSnapshot.hrvHeadline`, the sentence Progress prints for the persisted horizon; nil hides the row.
     let progressHeadline: String?
+    var isToday: Bool = true
 
     var body: some View {
-        BaselineCard(title: "Readiness") {
-            BaselinePill(text: pill, color: color)
-            if let line {
-                Text(line)
+        BaselineCard(title: "Readiness", accessory: accessory) {
+            switch readiness {
+            case .score(let r, let stamp):
+                ReadinessBar(score: r.score, tone: r.tone, label: r.tone.label, context: Self.context(r, wokeStamp: stamp))
+            case .calibrating(let n):
+                BaselinePill(text: "Readiness after \(BaselineReadouts.readinessSeedNights) nights · \(n) so far",
+                             color: BaselineTheme.textTertiary)
+            case .stale(let day):
+                BaselinePill(text: "Paused", color: BaselineTheme.textTertiary)
+                Text("No HRV since \(TodayFormat.dayLabel(day)). Readiness returns with the next synced night.")
                     .font(BaselineTheme.body)
                     .foregroundStyle(BaselineTheme.text)
                     .fixedSize(horizontal: false, vertical: true)
+            case .missing:
+                Text(isToday ? "This morning's score arrives with the next sync." : "No score for this morning.")
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
             }
             if let progressHeadline {
                 Divider().overlay(BaselineTheme.hairline)
@@ -32,31 +44,27 @@ struct ReadinessCard: View {
         }
     }
 
-    /// The calibrating pill names what its count unlocks (readiness, 14 nights), the same shape the ring
-    /// tiles use for their own, smaller count ("Baseline after 4 nights · n so far").
-    private var pill: String {
-        switch readiness {
-        case .calibrating(let n): return "Readiness after \(HRVReadiness.minNights) nights · \(n) so far"
-        case .stale: return "Paused"
-        case .tier(let tier): return tier.baselineLabel
-        }
+    /// The literature's tier for a composite score, only once there is a score to qualify.
+    private var accessory: AnyView? {
+        guard readiness.score != nil, let badge = AccuracyBadge(metric: "readiness") else { return nil }
+        return AnyView(badge)
     }
 
-    private var color: Color {
-        switch readiness {
-        case .calibrating, .stale: return BaselineTheme.textTertiary
-        case .tier(let tier): return tier.baselineColor
+    /// The ONE context line under the bar: the readout's drivers sentence ("Lifted by heart rate
+    /// variability (+6), held back by resting heart rate (−3).") when the night can be broken down,
+    /// else what the score was read from and how settled its baseline is. A carried score is dated
+    /// first ("Woke Mon 28 Sep · …"), the stamp every carried value on Home wears.
+    static func context(_ r: BaselineReadouts.ReadinessScore, wokeStamp: String? = nil) -> String {
+        let text: String
+        if let s = r.driversSentence {
+            text = s
+        } else if r.confidence == .building {
+            text = "From that night's HRV, resting HR and sleep · baseline still settling"
+        } else {
+            text = "From that night's HRV, resting HR and sleep"
         }
-    }
-
-    /// nil while calibrating: the pill already says when readiness arrives. A tier's sentence is
-    /// `ReadinessTier.baselineWeekSentence` (shared vocabulary).
-    private var line: String? {
-        switch readiness {
-        case .calibrating: return nil
-        case .stale(let day): return "No HRV since \(TodayFormat.dayLabel(day)). Readiness returns with the next synced night."
-        case .tier(let tier): return tier.baselineWeekSentence
-        }
+        guard let wokeStamp else { return text }
+        return "\(wokeStamp) · \(text)"
     }
 }
 
@@ -76,6 +84,9 @@ struct TodayRingTile: View {
     let reading: TodayMetricReading?
     /// The selected day's key: a reading dated earlier is a carried value.
     let dayKey: String
+    /// The week's HRV tier in short form (`TodayReadiness.weekPhrase`, HRV tile only), appended to the
+    /// one context line so the seven-night reading sits beside the one-night delta it qualifies.
+    var weekLine: String? = nil
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -104,7 +115,12 @@ struct TodayRingTile: View {
         return r.baseline
     }
 
-    private var contextText: String { Self.contextText(reading, unit: unit, dayKey: dayKey) }
+    /// The widget's exact sentence, plus the week phrase when the tile carries one (the widget never does).
+    private var contextText: String {
+        let text = Self.contextText(reading, unit: unit, dayKey: dayKey)
+        guard let weekLine, let r = reading, !r.isStale else { return text }
+        return "\(text) · \(weekLine)"
+    }
 
     /// The ONE context sentence under a ring. Static so the widget publisher
     /// (`BaselineWidgetPublisher.contextText`) prints exactly these words and can never drift.
@@ -134,6 +150,75 @@ struct TodayRingTile: View {
         case .above: return higherIsBetter ? BaselineTheme.good : BaselineTheme.watch
         case .below: return higherIsBetter ? BaselineTheme.watch : BaselineTheme.good
         }
+    }
+}
+
+// MARK: - Steps
+
+/// The day's steps under the rings: `StepsTile` (numeral, "avg 6,000", seven bars, ONE line against the
+/// 7-day average) with the literature's badge at the top right. The tile prints its own "Steps" header,
+/// so the card carries no title. The screen omits the card when no source ever recorded a step
+/// (`StepsReadout.hasRecordedSource`).
+struct StepsCard: View {
+    let readout: BaselineReadouts.StepsReadout
+
+    var body: some View {
+        BaselineCard {
+            HStack(alignment: .top, spacing: 12) {
+                StepsTile(readout: readout, window: .week)
+                AccuracyBadge(metric: "steps")
+            }
+        }
+    }
+}
+
+// MARK: - Stress
+
+/// The selected day's Stress curve (NOOP's hourly 0–3 estimate from daytime heart rate, `StressCurveChart`)
+/// with the day's average and peak as two cells and ONE caption naming what the number is (an estimate
+/// from heart rate) and the hours left out while moving. "No daytime data yet" while today has nothing
+/// scored; a past day without data shows no card (`TodayScreen.content`). Low accuracy, and the badge
+/// says so: the curve tracks heart rate, not how the day felt.
+struct StressCard: View {
+    let stress: BaselineReadouts.StressDayReadout?
+    var isToday: Bool = true
+
+    var body: some View {
+        BaselineCard(title: "Stress", accessory: AccuracyBadge(metric: "stress").map { AnyView($0) }) {
+            if let s = stress {
+                BaselineStatRow {
+                    StatCell(label: "Average", value: Self.level(s.dayMean),
+                             unit: BaselineReadouts.stressLevelText(s.dayMean), color: BaselineTheme.stress)
+                    if let p = s.peak {
+                        StatCell(label: "Peak", value: Self.level(p.level),
+                                 unit: "at " + p.date.formatted(date: .omitted, time: .shortened), color: BaselineTheme.stress)
+                    }
+                }
+                StressCurveChart(points: s.points, accessibilitySummary: BaselineReadouts.stressSummary(s))
+                Text(Self.caption(s))
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(isToday ? "No daytime data yet. The curve fills in as the strap records the day."
+                             : "No daytime data for this day.")
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// One decimal on the 0–3 scale, the chart's own precision.
+    static func level(_ v: Double) -> String { String(format: "%.1f", v) }
+
+    /// "Estimated from heart rate · 2 hours left out while you were moving".
+    static func caption(_ s: BaselineReadouts.StressDayReadout) -> String {
+        var line = "Estimated from heart rate"
+        if s.movingHours > 0 {
+            line += " · \(s.movingHours) hour\(s.movingHours == 1 ? "" : "s") left out while you were moving"
+        }
+        return line
     }
 }
 
@@ -300,6 +385,9 @@ struct TodayStageBar: View {
 struct EffortCard: View {
     let effort: Double?
     let workouts: [TodayWorkout]
+    /// The day's whole-day calorie estimate against the 30 days before it (`BaselineReadouts.calories`);
+    /// the cell and its line appear only when the day has a figure.
+    var calories: BaselineReadouts.CaloriesReadout? = nil
     var isToday: Bool = true
 
     /// Rows shown inline before the list takes over.
@@ -307,12 +395,27 @@ struct EffortCard: View {
 
     var body: some View {
         BaselineCard(title: "Effort") {
-            HStack(alignment: .top, spacing: 12) {
+            BaselineStatRow {
                 StatCell(label: isToday ? "Effort so far" : "Effort", value: BaselineReadouts.effortText(effort),
                          unit: BaselineReadouts.effortUnit, color: BaselineTheme.effort)
                 // The sentence below already says when there are none; a "Workouts 0" cell would say it twice.
                 if !workouts.isEmpty {
                     StatCell(label: "Workouts", value: "\(workouts.count)")
+                }
+                if let kcal = calories?.kcal {
+                    // "~2,140 kcal": rounded to ten and marked approximate, because the figure is Low accuracy.
+                    StatCell(label: "Calories", value: "~" + BaselineReadouts.caloriesText(kcal), unit: "kcal",
+                             color: BaselineTheme.effort)
+                }
+            }
+            if let c = calories, c.kcal != nil {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(Self.caloriesLine(c))
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    AccuracyBadge(metric: "calories")
                 }
             }
             if workouts.isEmpty {
@@ -339,6 +442,16 @@ struct EffortCard: View {
             Divider().overlay(BaselineTheme.hairline)
             BaselineChevronRow(text: "All workouts", accessibilityHint: "Shows every recorded workout") { WorkoutsScreen() }
         }
+    }
+
+    /// ONE line for the calorie cell: the delta against the 30-day average, or when that average arrives,
+    /// always naming the figure an estimate.
+    static func caloriesLine(_ c: BaselineReadouts.CaloriesReadout) -> String {
+        if let delta = BaselineReadouts.caloriesDeltaText(kcal: c.kcal, average: c.average30) {
+            return "Estimated from heart rate · \(delta)"
+        }
+        let n = max(1, BaselineReadouts.averageMinDays - c.observed30)
+        return "Estimated from heart rate · 30\u{2011}day average after \(n) more day\(n == 1 ? "" : "s")"
     }
 
     private var emptyLine: String {

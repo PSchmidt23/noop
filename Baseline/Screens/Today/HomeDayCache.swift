@@ -28,6 +28,14 @@ final class HomeDayCache {
         var signalsJournalSeq: Int
         let workouts: [TodayWorkout]
         let progressHeadline: String?
+        /// The Readiness score card's state (`TodayReadinessScore.build`); `.missing` until a load sets it.
+        var readiness: TodayReadinessScore = .missing
+        /// Steps against the week (nil = not read, the card is hidden), the day's calorie estimate, and
+        /// the day's Stress curve (nil = nothing scored). Today's stress is re-read on every hit through
+        /// NOOP's fingerprint memo (`updateStress`), since intraday heart rate lands without a `refreshSeq`.
+        var steps: BaselineReadouts.StepsReadout? = nil
+        var calories: BaselineReadouts.CaloriesReadout? = nil
+        var stress: BaselineReadouts.StressDayReadout? = nil
     }
 
     /// The nights every day's sleep card and signals are read from, one list per (seq, source).
@@ -76,6 +84,13 @@ final class HomeDayCache {
         guard var e = entries[key] else { return }
         e.signals = signals
         e.signalsJournalSeq = journalSeq
+        entries[key] = e
+    }
+
+    /// Replaces the Stress curve of a stored day (today's daytime heart rate grows between store refreshes).
+    func updateStress(_ stress: BaselineReadouts.StressDayReadout?, for key: Key) {
+        guard var e = entries[key] else { return }
+        e.stress = stress
         entries[key] = e
     }
 
