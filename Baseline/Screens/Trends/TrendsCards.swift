@@ -4,6 +4,78 @@ import StrandAnalytics
 
 extension TrendsRange: BaselineRangeOption {}
 
+// MARK: - Card header → metric detail
+
+/// A Trends card's title as the way into its metric: the title text (the same `label` / `textSecondary`
+/// as `BaselineCard(title:)`) with a trailing chevron, the whole row a `NavigationLink` to
+/// `MetricDetailScreen(spec: TrendsCardTitle.spec(key))`, the spec Home's cards open (`TodayDetail.spec`,
+/// the one route table: the night's stages and heart rate for Sleep, the day's workouts for Effort, the
+/// week's bars for Intensity minutes), on the detail range nearest the picker (`TrendsRange.detailRange`).
+/// The title stays a plain `Text` child of the link, never combined into it, so `staticTexts["HRV"]`
+/// still resolves for the UI tests.
+struct TrendsCardTitle: View {
+    let title: String
+    let key: MetricKey
+    let range: TrendsRange
+
+    /// The detail a title opens: Home's route table, so a metric's 1D view is the same page from Home,
+    /// the Sleep tab and Trends.
+    static func spec(_ key: MetricKey) -> MetricDetailSpec { TodayDetail.spec(key) }
+
+    /// The VoiceOver hint names the screen pushed, not the card: the "Effort & Readiness" title opens
+    /// the Effort detail, so its hint says "Shows Effort over …".
+    static func hint(_ key: MetricKey) -> String {
+        "Shows \(key.name) over a day, a week, four weeks or a year"
+    }
+
+    var body: some View {
+        NavigationLink {
+            MetricDetailScreen(spec: Self.spec(key), initialRange: range.detailRange)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(title).font(BaselineTheme.label).foregroundStyle(BaselineTheme.textSecondary)
+                Image(systemName: "chevron.right")
+                    .font(BaselineTheme.symbolSmall)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(Self.hint(key))
+    }
+}
+
+/// The header row of a Trends card: the tappable title and, trailing, an accessory (a badge or pill).
+/// The accessory trails the title while both fit on one line, otherwise it sits under the title
+/// (`ViewThatFits`, as the Sleep and Progress cards reflow), so at accessibility sizes a pill is never
+/// pushed past the card's trailing edge.
+struct TrendsCardHeader: View {
+    let title: String
+    let key: MetricKey
+    let range: TrendsRange
+    var accessory: AnyView? = nil
+
+    var body: some View {
+        if let accessory {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    TrendsCardTitle(title: title, key: key, range: range)
+                    Spacer(minLength: 8)
+                    accessory
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    TrendsCardTitle(title: title, key: key, range: range)
+                    accessory
+                        .minimumScaleFactor(0.8)
+                }
+            }
+        } else {
+            TrendsCardTitle(title: title, key: key, range: range)
+        }
+    }
+}
+
 /// HRV / Resting HR: baseline and average, the nightly line over its band. The range is in the picker
 /// above and "higher / lower is better" is the card's accessibility hint, so the header carries only
 /// the title and the trend pill; dragging the chart shows that night instead (date and value in the
@@ -11,6 +83,8 @@ extension TrendsRange: BaselineRangeOption {}
 /// One caption appears only while the band is provisional or still calibrating.
 struct TrendBandCard: View {
     let title: String
+    /// The detail the title opens (`.hrv` / `.rhr`).
+    let key: MetricKey
     /// How the metric reads mid-sentence ("HRV", "resting HR").
     let noun: String
     let unit: String
@@ -28,7 +102,7 @@ struct TrendBandCard: View {
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textTertiary)
             } else {
-                HStack(spacing: 12) {
+                BaselineStatRow {
                     StatCell(label: "Baseline", value: baselineText, unit: unit, color: color)
                     StatCell(label: "Average", value: averageText, unit: unit)
                 }
@@ -50,30 +124,14 @@ struct TrendBandCard: View {
         .onChange(of: metric.points.map(\.id)) { _, _ in selected = nil }
     }
 
-    /// The card's own header: the pill trails the title while both fit on one line, otherwise it sits
-    /// under the title (`ViewThatFits`, as the Sleep and Progress cards reflow), so at accessibility
-    /// sizes "Down 4 bpm · 30 days" is never pushed past the card's trailing edge. Only the pill's own
-    /// width can then exceed the card, and it scales down before it truncates. The scrub subtitle is a
-    /// full-width line below the row rather than part of it, so its length never flips the row between
-    /// the two layouts mid-drag.
+    /// The card's own header: the tappable title with the pill trailing it (`TrendsCardHeader` moves
+    /// the pill under the title when the row is too narrow; only the pill's own width can then exceed
+    /// the card, and it scales down before it truncates). The scrub subtitle is a full-width line below
+    /// the row rather than part of it, so its length never flips the row between the two layouts
+    /// mid-drag.
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
-            if let accessory {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .firstTextBaseline) {
-                        titleText
-                        Spacer(minLength: 8)
-                        accessory
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        titleText
-                        accessory
-                            .minimumScaleFactor(0.8)
-                    }
-                }
-            } else {
-                titleText
-            }
+            TrendsCardHeader(title: title, key: key, range: range, accessory: accessory)
             if let subtitle {
                 Text(subtitle)
                     .font(BaselineTheme.caption)
@@ -81,11 +139,6 @@ struct TrendBandCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-
-    /// The same title style `BaselineCard(title:)` draws.
-    private var titleText: some View {
-        Text(title).font(BaselineTheme.label).foregroundStyle(BaselineTheme.textSecondary)
     }
 
     private var baselineText: String {
@@ -173,6 +226,9 @@ struct TrendStat {
 /// draws an Effort-only card; on Trends that row lives in `TrendEffortReadinessCard`).
 struct TrendBarCard: View {
     let title: String
+    /// The detail the title opens (`.sleepDuration` / `.steps`).
+    let key: MetricKey
+    let range: TrendsRange
     /// Trailing caption in the header, for a host whose range is not already on screen; nil omits it.
     var caption: String? = nil
     /// A trailing header view (a pill or badge); wins over `caption` when both are given.
@@ -185,13 +241,15 @@ struct TrendBarCard: View {
     var showsAllWorkouts: Bool = false
 
     var body: some View {
-        BaselineCard(title: title, accessory: accessory ?? caption.map { AnyView(captionView($0)) }) {
+        BaselineCard {
+            TrendsCardHeader(title: title, key: key, range: range,
+                             accessory: accessory ?? caption.map { AnyView(captionView($0)) })
             if bars.isEmpty {
                 Text(emptyText)
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textTertiary)
             } else {
-                HStack(spacing: 12) {
+                BaselineStatRow {
                     ForEach(stats, id: \.label) { stat in
                         StatCell(label: stat.label, value: stat.value, unit: stat.unit)
                     }
@@ -240,13 +298,16 @@ struct TrendEffortReadinessCard: View {
     let peak: BaselineBarChart.Bar?
 
     var body: some View {
-        BaselineCard(title: "Effort & Readiness") {
+        BaselineCard {
+            // The title opens the Effort detail: the card's bars are effort; readiness has its own
+            // morning on Home.
+            TrendsCardHeader(title: "Effort & Readiness", key: .effort, range: range)
             if metric.points.isEmpty {
                 Text("No effort or readiness in the last \(range.days) days.")
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textTertiary)
             } else {
-                HStack(spacing: 12) {
+                BaselineStatRow {
                     StatCell(label: "Average effort", value: effortText, dot: BaselineTheme.effort)
                     StatCell(label: "Average readiness", value: readinessText, dot: BaselineTheme.accent)
                 }
@@ -295,6 +356,43 @@ struct TrendEffortReadinessCard: View {
                 + "the next morning, \(TrendsFormat.whole(m.afterOthers)) after the rest"
         }
         return s
+    }
+}
+
+/// Intensity minutes: one bar per week against the weekly goal (`TrendsIntensity`), two stats (the
+/// week in progress against the goal, and how many finished weeks reached it), the chart with its
+/// dashed goal rule and the badge Home's card and the detail carry (`MetricDetailSpec.standard`, so the
+/// tier is stated once). Never a ring. One caption only when the strap has recorded heart rate but no
+/// age or max heart rate exists to judge it: the ask, no bars. What the thresholds are and how a minute
+/// is credited is said once, on the detail.
+struct TrendIntensityCard: View {
+    let range: TrendsRange
+    let intensity: TrendsIntensity
+
+    var body: some View {
+        BaselineCard {
+            TrendsCardHeader(title: "Intensity minutes", key: .intensityMinutes, range: range,
+                             accessory: MetricDetailSpec.standard(.intensityMinutes).badge.map { AnyView($0) })
+            if intensity.needsAge {
+                Text(IntensityMinutes.Basis.needsAge.caption)
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                BaselineStatRow {
+                    // "of 150 min", the "Weeks at goal" cell's own wording: VoiceOver reads "112 of 150
+                    // min", never "112 slash 150".
+                    StatCell(label: "This week", value: "\(intensity.thisWeek?.credited ?? 0)",
+                             unit: "of \(intensity.goal) min", color: BaselineTheme.effort)
+                    if intensity.completedWeeks > 0 {
+                        StatCell(label: "Weeks at goal", value: "\(intensity.weeksAtGoal)",
+                                 unit: "of \(intensity.completedWeeks)")
+                    }
+                }
+                TrendsWeekBarChart(weeks: intensity.weeks, goal: intensity.goal,
+                                   accessibilitySummary: intensity.chartSummary(range: range))
+            }
+        }
     }
 }
 #endif

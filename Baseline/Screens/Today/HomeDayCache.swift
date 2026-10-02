@@ -2,9 +2,9 @@
 import Foundation
 
 /// Home's per-day memo, so swiping back and forth between days never rebuilds a day's cards twice.
-/// Keyed by the selected day, the effort row's logical day, the store's `refreshSeq` and the data-source
-/// setting: a new `refreshSeq` (or a Settings → Data change) drops EVERY entry, since every day's
-/// baseline is folded from the same table. The night list (`SleepNightBuilder.nights`, one `await` per
+/// Keyed by the selected day, the effort row's logical day, the store's `refreshSeq`, the data-source
+/// setting, the Progress horizon and the Intensity goal and max heart rate: a new `refreshSeq` (or a
+/// Settings → Data change) drops EVERY entry, since every day's baseline is folded from the same table. The night list (`SleepNightBuilder.nights`, one `await` per
 /// load) is memoised once per (seq, source) as well, because it is the same for every day. Main-actor
 /// only (it is read and written from `TodayScreen.load`); pure otherwise, `HomeDayCacheTests`.
 @MainActor
@@ -17,6 +17,11 @@ final class HomeDayCache {
         let dataSource: String
         /// The Progress horizon the readiness chevron's sentence is written for.
         let horizon: Int
+        /// The weekly Intensity-minutes goal (`IntensityMinutes.goal()`) the card's track is drawn against.
+        var intensityGoal: Int = IntensityMinutes.goalDefault
+        /// The max heart rate the Intensity classifier scored with (0 = the profile is not usable yet),
+        /// so a new age or override re-reads the day.
+        var intensityHRmax: Int = 0
     }
 
     /// What one day's cards need, built once.
@@ -36,6 +41,11 @@ final class HomeDayCache {
         var steps: BaselineReadouts.StepsReadout? = nil
         var calories: BaselineReadouts.CaloriesReadout? = nil
         var stress: BaselineReadouts.StressDayReadout? = nil
+        /// The day's intraday heart-rate trace (nil = the strap banked none) and its Intensity minutes
+        /// with the week (nil = the day key did not parse). Both grow through today, so a hit on today
+        /// re-reads them beside the Stress curve (`updateIntraday`).
+        var heartRate: BaselineReadouts.IntradayHeartRate? = nil
+        var intensity: BaselineReadouts.IntensityReadout? = nil
     }
 
     /// The nights every day's sleep card and signals are read from, one list per (seq, source).
@@ -91,6 +101,16 @@ final class HomeDayCache {
     func updateStress(_ stress: BaselineReadouts.StressDayReadout?, for key: Key) {
         guard var e = entries[key] else { return }
         e.stress = stress
+        entries[key] = e
+    }
+
+    /// Replaces the heart-rate trace and the Intensity readout of a stored day (today's both grow as the
+    /// strap streams; nothing else on the entry changes).
+    func updateIntraday(heartRate: BaselineReadouts.IntradayHeartRate?, intensity: BaselineReadouts.IntensityReadout?,
+                        for key: Key) {
+        guard var e = entries[key] else { return }
+        e.heartRate = heartRate
+        e.intensity = intensity
         entries[key] = e
     }
 

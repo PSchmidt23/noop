@@ -64,6 +64,33 @@ support that story. Nothing clutters it.
   the `SleepWindow`), fitness (`fitness`: NOOP's `FitnessAgeEngine`, estimated VO2 max with the Uth fallback
   and fitness age, one estimate per calendar week) and the evidence tier per metric (`MetricAccuracy.all`,
   from `Baseline/Research/METRIC_ACCURACY.md`, drawn as `AccuracyBadge`).
+- Metric details (`Baseline/Components/MetricDetail.swift`, ranges in `BaselineReadoutsRanges.swift`):
+  every Home card and every Trends card title opens `MetricDetailScreen(spec:day:initialRange:)` for one
+  `MetricKey` over 1D / 7D / 4W / 1Y (`MetricRange`): a hero row (Latest / Average / Low / High; This day /
+  Day before on 1D), one context sentence with the change against the previous window of the same length,
+  the range chart (7D / 4W daily points, 1Y weekly means over ISO weeks keyed by the Monday with the
+  lows-to-highs envelope; HRV / Resting HR over the personal band) and "About this metric". Data comes
+  through `BaselineReadouts.metricSeries` over the same strap-first funnel. The route table is
+  `TodayDetail.spec(_:)` (Home and Trends push the same screen; Sleep's 1D page is `SleepDetail.durationSpec()`,
+  whose day view is `SleepNightDayView`). Sleep timing has its own `SleepTimingDetailScreen` (7D / 4W / 1Y).
+- Daytime heart rate (`BaselineReadoutsIntraday.swift`): `intradayHeartRate(repo, for:nights:mode:)` reads
+  NOOP's `repo.hrBuckets` (60 s, measured ∪ PPG-derived, strap only) over the local day with sleep and
+  workouts as spans: Home's Heart rate card and the 1D trace (`IntradayHRChart`). Sleep's
+  `SleepHeartRateCard(night:)` reads the same buckets over onset…wake.
+- Intensity minutes (`IntensityMinutes.swift`, research in `Baseline/Research/INTENSITY_MINUTES.md`): minutes
+  at or above 40 % of heart-rate reserve are moderate, 60 % vigorous (Karvonen against the Profile max HR and
+  a 7-night resting reference; a zone-based fallback, workouts-only credit from zone minutes when a day has
+  no heart rate), bouts of ≥ 3 minutes with a 1-minute gap tolerance (WHO 2020: no 10-minute rule),
+  credited = moderate + 2 × vigorous, summed Monday to Sunday against the weekly goal
+  (`baseline.intensityGoalMinutes`, 60–600 step 10, default 150). Nothing is scored until an age or a manual
+  max HR is entered (`IntensityMinutes.mayScore`, one gate in the data layer). Readout:
+  `BaselineReadouts.intensity(repo, profile:for:mode:)`.
+- Per-day intraday cache (`IntradayDayStore.swift`): each day's Intensity minutes, heart-rate low / mean /
+  high and Stress day mean are computed once and kept in `<Application Support>/Baseline/intraday-days.json`
+  (record `version` 2), each stamped with the witness it was computed from (the day's 60-second buckets),
+  the thresholds' signature and the store's identity. Days inside the last 14 are re-checked on each
+  `refreshSeq`, today on every ask, older days trusted; Settings › Data › "Recompute heart-rate days" drops
+  the file. Feeds the 7D / 4W / 1Y heart-rate and intensity series and Trends' Intensity card.
 - Journal: `repo.saveJournalAnswer`, `repo.journalEntries(days:)`, catalog in `JournalCatalogStore`.
   Effects: `EffectRanker.rank(behaviors:controls:outcomeByDay:outcome:)`.
 - Workouts: `repo.workoutRows(days:)`, zones via `WorkoutZones.percents`.
@@ -149,7 +176,12 @@ support that story. Nothing clutters it.
 | `baseline.sampleData.active` | Settings → About (`SettingsSampleData`), Home's `SampleDataPill`, `BaselineApp` scene-active, `MorningSummaryNotifier` | true while the synthetic 60-night sample (`BaselineSampleData`) is in the store; the read spine is re-pointed at it on every activation and the morning summary is suppressed |
 | `baseline.pendingTab` | `BaselineNotificationDelegate` | `"journal"` → Home with the journal sheet presented on the next root read, cleared once consumed |
 | `baseline.sleepWindow.bedMinutes`, `baseline.sleepWindow.wakeMinutes` | Settings → Sleep window (`SettingsSleepWindow`, through `BaselineReadouts.SleepWindow.save`) | the target bed and wake clock times as minutes after midnight (defaults 23:00 / 07:00, `SleepWindow.default`); read by the Sleep tab's timing card and the sleep-timing readouts |
-| `baseline.profileSet` | Settings → Profile (a date-of-birth or sex change, or "Use these"); `-baseline.profileSet YES` in the screenshot harness | the person has entered a date of birth and sex; until true the fitness estimate (`BaselineReadouts.fitness`, Progress › Fitness) passes nil age and sex and the card asks for them instead of using `ProfileStore`'s seeded 30 / male |
+| `baseline.intensityGoalMinutes` | Settings → Profile → Intensity goal (`SettingsIntensityGoalCard`, `IntensityMinutes.saveGoal`) | weekly Intensity-minutes goal in minutes, 60–600 step 10, default 150 (`IntensityMinutes.goal()` clamps); read by Home's Intensity card, its detail and Trends' Intensity card |
+| `baseline.demoHeartRate` | `-baseline.demoHeartRate YES` (DEBUG launch argument only) | a day with no stored heart rate gets a synthetic trace on screen (`BaselineReadouts.DemoHeartRate`); never written to the store |
+| `baseline.profileSet` | Settings → Profile (a date-of-birth or sex change, or "Use these"); `-baseline.profileSet YES` in the screenshot harness | the person has entered a date of birth and sex; until true the fitness estimate (`BaselineReadouts.fitness`, Progress › Fitness) passes nil age and sex and the card asks for them instead of using `ProfileStore`'s seeded 30 / male, and Intensity minutes are not scored (unless a manual max HR is set) |
+
+Not a key: the per-day intraday cache is a file, `<Application Support>/Baseline/intraday-days.json`
+(`IntradayDayStore`, see above).
 
 ## v1 scope (build this, nothing more)
 
@@ -163,28 +195,34 @@ bar. The journal is not a tab: it is a sheet from Home, and its patterns are a s
    Every card shows that day: readiness (the 0–100 score on a horizontal track with its Good / Fair / Low
    pill and one drivers sentence, chevron → Progress), signals on today only, HRV and Resting HR rings against
    the baseline band, that day's steps against the 7-day average ("Steps so far" on today), that night's
-   sleep, that day's Stress curve, that day's effort, calories and workouts ("All workouts" → the list), and
+   sleep, that day's heart rate (the day's trace, only when one exists), Intensity minutes (the day and the
+   week against the goal, one track, never a ring), that day's Stress curve, that day's effort with calories
+   and workouts ("All workouts" → the list); empty cards are left out rather than shown as placeholders.
+   Every card opens its metric detail (1D / 7D / 4W / 1Y) with a tap; there is
    a floating glass **Journal** button that opens `JournalSheet(day:)` for the selected day.
    The strap status pill stays small, in the bar beside the gear.
 3. **Trends**: a pinned glass segmented control over three sections. *Trends*: 7 / 30 / 90-day HRV and RHR
    lines with the baseline band, the Effort & Readiness card (effort bars under the readiness line on one
    0–100 axis, the two averages, one sentence comparing the mornings after the hardest days with the rest,
-   "All workouts" → the list), sleep-duration bars and Steps bars against the average; tap a point for the
-   day's numbers. *Progress*: the long-term baseline screen embedded (HRV / Resting HR / sleep timing and
+   "All workouts" → the list), sleep-duration bars and Steps bars against the average, and Intensity minutes
+   as weekly bars against the goal (shown once any day is scored); tap a point for the day's numbers, tap a
+   card title for the metric detail (7D → 7D, 30D → 4W, 90D → 1Y). *Progress*: the long-term baseline screen embedded (HRV / Resting HR / sleep timing and
    duration / Fitness — estimated VO2 max and fitness age week by week, with its ±5 band — over months,
    horizon picker). *Habits*:
    `JournalPatternsView()` — "What moves your HRV / Resting HR" ranked effects with sample size and confidence,
    and the alcohol / caffeine dose rows.
 4. **Sleep**: last night's ring against the 30-night average, the Sleep timing card (noon-to-noon strip of the
    last 14 nights against the target window, average bedtime and wake, regularity, "Tonight: aim for …",
-   "Set window" → Settings), hypnogram and stages (badged Low accuracy), efficiency; list of nights, each
-   opening its detail.
+   "Set window" → Settings, "Bedtime and wake over time" → `SleepTimingDetailScreen`), hypnogram and stages
+   (badged Low accuracy), efficiency, "Sleep over time" → the sleep detail; list of nights, each opening its
+   detail (hero, stages, heart rate while asleep, night vitals).
 5. **Journal** (`JournalSheet(day:)`): that day's habit chips (catalog plus custom, yes / no / clear, numeric
    steps), "Add habit", Done.
 6. **Settings** (gear): Devices, Apple Health, Data (Import WHOOP CSV / Apple Health export, Compare sources,
    Export CSV, Data source), Notifications (morning summary, evening check-in), Profile (age, max HR, units;
-   Sleep window: target bedtime and wake time), About + licenses + disclaimer + "How accurate is this?"
-   (`AccuracyScreen`: every metric by evidence tier with its caveat and cited studies).
+   Sleep window: target bedtime and wake time; Intensity goal: the weekly minutes and the heart-rate basis), About + licenses + disclaimer + "How accurate is this?"
+   (`AccuracyScreen`: every metric by evidence tier with its caveat and cited studies; Intensity minutes and
+   daytime heart rate are rated from the detail specs, `AccuracyExtras`, with the second review's citations).
 
 ### Deferred
 AI coach, Apple Watch, Live Activities, lift log, hydration, caffeine, cycle tracking,
@@ -275,6 +313,11 @@ DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch
 - `--skip-onboarding` / `--reset-onboarding` — force `baseline.onboarded` true / false for that launch (the
   welcome gate hidden / shown), whatever an earlier run saved. `--welcome-step 0|1|2` opens the welcome
   flow on that page.
+- `-baseline.demoHeartRate YES` — a day the store has no heart rate for gets a synthetic 60-second trace
+  (`BaselineReadouts.DemoHeartRate`, read only by `intradayHeartRate`), so Home's Heart rate card and its 1D
+  detail render under `--demo-seed`, which seeds no heart-rate samples. Nothing is written to the store and
+  the per-day records (`IntradayDayStore`) never see it, so the 7D / 4W / 1Y heart-rate details stay empty
+  under the seed. Used by `ScreenshotTests/testHeartRateDetail`.
 - `defaults write com.patrickschmidt.baseline baseline.onboarded -bool true` (via `simctl spawn`) skips the welcome flow.
 
 ## Accessibility (what the app guarantees)
@@ -307,10 +350,19 @@ Trends' embedded sections (`progress` and `habits` via the pinned segments; the 
 segment's selected trait is the signal), the pushed screens (`workouts` and `workout-detail` via Home's "All
 workouts" link and the newest row), Settings' `devices` / `apple-health` / `import` / `compare` (the empty
 state under the demo seed) / `export`, `launch` and `welcome-0/1/2` (`--reset-onboarding --welcome-step n`).
-`testSettings` adds
+The metric details: `hrv-detail-7d/1d/4w/1y` (Home's HRV tile → `MetricDetailScreen`, the pinned range
+picker, the hero row and the range chart; each range opened afresh so it starts at the top),
+`heart-rate-detail-1d/7d/4w/1y` (Home on yesterday → the Heart rate card; launched with
+`-baseline.demoHeartRate YES` because the demo seed banks no heart rate, so 1D shows the synthetic trace and
+7D / 4W / 1Y the empty state), `intensity-card` + `intensity-detail-1d/7d` (Home stepped back to the newest
+day showing the Intensity minutes card; under the seed those minutes are credited from the seeded
+workouts' zone minutes, "from workouts only") and `sleep-timing` (Sleep's "Bedtime and wake over time" row →
+`SleepTimingDetailScreen`). `testSettings` adds
 `-baseline.eveningCheckIn.enabled YES` to the launch arguments (UserDefaults' argument domain, read by
 `@AppStorage`) so the Notifications card shows the evening toggle on with its time row, without the tap
-that would raise the notification-permission alert over the capture. Each test waits for the screen's first card, captures the top, then scrolls until
+that would raise the notification-permission alert over the capture, then pushes Settings afresh and
+writes Profile's Intensity goal card on its own frames (`settings-intensity-goal-0/1`, scrolled until its
+title sits in the upper half), which the twelve-step pass can stop short of at accessibility sizes. Each test waits for the screen's first card, captures the top, then scrolls until
 the content stops moving (at most 12 steps), capturing after each.
 A scroll step is a held drag in the 20pt left gutter (about 45% of the screen, no fling): a centre swipe
 would land on a chart (Trends scrubs instead of scrolling) and decelerate by an unpredictable distance.

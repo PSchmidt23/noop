@@ -24,6 +24,9 @@ enum BaselineChartStyle {
     static let lineWidth: CGFloat = 2.2
     /// Bars: metric colour at this opacity.
     static let barOpacity = 0.90
+    /// A muted bar beside full ones: earlier days on the Steps tile, nights outside the target window,
+    /// the week still in progress on a weekly chart.
+    static let mutedBarOpacity = 0.45
     static let barRadius: CGFloat = 4
 
     /// Trailing value ticks with a faint grid (`hairline` @ 0.75), labels in `textTertiary` / `caption`.

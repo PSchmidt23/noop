@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The Sleep tab's timing card, directly under the hero: the last 14 nights as a strip against the target
 /// window, the 30-night average bedtime and wake, the regularity index with a one-word label, tonight's
-/// bedtime to aim for, and the way to the window in Settings. Everything comes from ONE readout
+/// bedtime to aim for, the way to the bedtime / wake detail (`SleepTimingDetailScreen`, 7D / 4W / 1Y
+/// ending on this night) and the way to the window in Settings. Everything comes from ONE readout
 /// (`BaselineReadouts.sleepTiming(for:nights:window:)`, over the funnel's nights), so the strip, the
 /// cells and the aim can never disagree. `AccuracyBadge(metric: "sleepTiming")` in the accessory slot.
 /// Each fact once: the window's clock times appear only in the "Set window" row, the count of nights
@@ -24,6 +25,10 @@ struct SleepTimingCard: View {
             }
             Rectangle().fill(BaselineTheme.hairline).frame(height: 1)
             tonight
+            BaselineChevronRow(text: "Bedtime and wake over time",
+                               accessibilityHint: "Opens bedtime and wake over 7 days, 4 weeks and a year") {
+                SleepTimingDetailScreen(day: timing.day)
+            }
             BaselineChevronRow(text: "Set window \u{00B7} \(windowText)",
                                accessibilityHint: "Opens Settings, where the target window is set") { SettingsScreen() }
         }

@@ -165,7 +165,7 @@ struct StepsTile: View {
                 }()
                 Capsule()
                     .fill(b.value == nil ? BaselineTheme.ringTrack
-                          : (b.id == bars.last?.id ? BaselineTheme.steps : BaselineTheme.steps.opacity(0.45)))
+                          : (b.id == bars.last?.id ? BaselineTheme.steps : BaselineTheme.steps.opacity(BaselineChartStyle.mutedBarOpacity)))
                     .frame(width: 10, height: h)
                     .animation(reduceMotion ? nil : .snappy(duration: 0.5), value: h)
             }

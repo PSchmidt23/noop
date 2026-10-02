@@ -17,6 +17,17 @@ enum TrendsRange: Int, CaseIterable, Identifiable {
     var trendWindow: Int { self == .week ? 3 : 7 }
 
     static func resolve(_ raw: Int) -> TrendsRange { TrendsRange(rawValue: raw) ?? .month }
+
+    /// The detail range a card header opens on (`MetricDetailScreen`), the detail's window nearest the
+    /// picker's: 7D → 7D, 30D → 4W (daily points over 28 days), 90D → 1Y (the detail has no quarter;
+    /// the year keeps the weekly points a quarter view is after).
+    var detailRange: MetricRange {
+        switch self {
+        case .week: return .week
+        case .month: return .fourWeeks
+        case .quarter: return .year
+        }
+    }
 }
 
 /// Cached "yyyy-MM-dd" parsers. `local` places a night on the phone's calendar day (chart x-axis);
@@ -335,6 +346,122 @@ struct TrendsSeries {
         guard w >= 2 else { return nil }
         guard let first = mean(Array(values.prefix(w))), let last = mean(Array(values.suffix(w))) else { return nil }
         return last - first
+    }
+}
+
+// MARK: - Intensity minutes
+
+/// Intensity minutes on the Trends tab: one bar per ISO week (Monday → Sunday, local, the same seven
+/// days `IntensityMinutes.weekDays` sums and the detail's 1Y points use) against the weekly goal. The
+/// first bar is the week the range's first day falls in, drawn WHOLE (its days before the range are
+/// counted too, so a bar is always a week against a weekly goal, never a tail of one); the last is the
+/// week of today, still in progress. Pure: per-day facts in (`IntradayDayStore`'s records, lifted to
+/// `Day`), weeks out.
+struct TrendsIntensity: Equatable {
+    /// One day's facts off `IntradayDayRecord`: credited minutes (moderate + 2·vigorous), minutes of
+    /// the day with a scored heart rate and the basis the day was scored under.
+    struct Day: Equatable {
+        let day: String
+        let credited: Int
+        let scoredMinutes: Int
+        let basis: IntensityMinutes.Basis
+
+        init(day: String, credited: Int, scoredMinutes: Int, basis: IntensityMinutes.Basis) {
+            self.day = day; self.credited = credited; self.scoredMinutes = scoredMinutes; self.basis = basis
+        }
+
+        init(_ r: IntradayDayRecord) {
+            self.init(day: r.day, credited: r.basisIsScored ? r.credited : 0, scoredMinutes: r.scoredMinutes, basis: r.basis)
+        }
+
+        /// The strap recorded daytime heart rate, or imported workouts earned minutes: the same predicate
+        /// the detail's range series reads (`IntradayDayRecord.isRecorded` / `recordedIntensity`), so the
+        /// two never count a different set of days.
+        var recorded: Bool { IntradayDayRecord.isRecorded(scoredMinutes: scoredMinutes, credited: credited) }
+    }
+
+    struct Week: Identifiable, Equatable {
+        /// The Monday's day key.
+        let id: String
+        /// Local midnight of the Monday.
+        let date: Date
+        /// Credited minutes over the week's days so far.
+        let credited: Int
+        /// Days of the week with a scored heart rate (or workout credit).
+        let recordedDays: Int
+        /// The week has not reached its Sunday yet.
+        let inProgress: Bool
+    }
+
+    let weeks: [Week]
+    let goal: Int
+    /// The week today falls in (the last of `weeks`).
+    let thisWeek: Week?
+    /// Weeks that have ended, and how many of them reached the goal. The week in progress is judged by
+    /// nobody until its Sunday.
+    let completedWeeks: Int
+    let weeksAtGoal: Int
+    /// The newest recorded day's basis: `.needsAge` means the strap recorded heart rate but no age or
+    /// max heart rate exists to judge it, so the card asks instead of drawing zero bars.
+    let basis: IntensityMinutes.Basis?
+    /// False when no day in the weeks drawn recorded anything: the screen then leaves the card out.
+    let hasAny: Bool
+
+    var needsAge: Bool { basis == .needsAge }
+
+    /// "112 / 150" for the week in progress.
+    var thisWeekText: String { "\(thisWeek?.credited ?? 0) / \(goal)" }
+
+    /// The first day key the weeks need facts from: the Monday of the week `startKey` falls in.
+    static func lookbackKey(startKey: String, calendar: Calendar = .current) -> String {
+        IntensityMinutes.weekStart(of: startKey, calendar: calendar)
+    }
+
+    /// `days` are the facts for any day from `lookbackKey(startKey:)` to `todayKey` (missing days are
+    /// unrecorded); `goal` is `IntensityMinutes.goal()`.
+    static func build(days: [Day], startKey: String, todayKey: String, goal: Int,
+                      calendar: Calendar = .current) -> TrendsIntensity {
+        let firstMonday = lookbackKey(startKey: startKey, calendar: calendar)
+        let lastMonday = IntensityMinutes.weekStart(of: todayKey, calendar: calendar)
+        var byDay: [String: Day] = [:]
+        for d in days where d.day >= firstMonday && d.day <= todayKey { byDay[d.day] = d }
+
+        var weeks: [Week] = []
+        var monday = firstMonday
+        while monday <= lastMonday, let date = BaselineReadouts.localMidnight(of: monday) {
+            // Negative carryDays adds days: the week's Sunday and the Monday after it.
+            let sunday = Baselines.cutoffKey(todayKey: monday, carryDays: -6)
+            var credited = 0
+            var recorded = 0
+            for key in BaselineReadouts.dayKeys(from: monday, to: min(sunday, todayKey)) {
+                guard let d = byDay[key] else { continue }
+                credited += d.credited
+                if d.recorded { recorded += 1 }
+            }
+            weeks.append(Week(id: monday, date: date, credited: credited, recordedDays: recorded,
+                              inProgress: sunday > todayKey))
+            monday = Baselines.cutoffKey(todayKey: monday, carryDays: -7)
+        }
+
+        let completed = weeks.filter { !$0.inProgress }
+        let newest = byDay.values.filter(\.recorded).max { $0.day < $1.day }
+        return TrendsIntensity(weeks: weeks, goal: goal, thisWeek: weeks.last,
+                               completedWeeks: completed.count,
+                               weeksAtGoal: completed.filter { $0.credited >= goal }.count,
+                               basis: newest?.basis, hasAny: newest != nil)
+    }
+
+    /// What VoiceOver reads for the chart: "Intensity minutes, last 30 days: 5 weeks, 3 of 4 full weeks
+    /// at the 150-minute goal; this week 112 of 150."
+    func chartSummary(range: TrendsRange) -> String {
+        var s = "Intensity minutes, last \(range.days) days: \(weeks.count) week\(weeks.count == 1 ? "" : "s")"
+        if completedWeeks > 0 {
+            s += ", \(weeksAtGoal) of \(completedWeeks) full week\(completedWeeks == 1 ? "" : "s") at the \(goal)-minute goal"
+        }
+        if let w = thisWeek, w.inProgress {
+            s += "; this week \(w.credited) of \(goal)"
+        }
+        return s + "."
     }
 }
 #endif

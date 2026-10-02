@@ -99,7 +99,7 @@ struct TimingStripChart: View {
                         let x0 = span.lowerBound / 1440 * w
                         let x1 = span.upperBound / 1440 * w
                         Capsule()
-                            .fill(BaselineTheme.sleep.opacity(inWindow(n) ? BaselineChartStyle.barOpacity : 0.45))
+                            .fill(BaselineTheme.sleep.opacity(inWindow(n) ? BaselineChartStyle.barOpacity : BaselineChartStyle.mutedBarOpacity))
                             .frame(width: max(Self.rowHeight, x1 - x0), height: Self.rowHeight)
                             .offset(x: x0, y: CGFloat(i) * Self.rowPitch)
                     }

@@ -17,6 +17,20 @@ import StrandAnalytics
 // for everyone, and a mixed history changes formula at the import boundary (imported days carry the
 // vendor's own score verbatim; strap days NOOP's). The literature table rates composite scores Low
 // (no outcome validation). So Progress keeps Readiness where it is honest: one morning at a time, on Home.
+//
+// Also not drawn, on purpose: a "Heart rate" baseline card (the daily minimum heart rate over months).
+// The honest version of that number already exists on this screen: the Resting HR card, NOOP's
+// overnight resting HR folded through the same winsorized EWMA, with a trust gate and a noise floor.
+// A daily minimum off the intraday stream (`IntradayDayRecord.bpmMin`, the lowest SAMPLE in the lowest
+// 60-second bucket of the day) is the most artefact-prone statistic the strap yields: one low-confidence
+// PPG second, a strap loosened on the charger or a bucket straddling the night's end reads lower than
+// any night, and an EWMA of minima would track those artefacts, not the heart. It would also restate
+// the resting HR trajectory (the two agree whenever the day's low is overnight, which is nearly every
+// day), so the screen would say one fact twice, and it exists only for strap days that a screen has
+// already asked `IntradayDayStore` to classify (imports carry no intraday heart rate), so a 180-day
+// horizon would mean classifying 180 days of samples on first open to draw a line the Resting HR card
+// already draws. The day's low, mean and high stay where they are honest: the Heart rate detail
+// (`MetricDetailSpec.standard(.heartRate)`), per day and over 7D / 4W / 1Y, with its Medium badge.
 
 // MARK: - Horizon
 

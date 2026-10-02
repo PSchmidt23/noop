@@ -4,21 +4,27 @@ import StrandDesign
 import StrandAnalytics
 import WhoopStore
 
+// Every card on Home opens its metric's detail (`TodayDetailCard`: a chevron in the header, the whole
+// card tappable, `TodayDetail.hint` as the VoiceOver hint). A card names the key it opens through
+// `onOpen`; the screen pushes the detail through its one `navigationDestination(item:)`.
+
 // MARK: - Readiness
 
 /// The first card of the day: the Readiness SCORE (NOOP's 0–100 composite for that morning) as a number
 /// on a horizontal track (`ReadinessBar`), its tone, ONE drivers sentence from the readout, the accuracy
 /// badge and the Progress chevron row once the HRV baseline has settled. A number and a bar, never a
 /// ring. The week's HRV tier no longer lives here: it is the short phrase on the HRV ring tile
-/// (`TodayReadiness.weekPhrase`), so two readiness ideas never compete on one card.
+/// (`TodayReadiness.weekPhrase`), so two readiness ideas never compete on one card. The card opens the
+/// Readiness detail; the Progress row keeps its own destination.
 struct ReadinessCard: View {
     let readiness: TodayReadinessScore
     /// `ProgressSnapshot.hrvHeadline`, the sentence Progress prints for the persisted horizon; nil hides the row.
     let progressHeadline: String?
     var isToday: Bool = true
+    var onOpen: () -> Void = {}
 
     var body: some View {
-        BaselineCard(title: "Readiness", accessory: accessory) {
+        TodayDetailCard(title: "Readiness", accessory: accessory, hint: TodayDetail.hint(.readiness), onOpen: onOpen) {
             switch readiness {
             case .score(let r, let stamp):
                 ReadinessBar(score: r.score, tone: r.tone, label: r.tone.label, context: Self.context(r, wokeStamp: stamp))
@@ -89,6 +95,7 @@ struct ReadinessCard: View {
 /// and ONE context sentence. A value carried from an earlier morning wears its date ("Woke Mon 28 Sep ·
 /// …"); past `Baselines.vitalCarryDays` the numeral is "–", the ring is a bare track and the sentence
 /// names the last night instead. Nothing here computes a baseline: `reading.state` is the funnel's.
+/// The tile opens the metric's detail (the chevron sits in its top corner: the ring draws the label).
 struct TodayRingTile: View {
     let title: String
     let unit: String
@@ -101,10 +108,13 @@ struct TodayRingTile: View {
     /// The week's HRV tier in short form (`TodayReadiness.weekPhrase`, HRV tile only), appended to the
     /// one context line so the seven-night reading sits beside the one-night delta it qualifies.
     var weekLine: String? = nil
+    /// The VoiceOver hint of the tile's button ("Opens HRV details").
+    var hint: String = ""
+    var onOpen: () -> Void = {}
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        BaselineCard(padding: 16) {
+        TodayDetailCard(hint: hint, padding: 16, onOpen: onOpen) {
             // The tiles stack at accessibility sizes (`TodayScreen.rings`), so the ring can take the
             // width the scaled numeral needs.
             MetricRing(value: reading?.value, domain: domain, color: color, label: title, unit: unit,
@@ -167,6 +177,152 @@ struct TodayRingTile: View {
     }
 }
 
+// MARK: - Heart rate
+
+/// The day's continuous heart rate under the rings: the latest reading (the last one on a past day),
+/// the day's low and high as three cells, the intraday trace as a compact sparkline
+/// (`IntradayHRChart` without its sleep and workout shading, which the detail draws) and ONE caption
+/// carrying the average and how much of the day it covers. Today's latest reading wears its clock time
+/// ("Latest · 2:10 PM"), so a strap that has been off the wrist since the afternoon is never read as
+/// current. Opens the Heart rate detail on its 1D view. A day without a trace (today before anything is
+/// banked included) shows no card (`TodayScreen.content`): the overnight trace fills it from midnight.
+struct HeartRateCard: View {
+    let trace: BaselineReadouts.IntradayHeartRate
+    var isToday: Bool = true
+    var onOpen: () -> Void = {}
+
+    /// The sparkline's height; the detail draws the full 180pt chart.
+    static let compactHeight: CGFloat = 72
+    /// At most this many points on the sparkline.
+    static let compactPoints = 360
+
+    var body: some View {
+        TodayDetailCard(title: "Heart rate", accessory: MetricDetailSpec.standard(.heartRate).badge.map { AnyView($0) },
+                        hint: TodayDetail.hint(.heartRate), onOpen: onOpen) {
+            BaselineStatRow {
+                StatCell(label: Self.latestLabel(trace, isToday: isToday), value: Self.bpm(trace.points.last?.bpm ?? trace.avgBpm),
+                         unit: "bpm", color: BaselineTheme.rhr)
+                StatCell(label: "Low", value: Self.bpm(trace.minBpm), unit: "bpm")
+                StatCell(label: "High", value: Self.bpm(trace.maxBpm), unit: "bpm")
+            }
+            IntradayHRChart(trace: Self.compact(trace), color: BaselineTheme.rhr, height: Self.compactHeight,
+                            accessibilitySummary: BaselineReadouts.intradaySummary(trace))
+            Text(Self.caption(trace, isToday: isToday))
+                .font(BaselineTheme.caption)
+                .foregroundStyle(BaselineTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    static func bpm(_ v: Double) -> String { "\(Int(v.rounded()))" }
+
+    /// The first cell's label: "Latest · 2:10 PM" on today (the newest one-minute bucket's clock time,
+    /// which can be hours old while the strap charges), "Last" on a past day, whose last reading is the
+    /// end of that day.
+    static func latestLabel(_ t: BaselineReadouts.IntradayHeartRate, isToday: Bool) -> String {
+        guard isToday else { return "Last" }
+        guard let last = t.points.last else { return "Latest" }
+        return "Latest · " + last.date.formatted(date: .omitted, time: .shortened)
+    }
+
+    /// ONE line: the average, and the day's coverage when the strap recorded under four hours
+    /// ("Average 71 bpm over 3h 10m of heart rate so far" / "Average 71 bpm through the day").
+    static func caption(_ t: BaselineReadouts.IntradayHeartRate, isToday: Bool) -> String {
+        let avg = "Average \(bpm(t.avgBpm)) bpm"
+        guard t.partial else { return "\(avg) through the day" }
+        let covered = BaselineReadouts.durationText(minutes: Double(t.coveredMinutes))
+        return "\(avg) over \(covered) of heart rate" + (isToday ? " so far" : "")
+    }
+
+    /// The sparkline's trace: the same day window and extremes, the points thinned to `compactPoints`
+    /// (consecutive runs averaged) and the sleep / workout spans dropped, so the small chart is one line.
+    static func compact(_ t: BaselineReadouts.IntradayHeartRate, maxPoints: Int = compactPoints) -> BaselineReadouts.IntradayHeartRate {
+        var points = t.points
+        if points.count > maxPoints, maxPoints > 0 {
+            let group = Int((Double(points.count) / Double(maxPoints)).rounded(.up))
+            var thinned: [BaselineReadouts.IntradayHeartRate.Point] = []
+            thinned.reserveCapacity(points.count / group + 1)
+            var i = 0
+            while i < points.count {
+                let slice = points[i..<min(i + group, points.count)]
+                let first = slice.first!
+                thinned.append(.init(id: first.id, date: first.date,
+                                     bpm: slice.map(\.bpm).reduce(0, +) / Double(slice.count),
+                                     minBpm: slice.map(\.minBpm).min() ?? first.minBpm,
+                                     maxBpm: slice.map(\.maxBpm).max() ?? first.maxBpm,
+                                     conf: slice.map(\.conf).min() ?? first.conf))
+                i += group
+            }
+            points = thinned
+        }
+        return .init(day: t.day, dayStart: t.dayStart, dayEnd: t.dayEnd, points: points, sleep: [], workouts: [],
+                     minBpm: t.minBpm, maxBpm: t.maxBpm, avgBpm: t.avgBpm, coveredMinutes: t.coveredMinutes)
+    }
+}
+
+// MARK: - Intensity minutes
+
+/// The day's Intensity minutes under Steps: the credited minutes as the hero ("23 min" · "today"), ONE
+/// horizontal track for the week against the goal ("112 / 150 this week", never a ring) and ONE caption
+/// with the day's split or why there is none. Opens the Intensity minutes detail on its week view.
+/// Without an age or a max heart rate nothing is scored: the card says so and its row opens Settings
+/// instead of a detail (there is no reading to detail).
+struct IntensityCard: View {
+    let readout: BaselineReadouts.IntensityReadout?
+    var isToday: Bool = true
+    var onOpen: () -> Void = {}
+
+    var body: some View {
+        if let r = readout, r.basis != .needsAge {
+            TodayDetailCard(title: "Intensity minutes", accessory: MetricDetailSpec.standard(.intensityMinutes).badge.map { AnyView($0) },
+                            hint: TodayDetail.hint(.intensityMinutes), onOpen: onOpen) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(r.creditedToday) min")
+                        .font(BaselineTheme.hero(36))
+                        .foregroundStyle(BaselineTheme.text)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                    Text(isToday ? "today" : "this day")
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textSecondary)
+                }
+                .accessibilityElement(children: .combine)
+                IntensityTrack(readout: r)
+                Text(Self.caption(r, isToday: isToday))
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            BaselineCard(title: "Intensity minutes") {
+                Text("Minutes at moderate and vigorous intensity count toward a weekly goal once your max heart rate is known.")
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Divider().overlay(BaselineTheme.hairline)
+                BaselineChevronRow(text: IntensityMinutes.Basis.needsAge.caption, systemImage: "person",
+                                   accessibilityHint: "Opens Settings") { SettingsScreen() }
+            }
+        }
+    }
+
+    /// ONE caption under the track: the day's split ("15 moderate · 8 vigorous (×2)"), "from workouts
+    /// only" for an imported day, "partial day" when the strap recorded under four hours of a past day,
+    /// or why nothing was credited.
+    static func caption(_ r: BaselineReadouts.IntensityReadout, isToday: Bool) -> String {
+        if r.creditedToday > 0 {
+            var line = r.splitText
+            if r.basis == .workoutsOnly { line += " · from workouts only" }
+            else if r.partialDay, !isToday { line += " · partial day" }
+            return line
+        }
+        if isToday { return "Builds through the day as the strap records moderate and vigorous minutes." }
+        if r.scoredMinutes == 0 { return "No heart rate recorded on this day." }
+        if r.partialDay { return "No minutes at moderate intensity or above · partial day" }
+        return "No minutes at moderate intensity or above."
+    }
+}
+
 // MARK: - Steps
 
 /// The day's steps under the rings: `StepsTile` (numeral, "avg 6,000", seven bars, ONE line against the
@@ -175,13 +331,15 @@ struct TodayRingTile: View {
 /// line with the hero numeral. On today the title reads "Steps so far" and the tile withholds its
 /// delta and judgement (`StepsTile.isToday`): the count is still accruing, as the Effort cell says with
 /// "Effort so far". The screen omits the card when no source ever recorded a step
-/// (`StepsReadout.hasRecordedSource`).
+/// (`StepsReadout.hasRecordedSource`). Opens the Steps detail.
 struct StepsCard: View {
     let readout: BaselineReadouts.StepsReadout
     var isToday: Bool = true
+    var onOpen: () -> Void = {}
 
     var body: some View {
-        BaselineCard(title: StepsTile.title(isToday: isToday), accessory: AccuracyBadge(metric: "steps").map { AnyView($0) }) {
+        TodayDetailCard(title: StepsTile.title(isToday: isToday), accessory: AccuracyBadge(metric: "steps").map { AnyView($0) },
+                        hint: TodayDetail.hint(.steps), onOpen: onOpen) {
             StepsTile(readout: readout, window: .week, showsHeader: false, isToday: isToday)
         }
     }
@@ -193,34 +351,18 @@ struct StepsCard: View {
 /// with the day's average and peak as two cells and ONE caption naming what the number is (an estimate
 /// from heart rate) and the hours left out while moving. "No daytime data yet" while today has nothing
 /// scored; a past day without data shows no card (`TodayScreen.content`). Low accuracy, and the badge
-/// says so: the curve tracks heart rate, not how the day felt.
+/// says so: the curve tracks heart rate, not how the day felt. Opens the Stress detail on its 1D view,
+/// which draws the same `StressCardBody` without the Average cell (its hero already prints the day's
+/// average, and carries the badge).
 struct StressCard: View {
     let stress: BaselineReadouts.StressDayReadout?
     var isToday: Bool = true
+    var onOpen: () -> Void = {}
 
     var body: some View {
-        BaselineCard(title: "Stress", accessory: AccuracyBadge(metric: "stress").map { AnyView($0) }) {
-            if let s = stress {
-                BaselineStatRow {
-                    StatCell(label: "Average", value: Self.level(s.dayMean),
-                             unit: BaselineReadouts.stressLevelText(s.dayMean), color: BaselineTheme.stress)
-                    if let p = s.peak {
-                        StatCell(label: "Peak", value: Self.level(p.level),
-                                 unit: "at " + p.date.formatted(date: .omitted, time: .shortened), color: BaselineTheme.stress)
-                    }
-                }
-                StressCurveChart(points: s.points, accessibilitySummary: BaselineReadouts.stressSummary(s))
-                Text(Self.caption(s))
-                    .font(BaselineTheme.caption)
-                    .foregroundStyle(BaselineTheme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text(isToday ? "No daytime data yet. The curve fills in as the strap records the day."
-                             : "No daytime data for this day.")
-                    .font(BaselineTheme.caption)
-                    .foregroundStyle(BaselineTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        TodayDetailCard(title: "Stress", accessory: AccuracyBadge(metric: "stress").map { AnyView($0) },
+                        hint: TodayDetail.hint(.stressAvg), onOpen: onOpen) {
+            StressCardBody(stress: stress, isToday: isToday)
         }
     }
 
@@ -237,12 +379,49 @@ struct StressCard: View {
     }
 }
 
+/// The Stress card's content (cells, curve, caption), shared with the detail's 1D card, which passes
+/// `showsAverage: false` because its hero card prints the same day average ("This day 1.4 of 3").
+struct StressCardBody: View {
+    let stress: BaselineReadouts.StressDayReadout?
+    var isToday: Bool = true
+    /// The Average cell; off in the detail, so one screen prints the day's average once.
+    var showsAverage: Bool = true
+
+    var body: some View {
+        if let s = stress {
+            if showsAverage || s.peak != nil {
+                BaselineStatRow {
+                    if showsAverage {
+                        StatCell(label: "Average", value: StressCard.level(s.dayMean),
+                                 unit: BaselineReadouts.stressLevelText(s.dayMean), color: BaselineTheme.stress)
+                    }
+                    if let p = s.peak {
+                        StatCell(label: "Peak", value: StressCard.level(p.level),
+                                 unit: "at " + p.date.formatted(date: .omitted, time: .shortened), color: BaselineTheme.stress)
+                    }
+                }
+            }
+            StressCurveChart(points: s.points, accessibilitySummary: BaselineReadouts.stressSummary(s))
+            Text(StressCard.caption(s))
+                .font(BaselineTheme.caption)
+                .foregroundStyle(BaselineTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text(isToday ? "No daytime data yet. The curve fills in as the strap records the day."
+                         : "No daytime data for this day.")
+                .font(BaselineTheme.caption)
+                .foregroundStyle(BaselineTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 // MARK: - Signals
 
 /// The early-warning card, directly under Readiness and only on today, when `TodaySignals.build` found
 /// something to say: one calm sentence per signal under a watch-coloured pill, and a single "How this
 /// is computed" disclosure listing each signal's method. The screen omits the card entirely when the
-/// list is empty, so a quiet morning shows no "all clear" either.
+/// list is empty, so a quiet morning shows no "all clear" either. The one card on Home with no detail.
 struct SignalsCard: View {
     let signals: TodaySignals
     @State private var showMethod = false
@@ -286,15 +465,18 @@ struct SignalsCard: View {
 /// The night leading into the selected morning: the duration numeral, the efficiency cell, the stage
 /// bar and one line against the 30-night average. "Last night" on today, "Night" on an earlier day. A
 /// night older than the selected morning wears its date as the accessory pill. A flat numeral and a bar,
-/// never a ring: the sleep ring lives on the Sleep tab.
+/// never a ring: the sleep ring lives on the Sleep tab. Opens the Sleep detail on the night (its stages
+/// and heart rate asleep).
 struct LastNightCard: View {
     let sleep: TodaySleepReading?
     /// The selected day's key.
     let dayKey: String
     var isToday: Bool = true
+    var onOpen: () -> Void = {}
 
     var body: some View {
-        BaselineCard(title: isToday ? "Last night" : "Night", accessory: accessory) {
+        TodayDetailCard(title: isToday ? "Last night" : "Night", accessory: accessory,
+                        hint: TodayDetail.hint(.sleepDuration), onOpen: onOpen) {
             if let s = sleep {
                 // One element: "6h 42m asleep, Efficiency, 92 %" instead of three swipes. The
                 // efficiency cell trails the numeral while the row fits; at larger type it drops under it,
@@ -393,44 +575,45 @@ struct TodayStageBar: View {
 
 // MARK: - Effort
 
-/// The day's effort and its workouts (at most three rows; the chevron row opens the whole list). Each
-/// workout row pushes `WorkoutDetailScreen` (resolved by the row's start, the only key `TodayWorkout`
-/// carries). The effort number is `BaselineReadouts.effortText`, the same rendering the Workouts
-/// screens use. "All workouts" is the visible label of the chevron row (a UI-test anchor).
+/// The day's effort, its calories and its workouts (at most three rows; the chevron row opens the whole
+/// list). Each workout row pushes `WorkoutDetailScreen` (resolved by the row's start, the only key
+/// `TodayWorkout` carries). The effort number is `BaselineReadouts.effortText`, the same rendering the
+/// Workouts screens use. Calories are the second cell, read through the same 04:00-rollover row as the
+/// Effort cell (`BaselineReadouts.calories(for:days:logicalKey:)`), "~2,140" (rounded to ten and marked
+/// approximate: a Low-accuracy figure) with ONE caption under the cells that names it an estimate and
+/// gives the delta against the 30-day average; that caption is a chevron row into the Calories detail,
+/// whose hero carries the badge. A day without a figure shows neither. "All workouts" is the visible
+/// label of the last chevron row (a UI-test anchor). The card opens the Effort detail (its 1D view is
+/// the day's workouts).
 struct EffortCard: View {
     let effort: Double?
-    let workouts: [TodayWorkout]
-    /// The day's whole-day calorie estimate against the 30 days before it (`BaselineReadouts.calories`);
-    /// the cell and its line appear only when the day has a figure.
+    /// The day's calorie estimate; nil, or a readout without a figure, shows no Calories cell or caption.
     var calories: BaselineReadouts.CaloriesReadout? = nil
+    let workouts: [TodayWorkout]
+    /// The selected day's key: the Calories detail's ranges end on it.
+    let dayKey: String
     var isToday: Bool = true
+    var onOpen: () -> Void = {}
 
     /// Rows shown inline before the list takes over.
     static let maxRows = 3
 
     var body: some View {
-        BaselineCard(title: "Effort") {
+        TodayDetailCard(title: "Effort", hint: TodayDetail.hint(.effort), onOpen: onOpen) {
             BaselineStatRow {
                 StatCell(label: isToday ? "Effort so far" : "Effort", value: BaselineReadouts.effortText(effort),
                          unit: BaselineReadouts.effortUnit, color: BaselineTheme.effort)
+                if let kcal = calories?.kcal {
+                    StatCell(label: "Calories", value: "~" + BaselineReadouts.caloriesText(kcal), unit: "kcal")
+                }
                 // The sentence below already says when there are none; a "Workouts 0" cell would say it twice.
                 if !workouts.isEmpty {
                     StatCell(label: "Workouts", value: "\(workouts.count)")
                 }
-                if let kcal = calories?.kcal {
-                    // "~2,140 kcal": rounded to ten and marked approximate, because the figure is Low accuracy.
-                    StatCell(label: "Calories", value: "~" + BaselineReadouts.caloriesText(kcal), unit: "kcal",
-                             color: BaselineTheme.effort)
-                }
             }
             if let c = calories, c.kcal != nil {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(Self.caloriesLine(c))
-                        .font(BaselineTheme.caption)
-                        .foregroundStyle(BaselineTheme.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    AccuracyBadge(metric: "calories")
+                BaselineChevronRow(text: Self.caloriesLine(c), accessibilityHint: TodayDetail.hint(.calories)) {
+                    TodayDetail.screen(.calories, day: dayKey)
                 }
             }
             if workouts.isEmpty {
@@ -459,21 +642,22 @@ struct EffortCard: View {
         }
     }
 
-    /// ONE line for the calorie cell: the delta against the 30-day average, or when that average arrives,
-    /// always naming the figure an estimate.
-    static func caloriesLine(_ c: BaselineReadouts.CaloriesReadout) -> String {
-        if let delta = BaselineReadouts.caloriesDeltaText(kcal: c.kcal, average: c.average30) {
-            return "Estimated from heart rate · \(delta)"
-        }
-        let n = max(1, BaselineReadouts.averageMinDays - c.observed30)
-        return "Estimated from heart rate · 30\u{2011}day average after \(n) more day\(n == 1 ? "" : "s")"
-    }
-
     private var emptyLine: String {
         if effort == nil {
             return isToday ? "Builds through the day as the strap records." : "Nothing recorded on this day."
         }
         return isToday ? "No workouts recorded yet today." : "No workouts recorded."
+    }
+
+    /// ONE line for the Calories cell: names the figure an estimate (the cell shares the card with
+    /// Effort, so the line says whose it is), then the delta against the 30-day average or when that
+    /// average arrives.
+    static func caloriesLine(_ c: BaselineReadouts.CaloriesReadout) -> String {
+        if let delta = BaselineReadouts.caloriesDeltaText(kcal: c.kcal, average: c.average30) {
+            return "Calories estimated from heart rate · \(delta)"
+        }
+        let n = max(1, BaselineReadouts.averageMinDays - c.observed30)
+        return "Calories estimated from heart rate · 30\u{2011}day average after \(n) more day\(n == 1 ? "" : "s")"
     }
 }
 

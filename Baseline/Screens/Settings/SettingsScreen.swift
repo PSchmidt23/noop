@@ -7,7 +7,8 @@ import UserNotifications
 /// Back button takes the person to wherever they came from. Strap, Apple Health and Data push Baseline's
 /// own screens over NOOP's engine (`DevicesScreen`, `AppleHealthScreen`, `ImportScreen`, `CompareScreen`,
 /// `ExportScreen`); Profile is Baseline's small form over `ProfileStore` plus the sleep window
-/// (`SettingsSleepWindowCard`); About carries attribution, the privacy policy, license, the disclaimer
+/// (`SettingsSleepWindowCard`) and the weekly Intensity-minutes goal (`SettingsIntensityGoalCard`); About
+/// carries attribution, the privacy policy, license, the disclaimer
 /// and the accuracy review (`AccuracyScreen`). Each card observes only what it needs, so the root never
 /// re-renders on strap ticks.
 struct SettingsScreen: View {
@@ -21,6 +22,9 @@ struct SettingsScreen: View {
                 // The target window the Sleep tab's strip bands and counts nights against
                 // (`BaselineReadouts.SleepWindow`); the regularity index does not read it.
                 SettingsSleepWindowCard()
+                // The weekly Intensity-minutes goal (`IntensityMinutes.goal()`) and the heart-rate basis
+                // the minutes are judged against.
+                SettingsIntensityGoalCard()
             }
             SettingsSection(label: "Notifications") { SettingsNotificationsCard() }
             #if DEBUG
@@ -128,10 +132,14 @@ private struct SettingsHealthCard: View {
 // MARK: - Data
 
 /// Import / Compare / Export rows (unchanged: Compare is where an imported WHOOP export is checked
-/// against the strap) and the data-source precedence `BaselineDataSourceSetting` persists: which
-/// source a night both recorded shows on Home, Trends and Sleep. Three ways, one sentence each.
+/// against the strap), the data-source precedence `BaselineDataSourceSetting` persists (which source a
+/// night both recorded shows on Home, Trends and Sleep; three ways, one sentence each) and "Recompute
+/// heart-rate days", which drops the per-day intraday cache (`IntradayDayStore.reset()`) so every day's
+/// Intensity minutes and heart-rate range are read again from the store as screens ask for them.
 private struct SettingsDataCard: View {
     @StateObject private var dataSource = BaselineDataSourceSetting()
+    /// The recompute row's one-line outcome, shown once the cache was dropped on this visit.
+    @State private var recomputed = false
 
     var body: some View {
         BaselineCard {
@@ -165,6 +173,20 @@ private struct SettingsDataCard: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .contentTransition(.opacity)
                 .animation(.snappy(duration: 0.25), value: dataSource.selection)
+            SettingsDivider()
+            Button {
+                IntradayDayStore.shared.reset()
+                recomputed = true
+            } label: {
+                SettingsRowLabel(icon: "arrow.clockwise", title: "Recompute heart-rate days",
+                                 subtitle: recomputed
+                                    ? "Done. Each day is read again the next time it is shown."
+                                    : "Intensity minutes and each day's heart-rate range, read again") {
+                    EmptyView()
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Reads every day's heart rate again, after a restored backup or deleted data")
         }
         .onAppear { dataSource.reload() }
     }
@@ -195,11 +217,13 @@ private struct SettingsProfileCard: View {
         default:       sex = "Other"
         }
         let aboutYou = profileSet ? ["\(profile.age) yrs", sex] : ["Age and sex not set"]
+        // The max heart rate through the one gate Home's Intensity card reads: an override, else the
+        // age estimate once a date of birth exists; nothing while the row says the age is not set.
+        let maxHR = TodayDetail.intensityProfile(profile, entered: profileSet).map { "max HR \($0.hrMax)" }
         return (aboutYou + [
             UnitFormatter.heightFromCentimeters(profile.heightCm, system: system),
-            UnitFormatter.massFromKilograms(profile.weightKg, system: system),
-            "max HR \(profile.hrMax)"
-        ]).joined(separator: " · ")
+            UnitFormatter.massFromKilograms(profile.weightKg, system: system)
+        ] + [maxHR].compactMap { $0 }).joined(separator: " · ")
     }
 }
 

@@ -588,7 +588,10 @@ targets:
       # nothing is pinned by hand (unlike StrandTests, whose host is "NOOP Staging").
       - target: Baseline
       # The tests build engine inputs (DailyMetric, CachedSleepSession, StageSegment, DoseResponse)
-      # and read engine outputs (BaselineState, ReadinessTier) directly.
+      # and read engine outputs (BaselineState, ReadinessTier) directly. WhoopProtocol for the decoded
+      # streams (HRSample, PpgHrSample, Streams) the day-store tests bank into an in-memory WhoopStore;
+      # the app target already links it.
+      - package: WhoopProtocol
       - package: WhoopStore
       - package: StrandAnalytics
     settings:

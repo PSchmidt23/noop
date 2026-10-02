@@ -99,6 +99,38 @@ and go through the funnel). The NOOP entry point behind each is listed so nobody
   `Baseline/Research/METRIC_ACCURACY.md`, tiers high / medium / low), drawn as `AccuracyBadge(metric:)`; the
   citations are `AccuracyCitations` (Baseline/Screens/Settings/AccuracyScreen.swift).
 
+## Metric details, daytime heart rate, Intensity minutes (Baseline/Components)
+- Ranges (`BaselineReadoutsRanges.swift`): `MetricRange` (1D / 7D / 4W / 1Y), `MetricKey` (hrv, rhr, readiness,
+  sleepDuration, sleepEfficiency, bedtime, wake, steps, effort, calories, stressAvg, intensityMinutes,
+  heartRate), `metricReadings(key:days:nights:stepReadings:intraday:)` → `[MetricDayValue]`, the pure
+  `metricSeries(key:range:endKey:readings:bands:intraday:)` → `MetricSeries { points: [RangePoint], stats:
+  MetricStats }` and the `@MainActor metricSeries(_ repo:profile:key:range:endDay:nights:mode:entered:…)` over
+  the funnel. 1Y buckets are ISO weeks (`BaselineRangeSeries.isoCalendar()`), keyed by the Monday; stats are
+  always over daily values; the change compares with the previous window of the same length (≥ 3 days each
+  side). HRV / Resting HR bands come from `Baselines` per night (`metricBands`). The screen is
+  `MetricDetailScreen(spec: MetricDetailSpec, day:initialRange:)` (`MetricDetail.swift`); the route table
+  Home and Trends share is `TodayDetail.spec(_:)`.
+- Daytime heart rate (`BaselineReadoutsIntraday.swift`): `intradayHeartRate(_ repo:for:nights:mode:)` over
+  `repo.hrBuckets(from:to:bucketSeconds: 60)` (Strand/Data/Repository.swift: measured `hrSample` ∪ PPG-derived
+  `ppgHrSample`, SQL-aggregated) for the local day, with sleep spans from the nights and workout spans from
+  `repo.workoutRows`; `IntradayHeartRate { points, sleep, workouts, minBpm, avgBpm, maxBpm, coveredMinutes,
+  partial }`, `intradayContext`, `intradaySummary`. Sleep's night trace is `SleepHeartRateBuilder.trace(_ repo:night:)`.
+- Intensity minutes (`IntensityMinutes.swift`): `Thresholds.karvonen(restingHr:hrMax:)` (40 / 60 % of heart-rate
+  reserve; max HR from `ProfileStore.effortHRmax` / the override, resting reference = median of the last 7
+  nights, `RestingReferences` for many days at once), `Thresholds.hrMax(zoneSet:)` fallback, `minutes(samples:)`
+  (≥ 20 samples a minute, median) / `minutes(buckets:)`, `bouts(_:thresholds:rule:)` (≥ 3 min, 1-min gap),
+  `credit(day:minutes:thresholds:)` → `DayResult { moderateMin, vigorousMin, credited = m + 2v }`,
+  `creditFromWorkouts(day:rows:)` from `WorkoutZones` when a day has no heart rate. `mayScore(entered:hrMaxOverride:)`
+  is the one gate (nothing is scored before an age or a manual max HR). Goal: `goal()` / `saveGoal(_:)` on
+  `baseline.intensityGoalMinutes`. Readout: `BaselineReadouts.intensity(_ repo:profile:for:mode:)` →
+  `IntensityReadout { moderateMin, vigorousMin, weekDays, weekGoal, basis; weekText, splitText }`.
+- Per-day cache (`IntradayDayStore.swift`): `IntradayDayStore.shared.records(_ repo:profile:days:mode:entered:…)`
+  → `[String: IntradayDayRecord]` (Intensity minutes, heart-rate low / mean / high, Stress day mean), persisted
+  at `<Application Support>/Baseline/intraday-days.json`; `reset()` is Settings › Data › "Recompute heart-rate
+  days". `BaselineReadouts.intradayValues(_:)` lifts records into the range series. Accuracy for both keys comes
+  from `MetricDetailSpec.standard(key).accuracy` (Medium), listed on the Accuracy screen by `AccuracyExtras`
+  with `AccuracyCitations.intensityReferences` (`Baseline/Research/INTENSITY_MINUTES.md`).
+
 ## Workouts
 - `repo.workoutRows(days: Int = 4000) async -> [WorkoutRow]` (merged, deduped).
 - `WorkoutZones.percents(_ zonesJSON: String?) -> [Double]?` (Z1–Z5), `WorkoutZones.summary(from:)`.
@@ -164,7 +196,10 @@ and go through the funnel). The NOOP entry point behind each is listed so nobody
 ## Identity / wiring notes
 - UserDefaults keys are `noop.*` in `.standard` (own domain per app, no collision). Baseline's own are
   `baseline.*` (table in BASELINE.md). Baseline type names must not collide with NOOP's module-level ones
-  (same module): e.g. `CompareRange` is NOOP's (`Strand/Screens/CompareView.swift`), ours is `BaselineCompareRange`.
+  (same module), and must not shadow a type an imported package exports either, or NOOP's own files in the
+  Baseline target stop compiling: e.g. `CompareRange` is NOOP's (`Strand/Screens/CompareView.swift`), ours is
+  `BaselineCompareRange`; WhoopStore's `MetricPoint` and StrandAnalytics' `DayValue` are why the range layer
+  says `RangePoint` and `MetricDayValue`.
 - Store lives in the app sandbox (`<AppSupport>/OpenWhoop/whoop.sqlite`); Baseline starts empty.
 - A strap bonds to ONE central: never run NOOP and Baseline against the same strap.
 - BG task ids derive from `Bundle.main.bundleIdentifier` (listed in project.yml).

@@ -4,7 +4,8 @@ The single reference for every screen builder. Everything a screen renders comes
 components in `Baseline/Components/`; screens never spell a colour, a font size or a corner radius, and
 never compute a baseline, band or average (those come from `BaselineReadouts` / `BaselineReadiness` /
 the snapshot models). Vocabulary: **HRV / Resting HR / Readiness / Sleep / Effort / Steps / Calories /
-Stress / Journal**; WHOOP only nominatively. Trademark guardrail: at most two `MetricRing`s on one screen (Home: HRV and Resting
+Stress / Intensity minutes / Journal**; WHOOP only nominatively; no Garmin or Apple feature names
+("Intensity minutes" is the generic term). Trademark guardrail: at most two `MetricRing`s on one screen (Home: HRV and Resting
 HR, each in its own tile); the Sleep ring lives on the Sleep tab; Readiness is a number on a horizontal
 track bar (`ReadinessBar`), never a ring. Platform: iOS 26.0 (`project.yml` deployment target for Baseline, BaselineTests,
 BaselineUITests). No availability checks anywhere.
@@ -17,15 +18,20 @@ Journal is NOT a tab.
 
 | Tab | Root | Structure |
 |---|---|---|
-| Home | `Screens/Today/TodayScreen.swift` (struct name may stay `TodayScreen`; tab label "Home") | Day-by-day like WHOOP: nav title = the selected day (`BaselineDaySwitcher.title(for:)`), `BaselineDaySwitcher(style: .glass)` pinned under the bar, `.baselineDaySwipe` on the content; every card shows THAT day, in this order: the Readiness score on its track (`ReadinessCard`, with the Progress chevron), Signals on today only, HRV + Resting HR rings, that day's steps (`StepsCard`: "Steps so far" on today), that night's sleep (`LastNightCard`), that day's Stress curve (`StressCard`), that day's effort + calories + workouts (`EffortCard`); a floating `GlassCTA(title: "Journal", systemImage: "checklist", fullWidth: false)` opens `JournalSheet(day:)` for the selected day; `StrapStatusPill` stays in the toolbar beside the gear |
-| Trends | `Screens/Trends/TrendsScreen.swift` | `BaselineSegmentedPicker(style: .glass)` pinned under the bar over THREE sections: "Trends" (the metric charts; the 7D/30D/90D `BaselineRangePicker(style: .flat)` at the top of the section content), "Progress" (`ProgressScreen`'s body embedded as a section, its horizon picker `.flat`), "Habits" (`JournalPatternsView()`). The Effort card keeps the "All workouts" `BaselineChevronRow` → `WorkoutsScreen()` |
-| Sleep | `Screens/Sleep/SleepScreen.swift` | unchanged structure, restyled |
+| Home | `Screens/Today/TodayScreen.swift` (struct name may stay `TodayScreen`; tab label "Home") | Day-by-day like WHOOP: nav title = the selected day (`BaselineDaySwitcher.title(for:)`), `BaselineDaySwitcher(style: .glass)` pinned under the bar, `.baselineDaySwipe` on the content; every card shows THAT day, in this order: the Readiness score on its track (`ReadinessCard`, with the Progress chevron), Signals on today only, HRV + Resting HR rings, that day's heart-rate trace (`HeartRateCard`, only once the strap banked heart rate for the day), that day's steps (`StepsCard`: "Steps so far" on today), that day's Intensity minutes against the week's goal (`IntensityCard`, only once there are minutes to show, or on today as the one ask for an age), that night's sleep (`LastNightCard`), that day's Stress curve (`StressCard`; on today with a paired strap it is the ONE "No daytime data yet" card), that day's effort + calories + workouts (`EffortCard`: Calories is a cell beside Effort, its caption a chevron row into the Calories detail; there is no separate Calories card). At most nine rows on a full day; a card with nothing to read yet is left out, never drawn as a placeholder. Every card is a `TodayDetailCard` (title, trailing chevron, the whole card the tap target; the two ring tiles carry the chevron in their corner) that opens its metric's `MetricDetailScreen` on the selected day through Home's ONE `navigationDestination(item:)` (`TodayDetail.screen(_:day:)`: the spec with Home's 1D views, the key's `initialRange`); a floating `GlassCTA(title: "Journal", systemImage: "checklist", fullWidth: false)` opens `JournalSheet(day:)` for the selected day; `StrapStatusPill` stays in the toolbar beside the gear |
+| Trends | `Screens/Trends/TrendsScreen.swift` | `BaselineSegmentedPicker(style: .glass)` pinned under the bar over THREE sections: "Trends" (the metric charts; the 7D/30D/90D `BaselineRangePicker(style: .flat)` at the top of the section content), "Progress" (`ProgressScreen`'s body embedded as a section, its horizon picker `.flat`), "Habits" (`JournalPatternsView()`). The Trends section's cards, in this order: HRV and Resting HR over their bands (`TrendBandCard`), Effort bars under the Readiness line (`TrendEffortReadinessCard`, which keeps the "All workouts" `BaselineChevronRow` → `WorkoutsScreen()`), Sleep and Steps bars (`TrendBarCard`; Steps only once some day counted steps), Intensity minutes by ISO week against the weekly goal (`TrendIntensityCard`, only once some day in the weeks drawn recorded heart rate or workout credit). Every card's title is a `TrendsCardTitle`: a `NavigationLink` with a chevron into the same `MetricDetailScreen` Home opens (`TodayDetail.spec`), on the detail range nearest the picker (`TrendsRange.detailRange`) |
+| Sleep | `Screens/Sleep/SleepScreen.swift` | hero ring (its last row "Sleep over time" → `MetricDetailScreen(spec: SleepDetail.durationSpec())`, whose 1D page is `SleepNightDayView`: Stages + `SleepHeartRateCard`), the Sleep timing card ("Bedtime and wake over time" → `SleepTimingDetailScreen`, then "Set window"), stages, nights → `NightDetailScreen` (hero, Stages, Heart rate while asleep, Night vitals). Detail links are chevron rows, never tappable titles, so the card titles stay plain static texts. |
 
 Journal (`Screens/Journal/`) exposes exactly two entry points: `JournalSheet(day: String)` (a sheet:
 day label, that day's habit chips, "Add habit", Done) and `JournalPatternsView()` (the effects card(s)
 + dose rows + empty states, built to sit inside Trends' `LazyVStack`). The old `JournalScreen` root is
 gone. Settings and everything under it (Devices, Apple Health, Import, Compare, Export,
-Profile, Notifications, About) is unchanged in structure.
+Profile, Notifications, About) is unchanged in structure, with three additions: Profile carries a third
+card, "Intensity goal" (`SettingsIntensityGoalCard`: one stepper on `baseline.intensityGoalMinutes`, one
+caption, the heart-rate basis line with a `SettingsIconTile`); Data carries "Recompute heart-rate days"
+(`IntradayDayStore.reset()`); the Accuracy screen lists Intensity minutes and heart rate from the detail
+specs (`AccuracyExtras`; a future row for either key in `MetricAccuracy.all` drops its extra row) and links
+both reviews.
 
 Name contracts between builders: `JournalSheet(day:)`, `JournalPatternsView()`, `SettingsScreen()`,
 `ProgressScreen()` (may be reused as the embedded Progress section body), `WorkoutsScreen()`.
@@ -34,8 +40,10 @@ Name contracts between builders: `JournalSheet(day:)`, `JournalPatternsView()`, 
 
 Glass budget per tab under this IA: Home = pinned day switcher (1) + floating Journal button (1) +
 system bars; Trends = pinned section control (1) + bars; Sleep = bars only; Settings = ≤ 7 pinned
-headers. Only ONE pinned row per screen: Trends' range picker is therefore `.flat` in the content, not
-a second bar.
+headers; a pushed `MetricDetailScreen` (from Home, Trends or Sleep) = its pinned range picker
+(`BaselineRangePicker(style: .glass)`, 1D / 7D / 4W / 1Y) (1) + bars, and so does
+`SleepTimingDetailScreen` (7D / 4W / 1Y). Only ONE pinned row per screen: Trends' range picker is
+therefore `.flat` in the content, not a second bar.
 
 ## Principle
 
@@ -586,3 +594,184 @@ both series; pass a better sentence when the card has one.
 | `steps` | `#1D4ED8` (6.3 / 5.8) | Steps bars and the Steps header dot |
 
 Calories reuse `effort` (energy is amber); Readiness uses the judgement colours through `ReadinessTone`.
+
+## Metric detail layer: ranges (1D / 7D / 4W / 1Y), the intraday day, Intensity minutes
+
+Four additive pieces in `Baseline/Components/`, pure where they compute and `@MainActor` only where they
+read the repository (`MetricSeriesTests`, `IntensityMinutesTests`). Vocabulary unchanged; "Intensity
+minutes" is the generic term and no vendor's feature name appears in copy. Nothing here draws a ring.
+
+### `MetricRange`, `MetricKey`, `MetricSeries` — `BaselineReadoutsRanges.swift`
+
+```swift
+MetricRange.allCases.map(\.label)   // "1D" "7D" "4W" "1Y"; .days 1 / 7 / 28 / 365; .bucket .day except 1Y = .week (ISO, Monday-first, local)
+BaselineRangePicker(selection: $range, style: .glass)       // MetricRange is a BaselineRangeOption (shortLabel == label: "1D" "7D" "4W" "1Y" at AX sizes too)
+MetricKey: hrv, rhr, readiness, sleepDuration, sleepEfficiency, bedtime, wake, steps, effort, calories, stressAvg, intensityMinutes, heartRate
+k.name, k.seriesKey (NOOP's daily column or nil), k.isCountLike (bars), k.isClockTime, k.higherIsBetter, k.isIntradayDerived
+
+// The one bucketing function every range goes through (missing days excluded, empty buckets absent, n per point):
+BaselineRangeSeries.buckets([MetricDayValue], from:to:bucket: .day | .week | .month) -> [RangePoint { id, date, value, min, max, n, band }]
+BaselineRangeSeries.stats([MetricDayValue], from:to:) -> MetricStats { latest, latestDay, average, min, max, count, previousAverage, previousCount; change }
+BaselineRangeSeries.bucketStart(of: "2026-02-18", bucket: .week) == "2026-02-16"; bucketEnd; dayCount(from:to:); isoCalendar
+
+// Readings per key (pure), then the series:
+let readings = BaselineReadouts.metricReadings(key: .hrv, days: repo.baselineDays, nights: nights, stepReadings: steps, intraday: facts)
+let bands = BaselineReadouts.metricBands(key: .hrv, days: days, endKey: today)        // day → MetricBand { baseline, low, high }; HRV / resting HR only
+let s = BaselineReadouts.metricSeries(key: .hrv, range: .year, endKey: today, readings: readings, bands: bands)
+s.points, s.stats, s.lastBucketPartial ("The newest week is still in progress."), s.startKey … s.endKey
+// Through the repository (@MainActor): the funnel, stepReadings, the Sleep tab's nights, IntradayDayStore
+let s = await BaselineReadouts.metricSeries(repo, profile: profile, key: .intensityMinutes, range: .fourWeeks, endDay: day, entered: profileSet)  // empty until mayScore
+// Sentences (said once): "Averaged 64 ms over the last 7 days, 3 ms above the 7 days before."
+// 1D: only the difference, the cells hold both values: "+1,240 vs the day before." / "About the same as the day before." / "No day before to compare."
+BaselineReadouts.metricContext(series: s, noun: "HRV", unit: "ms", format: whole)
+BaselineReadouts.metricChartSummary(series: s, name: "HRV", unit: "ms", format: whole)   // the chart's one VoiceOver sentence
+BaselineReadouts.metricChangeText(+4, format: whole, unit: "ms") == "+4 ms"
+```
+
+Rules: 7D and 4W are daily points; 1Y is weekly averages over ISO weeks keyed by the Monday (the same
+seven days an Intensity-minutes week sums). `min` / `max` on a point are the lowest and highest DAILY
+values inside it (for heart rate, the day's own low and high), never a bucket mean; the stats row is
+always over daily values. `change` compares the window's average with the same-length window before
+it (≥ 3 days on both sides; a 1D window compares with the day before). Efficiency is a percent;
+bedtime is kept as minutes after the previous noon and wake as minutes after midnight
+(`MetricKey.isClockTime`, `clockValueText` prints them back), so clock averages never wrap. The data
+funnel applies to every daily column; the intraday keys are strap-only facts.
+
+### `IntradayHeartRate` — `BaselineReadoutsIntraday.swift`
+
+```swift
+let t = await BaselineReadouts.intradayHeartRate(repo, for: day)      // nil when the strap banked no heart rate that day
+// pure: intradayHeartRate(day:buckets:bucketSeconds:nights:workouts:maxPoints:calendar:)
+t.points (≤ 1,440: id/date/bpm/minBpm/maxBpm/conf), t.sleep / t.workouts ([Span] clipped to the day, label "Asleep" / the sport),
+t.minBpm, t.maxBpm, t.avgBpm (over every bucket), t.coveredMinutes, t.partial (< 240 min), t.dayStart…t.dayEnd
+BaselineReadouts.intradaySummary(t)      // VoiceOver only: "Heart rate: 48 to 162 bpm, average 71; asleep 11:20 PM to 7:05 AM; one workout, Running."
+BaselineReadouts.intradayContext(t)      // the 1D hero's visible line, what the cells cannot say: "Partial day: 3h 10m of heart rate · asleep 11:20 PM–7:05 AM · one workout, Running."
+BaselineReadouts.downsample(buckets, to: 1_440)
+```
+
+Reads `repo.hrBuckets(from:to:bucketSeconds: 60)` over the LOCAL calendar day (never the 8,000-row
+`hrSamples` default; `INTRADAY_AND_RANGES.md` §1.4), the night ending that morning and the one starting
+that evening, and the workout rows reaching back to the day. `conf < 1` marks a PPG-derived stretch
+(WHOOP 5.0 / MG) and is drawn lighter, never another colour.
+
+### `IntensityMinutes` — `IntensityMinutes.swift` (definition: `Research/INTENSITY_MINUTES.md` §5)
+
+```swift
+let t = IntensityMinutes.Thresholds.karvonen(restingHr: 52, hrMax: 182)   // moderate ≥ 40 % HRR (104 bpm), vigorous ≥ 60 % (130); nil if reserve ≤ 0
+IntensityMinutes.Thresholds.hrMax(zoneSet: profile.hrZoneSet)               // fallback: Zone 3+ moderate, Zone 4+ vigorous (NOOP's %HRmax zones)
+IntensityMinutes.thresholds(for: day, days: repo.baselineDays, effortHRmax: profile.effortHRmax, zoneSet: profile.hrZoneSet)  // nil = needs age
+// The profile gate (ONE predicate): ProfileStore seeds a 30-year-old, so effortHRmax is never nil by itself. Nothing is scored until a date of
+// birth is entered (BaselineReadouts.ProfileSet) or a max HR is set by hand. IntradayDayStore.records scores every day through the gated form,
+// so Home, Trends and the detail (any range) cannot disagree; screens quote / key on BaselineReadouts.intensityProfile(profile, entered:).
+IntensityMinutes.mayScore(entered: profileSet, hrMaxOverride: profile.hrMaxOverride)
+IntensityMinutes.thresholds(for:days:effortHRmax:zoneSet:entered:hrMaxOverride:)   // nil (needs age) unless mayScore
+IntensityMinutes.restingReference(for: day, days:)       // median of the last 7 nights' resting HR (≥ 3), else the day's own, else nil
+IntensityMinutes.RestingReferences(funnel).reference(for: day)   // the same answer from an index built once (the day store's 730-day ranges)
+IntensityMinutes.thresholds(for:references:effortHRmax:zoneSet:entered:hrMaxOverride:)              // gated, over that index
+let minutes = IntensityMinutes.minutes(samples: [Sample])   // §5: ≥ 20 samples a minute, median bpm: every day inside the store's 14-day verify window
+let minutes = IntensityMinutes.minutes(buckets: [HRBucket]) // bucket means, NO sample floor: only an older day the store computes for the first time
+let r = IntensityMinutes.credit(day: day, minutes: minutes, thresholds: t)      // DayResult { moderateMin, vigorousMin, bouts, scoredMinutes, basis; credited = m + 2·v }
+IntensityMinutes.bouts(minutes, thresholds: t, rule: .default)                  // BoutRule(minMinutes: 3, gapToleranceMinutes: 1); .tenMinute for the older convention
+IntensityMinutes.creditFromWorkouts(day:rows:)           // a CSV-only day: Zone 3 = moderate, Zones 4 + 5 = vigorous, basis .workoutsOnly
+IntensityMinutes.weekStart(of: "2026-02-18") == "2026-02-16"; weekDays(ending:) (Monday … day)
+IntensityMinutes.goal() / saveGoal(_:)                   // "baseline.intensityGoalMinutes", default 150, 60…600 step 10
+t.basis.caption   // "40 % / 60 % of your heart-rate reserve (resting 52, max 182)" / "Zone 3 / Zone 4 of your max heart rate (182), …" / "From workouts only" / "Add your age …"
+
+let r = await BaselineReadouts.intensity(repo, profile: profile, for: day)   // IntensityReadout; entered: defaults to ProfileSet.current()
+r.creditedToday, r.moderateMin, r.vigorousMin, r.weekStart, r.weekDays ([Int], Mon … day), r.weekCredited, r.weekGoal, r.weekFraction,
+r.weekText ("112 / 150 this week"), r.splitText ("38 moderate · 37 vigorous (×2)"), r.basis, r.scoredMinutes, r.partialDay
+BaselineReadouts.IntensityReadout.caveat   // "Minutes near the moderate line and strength sessions are uncertain." (Medium accuracy)
+```
+
+Bout rule (documented here and in the source): a bout is a maximal run of moderate-or-above minutes
+tolerating gaps of at most ONE consecutive below / unscored minute (the gap minute earns nothing and does
+not break the bout); a gap of two or more minutes ends it; a bout is credited only with ≥ 3 qualifying
+minutes. There is no ten-minute requirement (WHO 2020 / HHS 2018: any duration counts); `BoutRule.tenMinute`
+exists for comparison only. Credit: moderate ×1, vigorous ×2. Day = local calendar day; week = Monday
+00:00 → next Monday 00:00 local, whatever the locale's first weekday. The card never shows a ring: Home's
+`IntensityCard` is a hero "23 min" with "today" and ONE horizontal track "112 / 150 this week"
+(`IntensityTrack(readout:)`; VoiceOver hears "112 of 150 minutes this week", never "slash").
+
+### `IntradayDayStore` — `IntradayDayStore.swift` (the per-day cache)
+
+```swift
+let records = await IntradayDayStore.shared.records(repo, profile: profile, days: keys, entered: profileSet, computeStress: false)   // day → IntradayDayRecord; gated (mayScore)
+BaselineReadouts.intradayValues(records)   // pure: the Stress means, credited minutes of READING days (recordedIntensity), heart-rate low / mean / high
+r.credited, r.moderateMin, r.vigorousMin, r.scoredMinutes, r.basis, r.basisIsScored, r.hrMin / hrAvg / hrMax, r.stressMean, r.stressComputed
+r.recorded (IntradayDayRecord.isRecorded: scored minutes or workout credit; Trends' weeks use the same), r.recordedIntensity (recorded && basisIsScored)
+r.witness, r.storeIdentity    // what the record was computed from (IntradayWitness over the 60-s buckets) and the store it describes
+IntradayDayStore.compute(day:buckets:samples:thresholds:fingerprint:workouts:rule:stress:storeIdentity:now:)   // pure; IntradayDayStore(fileURL:) for tests
+IntradayDayStore.workouts(startedOn: day, rows:)   // a workouts-only day is credited from the sessions that STARTED on it, never twice across midnight
+IntradayDayStore.shared.reset()                    // Settings › Data › "Recompute heart-rate days"
+```
+
+Each day is classified once: an in-memory memo keyed by (dayKey, `refreshSeq`), under a JSON file at
+`<Application Support>/Baseline/intraday-days.json` keyed by day, every record stamped with its WITNESS
+(`IntradayWitness`: the count, last start and a checksum of the day's 60-second buckets, which are
+measured ∪ PPG-derived heart rate), the thresholds' signature and the store identity
+(`IntradayDayStore.storeIdentity`: the active read id and the strap's first computed night). Never
+`repo.hrFingerprint` as the witness: it counts the measured `hrSample` table only, and a WHOOP 4.0 on v25
+firmware or a WHOOP 5.0 / MG banks its seconds as PPG estimates in `ppgHrSample`. TODAY never comes from
+the memo (live heart rate lands without a `refreshSeq`): every ask re-reads today's buckets and
+recomputes only when they moved. Days inside the last 14 are re-read on every new `refreshSeq` (the
+strap re-offloads its 14-day store) and, when their buckets moved, classified from their raw samples
+(§5's 20-sample floor, so sparse minutes neither earn credit nor clear the 240-minute partial-day line);
+older days with a matching record are trusted without a query until the store identity moves (a backup
+restored, the strap's data deleted, another strap or the sample data read), when each is re-read once.
+An older day computed for the first time uses its bucket means (no sample floor). A store that cannot be
+opened computes and persists nothing. A new age, max-HR override or resting reference re-scores the
+days it touches. A day the strap recorded nothing on is a record but not an Intensity reading: the
+range series and Trends' weeks both leave it out. Why a file in Application Support
+and not UserDefaults or Documents: UserDefaults is loaded whole and rewritten as one plist on every
+change (wrong for hundreds of growing records); Documents is what file sharing exposes, and a cache is
+not a document; Application Support is private, backed up and recomputable. The Stress day mean is
+stored on the same record when a 7D / 4W detail asks for it (`computeStress`); a 1Y Stress series reads
+only days already scored, never 365 raw days.
+
+### `MetricDetailScreen`, `MetricDetailSpec`, `MetricRangeChart`, `IntradayHRChart` — `MetricDetail.swift`
+
+```swift
+NavigationLink { MetricDetailScreen(spec: TodayDetail.spec(.hrv), day: dayKey) } label: { … }   // from any card (Home, Trends): the ONE route table, .standard(key) plus the 1D views (Sleep's night, Effort's workouts, Stress' curve, Intensity's week); day defaults to today
+MetricDetailScreen(spec: .standard(.heartRate), day: dayKey, initialRange: .day)
+var spec = MetricDetailSpec.standard(.steps); spec.dayView = { day in AnyView(MyStepsDayCard(day: day)) }   // a custom 1D view (any view the caller owns)
+MetricDetailSpec(key:, title:, noun:, unit:, color:, higherIsBetter:, accuracyKey:, accuracy: (tier, caveat)?, format:, formatDelta:, bandProvider:, dayView:, about:)
+MetricRangeChart(series: s, color: color, selected: $selected, yLabel: spec.format, accessibilitySummary: …, accessibilityHint: "Higher is better")
+IntradayHRChart(trace: t, color: BaselineTheme.rhr, accessibilitySummary: BaselineReadouts.intradaySummary(t))
+```
+
+The screen: `BaselineScreen(title:, titleMode: .inline, pinned: { BaselineRangePicker(selection: $range,
+style: .glass) })` (the ONE pinned glass row of a pushed screen), then a hero card (`BaselineCard(title:,
+accessory: AccuracyBadge)` with `StatCell`s Latest / Average / Low / High for a range, "This day" / "Day
+before" for 1D, and ONE sentence under them saying only what the cells do not: `metricContext` (on 1D the
+difference from the day before, never the day's value again), or for heart rate on 1D
+`intradayContext` (coverage and spans; the low / mean / high sentence is the chart's VoiceOver label)),
+the chart card (1D: `spec.dayView`, else `IntradayHRChart` for heart rate under "Through the day" (its legend reads
+the shading; a caption only when nothing is shaded), else NO second card: the hero already is the day's number; 7D / 4W:
+`MetricRangeChart` as a line over the personal band when the points carry one or bars for `isCountLike`
+keys; 1Y: the weekly line with the lows-to-highs envelope), and "About this metric" (`spec.aboutText`:
+the `MetricAccuracy` caveat, or the spec's own). The range chart card is untitled (the pinned pill
+already names the window, as on Trends); scrubbing writes "Sep 28 · 64 ms" / "Week of Sep 22 · average
+64 ms over 6 days" at its top while a finger is on it. Every chart is one VoiceOver element. `standard(_:)` carries
+Baseline's colours (HRV teal, resting HR and heart rate coral, sleep keys indigo, steps slate, effort /
+calories / intensity amber, stress violet), formatters (`durationText`, `clockText`, `stepsText`,
+`caloriesText`, `effortText`) and accuracy rows; Intensity minutes and heart rate, which the literature
+table has no row for, carry an explicit Medium badge with their caveat.
+
+Empty and ended-on rules: a window with no points draws the hero with its one sentence ("No days with
+heart rate in the last 7 days.", or for Intensity minutes before an age or max HR is set "Add your age or
+max heart rate in Settings › Profile.") and NO stat row of dashes and NO chart card, so the fact is said
+once. The day trace's area fills from the bottom of its y domain (never from 0 bpm, which would paint
+under the axis labels) and its caption appears only when there is no shading; the legend ("Asleep",
+"Workout") already reads the shading. A Home card opens its detail on the day its number belongs to
+(`TodayDetail.detailDay`): the nightly cards carry the newest night forward on an unsynced morning
+("Woke Thu, Oct 1"), so HRV / Resting HR / Sleep / Readiness end on that morning, never on a today whose
+1D page would say "No HRV recorded" under the number Home just showed. `TodayDetailCard`'s header keeps
+title, accuracy pill and chevron on one line while they fit and drops the pill under the title when they
+do not (`ViewThatFits`), so "Intensity minutes" never truncates "Medium accuracy".
+
+### Tokens added
+
+| Token | Value | Use |
+|---|---|---|
+| `BaselineChartStyle.envelopeOpacity` | metric @ 0.07 | the weekly lows-to-highs envelope; a PPG-derived stretch of the day trace |
+| `BaselineChartStyle.mutedBarOpacity` | metric @ 0.45 | a muted bar beside full ones: the Steps tile's earlier days, nights outside the sleep window, the week in progress on Trends' Intensity bars (`TrendsWeekBarChart`) |

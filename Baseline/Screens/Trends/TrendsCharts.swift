@@ -105,4 +105,45 @@ struct TrendsBarChart: View {
         .modifier(BaselineChartSummary(summary: accessibilitySummary))
     }
 }
+
+/// Intensity minutes: one bar per ISO week with a dashed rule at the weekly goal. The week in progress
+/// is drawn lighter (the Steps tile's "earlier days" opacity), so a half-built bar is never read as a
+/// short week. Weeks are keyed by their Monday and binned on the ISO calendar
+/// (`BaselineRangeSeries.isoCalendar`), whatever the device locale starts its week on, so a bar sits on
+/// the seven days it sums. The y-axis always reaches the goal rule.
+struct TrendsWeekBarChart: View {
+    let weeks: [TrendsIntensity.Week]
+    let goal: Int
+    var color: Color = BaselineTheme.effort
+    var height: CGFloat = 140
+    var accessibilitySummary: String? = nil
+
+    /// The in-progress week's bar opacity.
+    static let inProgressOpacity = BaselineChartStyle.mutedBarOpacity
+
+    private var yDomain: ClosedRange<Double> {
+        let peak = Double(weeks.map(\.credited).max() ?? 0)
+        return 0...max(Double(goal) * 1.15, peak * 1.12, 1)
+    }
+
+    var body: some View {
+        Chart {
+            ForEach(weeks) { w in
+                BarMark(x: .value("Week", w.date, unit: .weekOfYear), y: .value("Minutes", w.credited))
+                    .foregroundStyle(color.opacity(w.inProgress ? Self.inProgressOpacity : BaselineChartStyle.barOpacity))
+                    .cornerRadius(BaselineChartStyle.barRadius)
+            }
+            RuleMark(y: .value("Goal", goal))
+                .foregroundStyle(color.opacity(BaselineChartStyle.baselineOpacity))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+        }
+        .chartYScale(domain: yDomain)
+        .chartYAxis { BaselineChartStyle.yAxis(desiredCount: 3) }
+        .chartXAxis { BaselineChartStyle.dayAxis(desiredCount: weeks.count > 6 ? 4 : 3) }
+        .chartPlotStyle { $0.background(.clear) }
+        .environment(\.calendar, BaselineRangeSeries.isoCalendar())
+        .frame(height: height)
+        .modifier(BaselineChartSummary(summary: accessibilitySummary))
+    }
+}
 #endif

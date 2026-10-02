@@ -7,18 +7,23 @@ import WhoopStore
 /// "Wednesday 1 October"), a glass day switcher is pinned under the bar and a horizontal swipe over the
 /// cards moves a day too (never into the future, never before the first stored night). Every card shows
 /// THAT day: the Readiness score (with the Progress chevron), the HRV and Resting HR rings against the
-/// baseline going into that night (the week's HRV tier on the HRV tile), the day's steps, the night's
-/// sleep, the day's Stress curve, the day's effort, calories and workouts; Signals only on today. The
+/// baseline going into that night (the week's HRV tier on the HRV tile), the day's heart rate, the
+/// day's steps, its Intensity minutes against the week's goal, the night's sleep, the day's Stress
+/// curve, and the day's effort, calories and workouts on one card; Signals only on today. A card with
+/// nothing to read yet is left out rather than drawn as a placeholder (Stress keeps the one "No daytime
+/// data yet" line for today). Every card opens its
+/// metric's detail (`TodayDetail`, one `navigationDestination(item:)` for the whole screen). The
 /// floating glass "Journal" button opens `JournalSheet` for the selected day. Reads `repo.baselineDays`,
-/// `repo.baselineNights()`, `repo.workoutRows(days:)`, the steps and stress accessors of
-/// `BaselineReadouts` and the recent journal; reloads on `repo.refreshSeq`, the data-source setting and
-/// the selected day. A day once built is kept in `HomeDayCache` until the store refreshes, so swiping
-/// back and forth never recomputes it.
+/// `repo.baselineNights()`, `repo.workoutRows(days:)`, the steps, stress, intraday heart-rate and
+/// Intensity accessors of `BaselineReadouts` and the recent journal; reloads on `repo.refreshSeq`, the
+/// data-source setting, the Intensity goal and max heart rate, and the selected day. A day once built
+/// is kept in `HomeDayCache` until the store refreshes, so swiping back and forth never recomputes it.
 @MainActor
 struct TodayScreen: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var repo: Repository
     @EnvironmentObject private var live: LiveState
+    @EnvironmentObject private var profile: ProfileStore
 
     /// Bumped by `BaselineRoot` whenever Home should present the journal sheet (`--tab journal`, the
     /// evening check-in's tap); watched with `initial: true` so a cold-start request is honoured.
@@ -37,12 +42,16 @@ struct TodayScreen: View {
     /// The Signals card under Readiness (`TodaySignals.build`), today only; nil or empty hides it.
     @State private var signals: TodaySignals?
     @State private var workouts: [TodayWorkout] = []
-    /// The Readiness score card's state, the day's steps (nil hides the card), calories and Stress curve
-    /// (`HomeDayCache.Entry`).
+    /// The Readiness score card's state, the day's steps (nil hides the card), calories, Stress curve,
+    /// heart-rate trace and Intensity minutes (`HomeDayCache.Entry`).
     @State private var readiness: TodayReadinessScore = .missing
     @State private var steps: BaselineReadouts.StepsReadout?
     @State private var calories: BaselineReadouts.CaloriesReadout?
     @State private var stress: BaselineReadouts.StressDayReadout?
+    @State private var heartRate: BaselineReadouts.IntradayHeartRate?
+    @State private var intensity: BaselineReadouts.IntensityReadout?
+    /// The metric whose detail is pushed (`TodayDetail.screen`); nil while Home is on top.
+    @State private var detail: MetricKey?
     /// NOOP's 04:00-rollover day, the row today's effort is read from (`TodaySnapshot.build(logicalKey:)`).
     @State private var todayLogicalKey = Repository.logicalDayKey(Date())
     /// The Readiness card's chevron row: the HRV sentence Progress prints for the same persisted horizon
@@ -53,10 +62,15 @@ struct TodayScreen: View {
     @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
     /// Settings › About › "Show sample data": Home wears the "Sample data" pill while it is on.
     @AppStorage(BaselineSampleData.activeKey) private var sampleDataActive = false
+    /// Settings › Profile: the weekly Intensity goal and whether the profile may be used for the
+    /// classifier's max heart rate (`TodayDetail.intensityProfile`); both are part of the reload key.
+    @AppStorage(IntensityMinutes.goalKey) private var intensityGoal = IntensityMinutes.goalDefault
+    @AppStorage(BaselineReadouts.ProfileSet.key) private var profileSet = false
     /// Bumped when the journal sheet closes, so the Signals card's confounders see the new answers.
     @State private var journalSeq = 0
-    /// Per-day memo keyed by (day, logical day, `refreshSeq`, data source, horizon); emptied on a new
-    /// `refreshSeq`. A class in `@State`: the same instance for the screen's whole life.
+    /// Per-day memo keyed by (day, logical day, `refreshSeq`, data source, horizon, Intensity goal and
+    /// max heart rate); emptied on a new `refreshSeq`. A class in `@State`: the same instance for the
+    /// screen's whole life.
     @State private var cache = HomeDayCache()
     @State private var showJournal = false
     @State private var showSettings = false
@@ -75,6 +89,8 @@ struct TodayScreen: View {
         let horizon: Int
         let dataSource: String
         let journalSeq: Int
+        let intensityGoal: Int
+        let intensityHRmax: Int
     }
 
     var body: some View {
@@ -103,7 +119,8 @@ struct TodayScreen: View {
         }
         .task(id: LoadKey(seq: repo.refreshSeq, loaded: repo.loaded, day: selection.key,
                           logicalDay: selection.logicalKey(todayLogicalKey: todayLogicalKey),
-                          horizon: progressHorizonRaw, dataSource: dataSourceRaw, journalSeq: journalSeq)) { await load() }
+                          horizon: progressHorizonRaw, dataSource: dataSourceRaw, journalSeq: journalSeq,
+                          intensityGoal: intensityGoal, intensityHRmax: intensityHRmax)) { await load() }
         // Midnight: the switcher's upper bound moves and the selection jumps back to the new today.
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in roll() }
         // The logical day rolls at 04:00 with no system notice; re-read both keys whenever the app returns
@@ -112,6 +129,11 @@ struct TodayScreen: View {
         .onChange(of: journalRequest, initial: true) { _, n in if n > 0 { showJournal = true } }
         .onChange(of: settingsRequest, initial: true) { _, n in if n > 0 { showSettings = true } }
         .navigationDestination(isPresented: $showSettings) { SettingsScreen() }
+        // The ONE destination every card opens: the metric's detail, its ranges ending on the selected day.
+        .navigationDestination(item: $detail) { key in
+            TodayDetail.screen(key, day: TodayDetail.detailDay(key, selected: selection.key, snapshot: snapshot,
+                                                               readiness: readiness))
+        }
         .sheet(isPresented: $showJournal, onDismiss: { journalSeq += 1 }) {
             JournalSheet(day: selection.key)
         }
@@ -155,25 +177,50 @@ struct TodayScreen: View {
         } else if repo.baselineDays.isEmpty {
             emptyStore
         } else if let s = snapshot {
-            ReadinessCard(readiness: readiness, progressHeadline: progressHeadline, isToday: selection.isToday)
+            ReadinessCard(readiness: readiness, progressHeadline: progressHeadline, isToday: selection.isToday) { open(.readiness) }
             if selection.isToday, let signals, !signals.isEmpty {
                 SignalsCard(signals: signals)
             }
             rings(s)
-            if let steps, steps.hasRecordedSource {
-                StepsCard(readout: steps, isToday: selection.isToday)
+            // Only once the strap has banked heart rate for the day (today included: the trace runs from
+            // midnight, so the night ending this morning fills it). No "not yet" card: the Stress card
+            // below carries the one "No daytime data yet" line.
+            if let heartRate {
+                HeartRateCard(trace: heartRate, isToday: selection.isToday) { open(.heartRate) }
             }
-            LastNightCard(sleep: s.sleep, dayKey: s.todayKey, isToday: selection.isToday)
+            if let steps, steps.hasRecordedSource {
+                StepsCard(readout: steps, isToday: selection.isToday) { open(.steps) }
+            }
+            if let intensity, Self.showsIntensity(intensity, isToday: selection.isToday, isPaired: isPaired) {
+                IntensityCard(readout: intensity, isToday: selection.isToday) { open(.intensityMinutes) }
+            }
+            LastNightCard(sleep: s.sleep, dayKey: s.todayKey, isToday: selection.isToday) { open(.sleepDuration) }
             // Today's card waits for the day with a paired strap ("No daytime data yet"); a past day
             // without a scored hour, or any day without a strap, shows no Stress card at all.
             if stress != nil || (selection.isToday && isPaired) {
-                StressCard(stress: stress, isToday: selection.isToday)
+                StressCard(stress: stress, isToday: selection.isToday) { open(.stressAvg) }
             }
-            EffortCard(effort: s.effort, workouts: workouts, calories: calories, isToday: selection.isToday)
+            // Effort, calories and workouts are one card (the calorie figure is a cell, its caption a
+            // chevron row into the Calories detail).
+            EffortCard(effort: s.effort, calories: calories, workouts: workouts, dayKey: s.todayKey,
+                       isToday: selection.isToday) { open(.effort) }
         }
     }
 
     private var isPaired: Bool { StrapStatusPill.isPaired(live: live, registry: model.deviceRegistry) }
+
+    private func open(_ key: MetricKey) { detail = key }
+
+    /// When the Intensity card appears: once it has a reading. Any day with credited minutes or imported
+    /// workouts; today otherwise only once the week so far has credited minutes (the track carries a
+    /// reading even while today is still at zero), never as a "builds through the day" placeholder; a
+    /// past day also when heart rate was scored (its zero is a finished reading). Without an age or a max
+    /// heart rate, only today with a paired strap shows the card, as the one ask for the age.
+    static func showsIntensity(_ r: BaselineReadouts.IntensityReadout, isToday: Bool, isPaired: Bool) -> Bool {
+        if r.basis == .needsAge { return isToday && isPaired }
+        if r.creditedToday > 0 || r.basis == .workoutsOnly { return true }
+        return isToday ? r.weekCredited > 0 : r.scoredMinutes > 0
+    }
 
     /// No night yet: what will appear, and the one action that makes it appear.
     private var emptyStore: some View {
@@ -189,13 +236,14 @@ struct TodayScreen: View {
     }
 
     /// Exactly two rings, each in its own tile (never a third, never concentric): side by side, stacked
-    /// at accessibility type sizes.
+    /// at accessibility type sizes. Each tile opens its metric's detail.
     @ViewBuilder private func rings(_ s: TodaySnapshot) -> some View {
         let hrv = TodayRingTile(title: "HRV", unit: "ms", color: BaselineTheme.hrv, cfg: Baselines.hrvCfg,
                                 higherIsBetter: true, reading: s.hrv, dayKey: s.todayKey,
-                                weekLine: s.readiness.weekPhrase)
+                                weekLine: s.readiness.weekPhrase, hint: TodayDetail.hint(.hrv)) { open(.hrv) }
         let rhr = TodayRingTile(title: "Resting HR", unit: "bpm", color: BaselineTheme.rhr, cfg: Baselines.restingHRCfg,
-                                higherIsBetter: false, reading: s.restingHr, dayKey: s.todayKey)
+                                higherIsBetter: false, reading: s.restingHr, dayKey: s.todayKey,
+                                hint: TodayDetail.hint(.rhr)) { open(.rhr) }
         if dynamicTypeSize.isAccessibilitySize {
             VStack(spacing: 12) { hrv; rhr }
         } else {
@@ -204,6 +252,10 @@ struct TodayScreen: View {
     }
 
     // MARK: Load
+
+    /// The profile the Intensity classifier may use (nil until an age or a max heart rate was entered).
+    private var intensityProfile: ProfileStore? { TodayDetail.intensityProfile(profile, entered: profileSet) }
+    private var intensityHRmax: Int { intensityProfile?.hrMax ?? 0 }
 
     private func roll() {
         let now = Date()
@@ -218,17 +270,21 @@ struct TodayScreen: View {
         selection.setEarliest(days.first.flatMap { TodayFormat.date(fromDayKey: $0.day) })
         let key = selection.key
         let isToday = selection.isToday
+        let mode = BaselineDataSource.resolve(dataSourceRaw)
         let cacheKey = HomeDayCache.Key(dayKey: key,
                                         logicalKey: selection.logicalKey(todayLogicalKey: todayLogicalKey),
                                         refreshSeq: repo.refreshSeq, dataSource: dataSourceRaw,
-                                        horizon: progressHorizonRaw)
+                                        horizon: progressHorizonRaw, intensityGoal: intensityGoal,
+                                        intensityHRmax: intensityHRmax)
         let seq = journalSeq
 
         if let hit = cache.entry(for: cacheKey) {
             // Already built under this store state: show it at once. Only today's signals (the journal
-            // was edited since) and today's Stress curve (daytime heart rate lands without a refresh)
-            // can be stale; the curve goes through NOOP's fingerprint memo, so an unchanged day costs
-            // one small query.
+            // was edited since) and today's intraday readings (daytime heart rate lands without a
+            // refresh: the Stress curve, the heart-rate trace, the Intensity minutes) can be stale; the
+            // curve goes through NOOP's fingerprint memo, the trace re-reads today's buckets, and the day
+            // store never serves TODAY from its memo: it re-reads today's 60-second buckets and recomputes
+            // the day only when they moved (the rest of the week stands until the next `refreshSeq`).
             show(hit)
             if isToday, hit.signalsJournalSeq != seq {
                 let journal = await repo.journalEntries(days: 7)
@@ -243,6 +299,13 @@ struct TodayScreen: View {
                 guard key == selection.key else { return }
                 cache.updateStress(fresh, for: cacheKey)
                 stress = fresh
+                let nights = cache.nights(refreshSeq: cacheKey.refreshSeq, dataSource: cacheKey.dataSource)
+                let trace = await BaselineReadouts.intradayHeartRate(repo, for: key, nights: nights, mode: mode)
+                let minutes = await BaselineReadouts.intensity(repo, profile: intensityProfile, for: key, mode: mode)
+                guard key == selection.key else { return }
+                cache.updateIntraday(heartRate: trace, intensity: minutes, for: cacheKey)
+                heartRate = trace
+                intensity = minutes
             }
             return
         }
@@ -277,15 +340,19 @@ struct TodayScreen: View {
             .map(TodayWorkout.init)
         // The metrics layer: the stored Readiness score (never recomputed; resolved once in the snapshot,
         // where the morning summary and the widgets read the same one), steps through NOOP's strap →
-        // phone → estimate resolver, the whole-day calorie estimate, the day's Stress curve.
+        // phone → estimate resolver, the whole-day calorie estimate, the day's Stress curve, the day's
+        // heart-rate trace (strap only) and its Intensity minutes with the week they fall in.
         let dayReadiness = snap.readinessScore
-        let daySteps = await BaselineReadouts.steps(repo, for: key, mode: BaselineDataSource.resolve(dataSourceRaw))
+        let daySteps = await BaselineReadouts.steps(repo, for: key, mode: mode)
         // Calories through the same 04:00-rollover row as the Effort cell (`cacheKey.logicalKey`).
         let dayCalories = BaselineReadouts.calories(for: key, days: days, logicalKey: cacheKey.logicalKey)
         let dayStress = await BaselineReadouts.stressDay(repo, for: key)
+        let dayHeartRate = await BaselineReadouts.intradayHeartRate(repo, for: key, nights: nights, mode: mode)
+        let dayIntensity = await BaselineReadouts.intensity(repo, profile: intensityProfile, for: key, mode: mode)
         let entry = HomeDayCache.Entry(snapshot: snap, signals: daySignals, signalsJournalSeq: seq,
                                        workouts: dayWorkouts, progressHeadline: headline,
-                                       readiness: dayReadiness, steps: daySteps, calories: dayCalories, stress: dayStress)
+                                       readiness: dayReadiness, steps: daySteps, calories: dayCalories, stress: dayStress,
+                                       heartRate: dayHeartRate, intensity: dayIntensity)
         cache.store(entry, for: cacheKey)
         // The person may have swiped on while the store answered: never land an older day's cards (the
         // entry stays cached for when they come back).
@@ -302,6 +369,8 @@ struct TodayScreen: View {
         steps = entry.steps
         calories = entry.calories
         stress = entry.stress
+        heartRate = entry.heartRate
+        intensity = entry.intensity
     }
 }
 #endif

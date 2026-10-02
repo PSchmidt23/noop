@@ -1,9 +1,11 @@
 #if os(iOS)
 import SwiftUI
 
-/// The Sleep tab: last night as a ring against the 30-night average, its timing (the last 14 nights
-/// against the target window, the averages, regularity and tonight's aim), its stages, and the last 30
-/// nights as a list that pushes `NightDetailScreen` (where the night's vitals live). Nights come from
+/// The Sleep tab: last night as a ring against the 30-night average (its "Sleep over time" row pushes
+/// the sleep-duration detail, `MetricDetailScreen` with `SleepDetail.durationSpec()`), its timing (the
+/// last 14 nights against the target window, the averages, regularity and tonight's aim; its "Bedtime
+/// and wake over time" row pushes `SleepTimingDetailScreen`), its stages, and the last 30 nights as a
+/// list that pushes `NightDetailScreen` (where the night's heart rate and vitals live). Nights come from
 /// the strap-first funnel (`repo.baselineNights()` / `repo.baselineDays`), never from `repo.days`.
 struct SleepScreen: View {
     @EnvironmentObject private var repo: Repository
@@ -46,7 +48,7 @@ struct SleepScreen: View {
     var body: some View {
         BaselineScreen(title: "Sleep") {
             if let last = nights.first {
-                SleepHeroCard(title: heroTitle(for: last), night: last, average: average30)
+                SleepHeroCard(title: heroTitle(for: last), night: last, average: average30, showsDetailLink: true)
                 SleepTimingCard(timing: timing(for: last))
                 SleepHypnogramCard(night: last)
                 nightsCard

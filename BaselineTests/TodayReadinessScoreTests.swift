@@ -163,11 +163,11 @@ final class TodayReadinessScoreTests: BaselineEngineTestCase {
 
     // MARK: Captions
 
-    func testCaloriesLine_saysEstimateOnceAndTheDeltaOrTheWait() {
+    func testCaloriesLine_onTheEffortCard_namesCaloriesAndTheEstimateOnce_thenTheDeltaOrTheWait() {
         let early = BaselineReadouts.CaloriesReadout(day: today, kcal: 2_143, average30: nil, observed30: 1)
-        XCTAssertEqual(EffortCard.caloriesLine(early), "Estimated from heart rate · 30\u{2011}day average after 2 more days")
+        XCTAssertEqual(EffortCard.caloriesLine(early), "Calories estimated from heart rate · 30\u{2011}day average after 2 more days")
         let compared = BaselineReadouts.CaloriesReadout(day: today, kcal: 2_343, average30: 2_160, observed30: 12)
-        XCTAssertEqual(EffortCard.caloriesLine(compared), "Estimated from heart rate · +180 vs your 30\u{2011}day average")
+        XCTAssertEqual(EffortCard.caloriesLine(compared), "Calories estimated from heart rate · +180 vs your 30\u{2011}day average")
         XCTAssertEqual(BaselineReadouts.caloriesText(2_143), "2,140")
     }
 

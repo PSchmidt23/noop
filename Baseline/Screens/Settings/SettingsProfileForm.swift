@@ -83,7 +83,7 @@ struct SettingsProfileForm: View {
             }
 
             BaselineCard(title: "Max heart rate") {
-                Text("Sets the top of your effort scale and zones.")
+                Text("Sets the top of your effort scale, your zones and the intensity-minute lines.")
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textTertiary)
                 Toggle(isOn: manualMaxHR) {
@@ -96,12 +96,22 @@ struct SettingsProfileForm: View {
                         SettingsFieldLabel(title: "Max HR", value: "\(profile.hrMaxOverride) bpm")
                     }
                 } else {
-                    SettingsFieldLabel(title: "Estimated from your age", value: "\(profile.hrMax) bpm")
+                    SettingsFieldLabel(title: "Estimated from your age", value: estimatedMaxHR)
                 }
             }
         }
         .tint(BaselineTheme.accent)
     }
+
+    /// The "Estimated from your age" value, through the gate Home's Intensity card reads
+    /// (`TodayDetail.intensityProfile`): the estimate once a date of birth exists, else
+    /// `estimatePending`, so this row cannot quote an age the "About you" card says is not set.
+    private var estimatedMaxHR: String {
+        TodayDetail.intensityProfile(profile, entered: profileSet).map { "\($0.hrMax) bpm" } ?? Self.estimatePending
+    }
+
+    /// The "Estimated from your age" value while there is no date of birth to estimate from.
+    static let estimatePending = "Needs your date of birth"
 
     /// On: seed the override with today's estimate so the stepper starts from a sensible number.
     /// Off: clear it (0 means "estimate from age").

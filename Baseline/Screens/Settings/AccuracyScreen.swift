@@ -4,12 +4,17 @@ import SwiftUI
 /// Settings › About › "How accurate is this?": every metric Baseline shows, grouped by the evidence tier
 /// the cited review gives it (`MetricAccuracy.all`, the machine-readable table of
 /// `Baseline/Research/METRIC_ACCURACY.md`), each with the table's one-line caveat and the studies behind
-/// it as tappable author–year links (`AccuracyCitations`). One card per tier, one sentence on what the
-/// tier means, the full review linked once at the foot. The tiers and caveats are not restated here:
-/// change the research doc, then `MetricAccuracy`, and this screen follows.
+/// it as tappable author–year links (`AccuracyCitations`). Intensity minutes and the day's heart rate,
+/// rated by the second review (`Baseline/Research/INTENSITY_MINUTES.md` §4), join the tier cards through
+/// `AccuracyExtras`, their caveats read from the detail screens' own badges. One card per tier, one
+/// sentence on what the tier means, each review linked once at the foot. The tiers and caveats are not
+/// restated here: change the research doc, then `MetricAccuracy` / `MetricDetailSpec`, and this screen
+/// follows.
 struct AccuracyScreen: View {
     /// The review itself, rendered by GitHub (the fork, next to the engine map and the design notes).
     static let reviewURL = URL(string: "https://github.com/PSchmidt23/noop/blob/main/Baseline/Research/METRIC_ACCURACY.md")!
+    /// The second review: the definition and evidence behind Intensity minutes and daytime heart rate.
+    static let intensityReviewURL = URL(string: "https://github.com/PSchmidt23/noop/blob/main/Baseline/Research/INTENSITY_MINUTES.md")!
 
     var body: some View {
         BaselineScreen(title: "Accuracy") {
@@ -23,25 +28,50 @@ struct AccuracyScreen: View {
                 AccuracyTierCard(tier: tier)
             }
 
-            BaselineCard(title: "The full review") {
-                Text("About 1,800 words with 31 references, each checked for title, authors, journal and year. The two vendor documents it cites are left out of the lists above.")
+            BaselineCard(title: "The full reviews") {
+                Text("Two cited reviews, every reference checked for title, authors, journal and year; the vendor documents they cite are left out of the lists above.")
                     .font(BaselineTheme.caption)
                     .foregroundStyle(BaselineTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 SettingsDivider()
-                Link(destination: Self.reviewURL) {
-                    SettingsRowLabel(icon: "doc.text.magnifyingglass", title: "Read it on GitHub",
-                                     subtitle: "Baseline/Research/METRIC_ACCURACY.md") {
-                        Image(systemName: "arrow.up.right")
-                            .font(BaselineTheme.symbolSmall)
-                            .foregroundStyle(BaselineTheme.textTertiary)
-                            .accessibilityHidden(true)
-                    }
-                }
+                reviewLink(Self.reviewURL, title: "Every metric",
+                           subtitle: "About 1,800 words, 31 references")
+                SettingsDivider()
+                reviewLink(Self.intensityReviewURL, title: "Intensity minutes and heart rate",
+                           subtitle: "The definition and 17 references")
             }
         }
         .tint(BaselineTheme.accent)
     }
+
+    /// A row that opens one review on GitHub.
+    private func reviewLink(_ url: URL, title: String, subtitle: String) -> some View {
+        Link(destination: url) {
+            SettingsRowLabel(icon: "doc.text.magnifyingglass", title: title, subtitle: subtitle) {
+                Image(systemName: "arrow.up.right")
+                    .font(BaselineTheme.symbolSmall)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+}
+
+/// The metrics the second review rates (`INTENSITY_MINUTES.md` §4) that `MetricAccuracy.all`, pinned to
+/// `METRIC_ACCURACY.md`'s table, does not carry: Intensity minutes and the day's heart rate. Tier and
+/// caveat are the ones the detail screens' badges show (`MetricDetailSpec.standard`), read from there so a
+/// row here and a badge there can never disagree; a spec without an explicit rating adds no row.
+enum AccuracyExtras {
+    static let keys: [MetricKey] = [.intensityMinutes, .heartRate]
+
+    static let rows: [MetricAccuracy] = keys.compactMap { key in
+        let spec = MetricDetailSpec.standard(key)
+        guard spec.accuracyKey == nil, let rating = spec.accuracy else { return nil }
+        return MetricAccuracy(key: key.rawValue, name: spec.title, tier: rating.tier, caveat: rating.caveat)
+    }
+
+    /// Both tables in the literature's order: the metric review's rows, then the second review's.
+    static var allRows: [MetricAccuracy] { MetricAccuracy.all + rows }
 }
 
 /// One tier: its label as the card title, the badge's dot as the accessory, one sentence on what the
@@ -49,7 +79,7 @@ struct AccuracyScreen: View {
 private struct AccuracyTierCard: View {
     let tier: MetricAccuracy.Tier
 
-    private var rows: [MetricAccuracy] { MetricAccuracy.all.filter { $0.tier == tier } }
+    private var rows: [MetricAccuracy] { AccuracyExtras.allRows.filter { $0.tier == tier } }
 
     var body: some View {
         BaselineCard(title: tier.label,
@@ -108,7 +138,10 @@ private struct AccuracyRow: View {
 /// The references behind each `MetricAccuracy` row, as author–year shorts with their DOI links, numbered
 /// as in `METRIC_ACCURACY.md`'s reference list so a number here is the same number there. Peer-reviewed
 /// work only: the review's two vendor documents (23, 24) and the preprint duplicate of 29 (30) are not
-/// listed. Pure data; `AccuracyScreenTests` pins every metric to at least one reference.
+/// listed. The second review (`INTENSITY_MINUTES.md`) keeps its own list and numbering
+/// (`intensityReferences`, `intensityByMetric`); its vendor pages (G1–G12, F1–F3, A1, W1–W2) and the
+/// Karvonen paper (5, PMID only, no DOI) are not listed. Pure data; `AccuracyScreenTests` pins every
+/// metric to at least one reference.
 enum AccuracyCitations {
     struct Reference: Identifiable, Equatable {
         let number: Int
@@ -172,11 +205,41 @@ enum AccuracyCitations {
         "effort": [4, 20],
     ]
 
-    private static let byNumber = Dictionary(references.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+    /// `INTENSITY_MINUTES.md`'s peer-reviewed references, by ITS numbers (1–17): the guidelines and the
+    /// cut-offs the definition rests on, and the heart-rate validation studies behind the two tiers.
+    static let intensityReferences: [Reference] = [
+        doi(1, "Bull 2020", "10.1136/bjsports-2020-102955"),
+        doi(2, "Piercy 2018", "10.1001/jama.2018.14854"),
+        doi(4, "Garber 2011", "10.1249/MSS.0b013e318213fefb"),
+        doi(8, "Ho 2022", "10.1177/20552076221124393"),
+        doi(9, "Dooley 2017", "10.2196/mhealth.7043"),
+        doi(10, "Reddy 2018", "10.2196/10338"),
+        doi(11, "Wallen 2016", "10.1371/journal.pone.0154420"),
+        doi(12, "Warner 2025", "10.1177/20552076251326225"),
+        doi(13, "Boudreaux 2018", "10.1249/MSS.0000000000001471"),
+        doi(14, "Bai 2018", "10.1080/02640414.2017.1412235"),
+        doi(15, "Schweizer 2025", "10.2196/67110"),
+        doi(16, "Briggs 2021", "10.3389/fspor.2021.766317"),
+        doi(17, "Tanaka 2001", "10.1016/S0735-1097(00)01054-8"),
+    ]
 
-    /// The references for a metric, in citation order; empty for an unknown key.
+    /// `MetricKey.rawValue` → numbers in `intensityReferences`, in the order §4 and §5 cite them: the
+    /// one study at the Karvonen cut-offs first, then minutes-level evidence, then the definition's
+    /// sources for Intensity minutes; arm-versus-wrist, treadmill and resistance-exercise accuracy for
+    /// heart rate.
+    static let intensityByMetric: [String: [Int]] = [
+        MetricKey.intensityMinutes.rawValue: [8, 16, 12, 4, 1, 17],
+        MetricKey.heartRate.rawValue: [8, 15, 9, 10, 11, 13, 14],
+    ]
+
+    private static let byNumber = Dictionary(references.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+    private static let intensityByNumber = Dictionary(intensityReferences.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+
+    /// The references for a metric, in citation order; empty for an unknown key. A key rated by the
+    /// metric review resolves against its list, one rated by the second review against that list.
     static func sources(for key: String) -> [Reference] {
-        (byMetric[key] ?? []).compactMap { byNumber[$0] }
+        if let cited = byMetric[key] { return cited.compactMap { byNumber[$0] } }
+        return (intensityByMetric[key] ?? []).compactMap { intensityByNumber[$0] }
     }
 
     /// "Sources: [Bellenger 2021](https://doi.org/…) · [Dial 2025](…)" — Markdown for `Text`.

@@ -3,8 +3,10 @@ import XCTest
 
 /// Screenshot harness: one test per Baseline screen — the three tabs (`home`, `trends`, `sleep`), the
 /// journal sheet over Home (`journal`, via Home's "Journal" button), Settings (`settings`, via the gear) and
-/// its Devices / Apple Health / Import / Compare / Export / Accuracy pushes, Trends' embedded Progress and Habits
-/// sections (via the pinned segments), Workouts and its detail — plus the three welcome steps and the launch
+/// its Devices / Apple Health / Import / Compare / Export / Accuracy pushes (and the Intensity goal card on
+/// its own frame), Trends' embedded Progress and Habits sections (via the pinned segments), Workouts and its
+/// detail, the metric details (HRV and heart rate at 1D / 7D / 4W / 1Y, Intensity minutes, bedtime and wake over time) —
+/// plus the three welcome steps and the launch
 /// frame. Each test launches the app with its DEBUG launch arguments (`--tab home|trends|sleep`, always with
 /// `--ui-testing`, which pins the tab bar so a scrolled capture is deterministic),
 /// waits for the screen's first card, captures the top of the screen, then scrolls up until the content
@@ -60,6 +62,161 @@ final class ScreenshotTests: XCTestCase {
         let app = launchSettings(extraArguments: ["-baseline.eveningCheckIn.enabled", "YES"])
         try capturePushed(app, screen: "settings", title: nil,
                           firstCard: NSPredicate(format: "label CONTAINS[c] %@", "connected"))
+
+        // Profile's Intensity goal card (the weekly goal stepper and the heart-rate basis line) on its own
+        // frames: back to Home and in again, so Settings starts at its top, then scrolled until the card's
+        // title sits in the upper half. At accessibility sizes the twelve-step pass above can stop short
+        // of the Profile section.
+        XCTAssertTrue(goBack(app, to: "Today"), "settings: Back did not return to Home")
+        XCTAssertTrue(openSettings(app), "home: Settings gear did not push Settings again")
+        try captureCard(app, screen: "settings-intensity-goal", title: "Intensity goal")
+    }
+
+    // MARK: - Metric details (seeded, onboarding skipped)
+
+    /// Home › the HRV ring tile › `MetricDetailScreen` for HRV at every range: the pinned glass range
+    /// picker (1D / 7D / 4W / 1Y), the hero row (Latest / Average / Low / High; This day / Day before on
+    /// 1D; a two-column grid at accessibility sizes), the range chart over the personal band (1Y: weekly
+    /// means with the lows-to-highs envelope) and "About this metric". Each range is opened afresh, so
+    /// every capture starts at the top: `hrv-detail-7d` (the range the tile opens on), `-1d`, `-4w`, `-1y`.
+    func testHRVDetail() throws {
+        let app = launchTab("home")
+        try captureRanges(app, screen: "hrv-detail", title: "HRV", home: "Today",
+                          open: { self.openHRVDetail(app) })
+    }
+
+    /// Home on yesterday › the Heart rate card › `MetricDetailScreen` for heart rate: 1D first, the range
+    /// the card opens on (the hero row and the day's trace, `IntradayHRChart`, with the night and any
+    /// workout shaded), then 7D / 4W / 1Y (the day's low / average / high from the per-day records).
+    /// The demo seed banks no heart rate, so the launch adds `-baseline.demoHeartRate YES` (DEBUG:
+    /// `BaselineReadouts.DemoHeartRate`, a synthetic trace for a day the store has none for, never written
+    /// to the store). That trace is presentation only, so the 7D / 4W / 1Y frames show the empty state
+    /// ("No days with heart rate in …"): under the seed they verify the empty copy, not a chart.
+    /// Yesterday, so the 1D trace spans the whole day whatever the clock says when the suite runs.
+    func testHeartRateDetail() throws {
+        let app = launchTab("home", extraArguments: ["-baseline.demoHeartRate", "YES"])
+        XCTAssertTrue(app.staticTexts["HRV"].firstMatch.waitForExistence(timeout: 20), "home: first card (HRV) did not appear")
+        XCTAssertTrue(moveToPreviousDay(app), "home: Previous day did not move to Yesterday")
+        try captureRanges(app, screen: "heart-rate-detail", title: "Heart rate", home: "Yesterday",
+                          first: (.day, "Through the day"), others: "About this metric",
+                          open: { self.openCardDetail(app, card: "Heart rate") })
+    }
+
+    /// Home › the Intensity minutes card › its detail on 1D (the week card: seven Monday-to-Sunday bars
+    /// with the goal pace, the week track, the day's split and basis line). The demo seed has no heart
+    /// rate, so the minutes are credited from the seeded workouts' zone minutes ("from workouts only");
+    /// the card shows on a day that has some, so the test steps back from today (at most 8 days) until
+    /// the card appears.
+    func testIntensity() throws {
+        let app = launchTab("home")
+        XCTAssertTrue(app.staticTexts["HRV"].firstMatch.waitForExistence(timeout: 20), "home: first card (HRV) did not appear")
+        var found = false
+        for step in 0..<8 {
+            if step > 0 {
+                guard stepBack(app) else { break }
+            }
+            let card = Self.labelled(app, "Intensity minutes")
+            if scrollUntilHittable(app, card, maxScrolls: 10) { found = true; break }
+            scrollToTop(app)
+        }
+        XCTAssertTrue(found, "home: no day in the last week shows the Intensity minutes card")
+        guard found else { return }
+        // One frame of the card with its title clear of the pinned day switcher: the card sits near the
+        // end of Home, so the scroll that lifted it off the Journal bar can carry its title under the
+        // switcher (still "hittable" to XCUITest, but a tap there lands on the switcher).
+        let card = Self.labelled(app, "Intensity minutes")
+        XCTAssertTrue(nudgeBelowPinnedBar(app, card), "home: Intensity minutes title stayed under the day switcher")
+        Thread.sleep(forTimeInterval: 0.6)
+        try save(XCUIScreen.main.screenshot(), as: "intensity-card-0")
+        XCTAssertTrue(tapUntilPushed(app, card, title: "Intensity minutes"), "home: the Intensity minutes card did not open its detail")
+        try captureDetail(app, screen: "intensity-detail-1d", title: "Intensity minutes", firstLabel: "This day")
+        XCTAssertTrue(selectSegment(app, "Last 7 days", screen: "intensity-detail"), "intensity-detail: 7D was not selected")
+        scrollToTop(app)
+        try captureDetail(app, screen: "intensity-detail-7d", title: "Intensity minutes", firstLabel: "Latest")
+    }
+
+    /// Sleep › the timing card's "Bedtime and wake over time" row › `SleepTimingDetailScreen` on 7D: the
+    /// pinned range picker, the hero row (average bedtime and wake, nights), the bedtime and wake lines
+    /// over the shaded target window and "About this metric".
+    func testSleepTiming() throws {
+        let app = launchTab("sleep")
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Bedtime and wake over time")).firstMatch
+        XCTAssertTrue(scrollUntilHittable(app, row), "sleep: Bedtime and wake over time row did not appear")
+        XCTAssertTrue(tapUntilPushed(app, row, title: "Bedtime and wake"), "sleep: the row did not open the timing detail")
+        try captureDetail(app, screen: "sleep-timing", title: "Bedtime and wake", firstLabel: "Average bedtime")
+    }
+
+    /// Home's HRV ring tile (the ring's "HRV" heading; the whole tile is the tap target) → its detail.
+    private func openHRVDetail(_ app: XCUIApplication) -> Bool {
+        let tile = app.staticTexts["HRV"].firstMatch
+        XCTAssertTrue(scrollUntilHittable(app, tile), "home: HRV ring did not appear")
+        return tapUntilPushed(app, tile, title: "HRV")
+    }
+
+    /// A Home card by its title (a Text with the button trait, `TodayDetailCard`, matched by label whatever
+    /// element type XCUITest gives it) → its detail, whose bar title is the card's title.
+    private func openCardDetail(_ app: XCUIApplication, card title: String) -> Bool {
+        let card = Self.labelled(app, title)
+        XCTAssertTrue(scrollUntilHittable(app, card), "home: \(title) card did not appear")
+        return tapUntilPushed(app, card, title: title)
+    }
+
+    /// Home's "Previous day" chevron, then waits for the "Yesterday" title.
+    @discardableResult
+    private func moveToPreviousDay(_ app: XCUIApplication) -> Bool {
+        guard stepBack(app) else { return false }
+        let yesterday = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Yesterday")).firstMatch
+        return yesterday.waitForExistence(timeout: 10)
+    }
+
+    /// One tap on Home's "Previous day" chevron (the day switcher in the bar), then a pause for the day's
+    /// cards to load.
+    private func stepBack(_ app: XCUIApplication) -> Bool {
+        let previous = app.buttons["Previous day"].firstMatch
+        guard previous.waitForExistence(timeout: 10), previous.isHittable else { return false }
+        previous.tap()
+        Thread.sleep(forTimeInterval: 1.2)
+        return true
+    }
+
+    /// One detail at each range, each opened afresh from `home` (the title of the screen underneath) so
+    /// every capture starts at the top: `first` (the range the entry point opens on, with the label its
+    /// hero shows) as `<screen>-<range>`, then the other three via the pinned picker's segments, each
+    /// waiting for `others` (an empty window has no "Latest" cell, so heart rate under the seed waits for
+    /// "About this metric").
+    private func captureRanges(_ app: XCUIApplication, screen: String, title: String, home: String,
+                               first: (MetricRangeLabel, String) = (.week, "Latest"),
+                               others: String = "Latest", open: () -> Bool) throws {
+        XCTAssertTrue(open(), "\(screen): the entry point did not open the detail")
+        try captureDetail(app, screen: "\(screen)-\(first.0.suffix)", title: title, firstLabel: first.1)
+        for range in MetricRangeLabel.allCases where range != first.0 {
+            XCTAssertTrue(goBack(app, to: home), "\(screen): Back did not return to \(home)")
+            XCTAssertTrue(open(), "\(screen): the entry point did not open the detail again")
+            XCTAssertTrue(selectSegment(app, range.spoken, screen: screen), "\(screen): \(range.suffix) was not selected")
+            try captureDetail(app, screen: "\(screen)-\(range.suffix)", title: title,
+                              firstLabel: range == .day ? "This day" : others)
+        }
+    }
+
+    /// The detail picker's segments by their spoken form (`MetricRange.subtitle`).
+    private enum MetricRangeLabel: CaseIterable {
+        case day, week, fourWeeks, year
+        var spoken: String {
+            switch self {
+            case .day: return "One day"
+            case .week: return "Last 7 days"
+            case .fourWeeks: return "Last 4 weeks"
+            case .year: return "Last year"
+            }
+        }
+        var suffix: String {
+            switch self {
+            case .day: return "1d"
+            case .week: return "7d"
+            case .fourWeeks: return "4w"
+            case .year: return "1y"
+            }
+        }
     }
 
     // MARK: - Sections and pushed screens (seeded, onboarding skipped)
@@ -371,17 +528,106 @@ final class ScreenshotTests: XCTestCase {
     /// navigation title stays "Trends" whichever section shows, so the trait, not a title, is the signal.
     @discardableResult
     private func selectTrendsSection(_ app: XCUIApplication, _ label: String) -> Bool {
+        selectSegment(app, label, screen: "trends")
+    }
+
+    /// A segment of any `BaselineSegmentedPicker` (Trends' sections, a detail's pinned 1D / 7D / 4W / 1Y,
+    /// whose buttons carry the spoken form: "One day", "Last 7 days"), tapped until it carries the
+    /// selected trait (three tries).
+    @discardableResult
+    private func selectSegment(_ app: XCUIApplication, _ label: String, screen: String) -> Bool {
         let segment = app.buttons[label].firstMatch
         guard segment.waitForExistence(timeout: 20) else {
-            XCTFail("trends: \(label) segment did not appear")
+            XCTFail("\(screen): \(label) segment did not appear")
             return false
         }
         for _ in 1...3 {
             segment.tap()
             if segment.wait(for: \.isSelected, toEqual: true, timeout: 6) { return true }
         }
-        XCTFail("trends: \(label) segment did not become selected")
+        XCTFail("\(screen): \(label) segment did not become selected")
         return false
+    }
+
+    /// Taps `element` until the pushed screen's `title` is the bar's title: a tap that lands while the
+    /// seeded screen is still settling can be swallowed, so at most three tries.
+    @discardableResult
+    private func tapUntilPushed(_ app: XCUIApplication, _ element: XCUIElement, title: String) -> Bool {
+        let nav = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", title)).firstMatch
+        for _ in 1...3 {
+            guard element.exists && element.isHittable else { break }
+            element.tap()
+            if nav.waitForExistence(timeout: 6) { return true }
+        }
+        return nav.exists
+    }
+
+    /// The bar's Back button, then waits for `title` (the screen underneath) and lets the pop finish, so
+    /// the next tap never lands on the screen that is leaving.
+    @discardableResult
+    private func goBack(_ app: XCUIApplication, to title: String) -> Bool {
+        app.navigationBars.buttons.firstMatch.tap()
+        let nav = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", title)).firstMatch
+        let shown = nav.waitForExistence(timeout: 10)
+        Thread.sleep(forTimeInterval: 0.6)
+        return shown
+    }
+
+    /// Any element whose label is exactly `label`: a `StatCell` is one combined element and a card title
+    /// with the button trait is a button, so neither is reliably a static text.
+    private static func labelled(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+    }
+
+    /// A metric detail pushed by a tap: waits for its inline `title` and for the element labelled
+    /// `firstLabel` (a hero cell or a card title), lets the chart marks settle, then captures the top and
+    /// every scroll position below as `<screen>-<n>.png`.
+    private func captureDetail(_ app: XCUIApplication, screen: String, title: String, firstLabel: String) throws {
+        let nav = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", title)).firstMatch
+        XCTAssertTrue(nav.waitForExistence(timeout: 10), "\(screen): \"\(title)\" navigation title did not appear")
+        let shown = Self.labelled(app, firstLabel).waitForExistence(timeout: 20)
+        Thread.sleep(forTimeInterval: 0.8)
+        try captureScrolled(app, screen: screen)
+        XCTAssertTrue(shown, "\(screen): \"\(firstLabel)\" did not appear (screenshots still written)")
+    }
+
+    /// One card on its own frames: scrolls until the element labelled `title` (the card's header) sits in
+    /// the upper half of the screen, captures `<screen>-0`, then one more scroll step and `<screen>-1`
+    /// when the content still moved (a card taller than the rest of the screen at accessibility sizes).
+    private func captureCard(_ app: XCUIApplication, screen: String, title: String) throws {
+        let placed = scrollIntoUpperHalf(app, Self.labelled(app, title))
+        Thread.sleep(forTimeInterval: 0.6)
+        let first = XCUIScreen.main.screenshot()
+        try save(first, as: "\(screen)-0")
+        scrollUp(app)
+        Thread.sleep(forTimeInterval: 0.6)
+        let second = XCUIScreen.main.screenshot()
+        if Self.contentBelowStatusBar(second) != Self.contentBelowStatusBar(first) {
+            try save(second, as: "\(screen)-1")
+        }
+        XCTAssertTrue(placed, "\(screen): \"\(title)\" did not scroll into view (screenshots still written)")
+    }
+
+    /// Scrolls until `element` is hittable with its top in the upper half of the screen: a full step while
+    /// it is out of reach, then a shorter one that lifts it to about a third of the way down, so it never
+    /// overshoots under the bars. Stops early when a step no longer moves it (the end of the content).
+    @discardableResult
+    private func scrollIntoUpperHalf(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
+        _ = element.waitForExistence(timeout: 10)
+        let height = app.frame.height
+        var lastTop: CGFloat?
+        for _ in 0..<16 {
+            if element.exists && element.isHittable {
+                let top = element.frame.minY
+                if top <= height * 0.5 || top == lastTop { return true }
+                lastTop = top
+                scrollUp(app, fraction: min(0.46, (top - height * 0.3) / height))
+            } else {
+                scrollUp(app)
+            }
+            Thread.sleep(forTimeInterval: 0.6)
+        }
+        return element.exists && element.isHittable
     }
 
     /// A screen pushed by a tap: waits for `title` (when given) and `firstCard`, then captures top and
@@ -401,9 +647,9 @@ final class ScreenshotTests: XCTestCase {
     /// floating bottom bar (the "Journal" button): XCUITest reports a row under that bar as hittable, but
     /// the tap lands on the bar, exactly as content under a tab bar is out of reach.
     @discardableResult
-    private func scrollUntilHittable(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
+    private func scrollUntilHittable(_ app: XCUIApplication, _ element: XCUIElement, maxScrolls: Int = 12) -> Bool {
         _ = element.waitForExistence(timeout: 10)
-        for _ in 0..<12 {
+        for _ in 0..<maxScrolls {
             if element.exists && element.isHittable && Self.clearOfBottomBar(app, element) { return true }
             scrollUp(app)
             Thread.sleep(forTimeInterval: 0.6)
@@ -418,13 +664,44 @@ final class ScreenshotTests: XCTestCase {
         return element.frame.maxY <= bar.frame.minY - 8
     }
 
-    /// One deterministic scroll of ~45% of the screen: a drag in the 20pt left gutter, held at the end so
-    /// there is no fling. A centre swipe would land on a chart (Trends scrubs instead of scrolling) or a
-    /// control, and would decelerate by an unpredictable distance.
-    private func scrollUp(_ app: XCUIApplication) {
+    /// One deterministic scroll of ~45% of the screen (or `fraction` of it): a drag in the 20pt left
+    /// gutter, held at the end so there is no fling. A centre swipe would land on a chart (Trends scrubs
+    /// instead of scrolling) or a control, and would decelerate by an unpredictable distance.
+    private func scrollUp(_ app: XCUIApplication, fraction: CGFloat = 0.46) {
         let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.80))
-        let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.34))
+        let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.80 - fraction))
         from.press(forDuration: 0.05, thenDragTo: to, withVelocity: XCUIGestureVelocity.fast, thenHoldForDuration: 0.15)
+    }
+
+    /// Short drags down (about 12% of the screen each, at most six) until `element`'s top sits below the
+    /// pinned control under the bar (the top quarter of the screen).
+    @discardableResult
+    private func nudgeBelowPinnedBar(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
+        let height = app.frame.height
+        for _ in 0..<6 {
+            guard element.exists else { return false }
+            if element.frame.minY >= height * 0.25 { return element.isHittable }
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.40))
+            let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.52))
+            from.press(forDuration: 0.05, thenDragTo: to, withVelocity: XCUIGestureVelocity.slow, thenHoldForDuration: 0.15)
+            Thread.sleep(forTimeInterval: 0.6)
+        }
+        return element.exists && element.frame.minY >= height * 0.25 && element.isHittable
+    }
+
+    /// Drags down in the left gutter until the content stops moving (at most eight drags): back to the
+    /// top of a scrolled screen without leaving it.
+    private func scrollToTop(_ app: XCUIApplication) {
+        var previous = Self.contentBelowStatusBar(XCUIScreen.main.screenshot())
+        for _ in 0..<8 {
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.25))
+            let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.85))
+            from.press(forDuration: 0.05, thenDragTo: to, withVelocity: XCUIGestureVelocity.fast, thenHoldForDuration: 0.15)
+            Thread.sleep(forTimeInterval: 0.6)
+            let now = Self.contentBelowStatusBar(XCUIScreen.main.screenshot())
+            if now == previous { return }
+            previous = now
+        }
     }
 
     /// Launches the welcome flow on `step` and captures it once; the pager would change page on a swipe,

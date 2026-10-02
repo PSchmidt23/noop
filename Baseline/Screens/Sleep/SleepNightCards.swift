@@ -18,6 +18,10 @@ struct SleepHeroCard: View {
     let average: Double?
     /// The day label as the card's accessory. `NightDetailScreen` passes false: its title is the day.
     var showsDayLabel: Bool = true
+    /// The "Sleep over time" row that closes the card and pushes the sleep-duration detail
+    /// (`MetricDetailScreen(spec: SleepDetail.durationSpec(), day:)`, 1D / 7D / 4W / 1Y ending on this
+    /// night). The Sleep tab passes true; a night's detail, already a pushed screen, keeps the default.
+    var showsDetailLink: Bool = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// Width of the ring column in the side-by-side layout (the 168pt ring plus its line caps), so the
@@ -36,6 +40,13 @@ struct SleepHeroCard: View {
                 VStack(spacing: 16) {
                     ring
                     BaselineStatRow { cells }
+                }
+            }
+            if showsDetailLink {
+                Rectangle().fill(BaselineTheme.hairline).frame(height: 1)
+                BaselineChevronRow(text: "Sleep over time",
+                                   accessibilityHint: "Opens sleep over a day, 7 days, 4 weeks and a year") {
+                    MetricDetailScreen(spec: SleepDetail.durationSpec(), day: night.dayKey)
                 }
             }
         }
