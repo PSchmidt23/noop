@@ -403,3 +403,153 @@ changes which source's night a day shows.
    "HRV" ring label instead of a "Today" title).
 6. Verify once with Reduce Transparency + Increase Contrast: pinned controls, status pill, Settings
    headers, Welcome buttons, the Journal button (text on glass is ink and never depends on the blur).
+
+## Metrics layer: Readiness score, Steps, Calories, Stress, sleep timing, fitness, accuracy badges
+
+Vocabulary grows to **HRV / Resting HR / Readiness / Sleep / Effort / Steps / Calories / Stress**; the
+banned words stay banned. Trademark guardrail restated for this layer: the Readiness score is a NUMBER
+with a horizontal track bar (`ReadinessBar`), never a ring, and no screen ever shows three rings.
+Every number keeps its context once: the readout structs below carry the baseline / band / average with
+the value, and each component prints it in ONE caption. Accuracy is stated with `AccuracyBadge`, from the
+literature table in `Baseline/Research/METRIC_ACCURACY.md` (`MetricAccuracy.all`), so a card never
+claims more than the evidence does.
+
+### Readouts — `BaselineReadoutsMetrics.swift` (pure; `BaselineReadoutsMetricsTests`)
+
+All of it is `extension BaselineReadouts`, over the funnel's rows (`repo.baselineDays`), the Sleep tab's
+`SleepNight`s and NOOP's own engine results. Nothing here recomputes a score the engine stored.
+
+```swift
+// Readiness: NOOP's 0–100 composite (DailyMetric.recovery) with NOOP's bands (< 34 low · < 67 watch · else good)
+let r = BaselineReadouts.readinessScore(for: day, days: repo.baselineDays)      // nil until the row has a score
+r.score, r.scoreText, r.tone (ReadinessTone .good/.watch/.low), r.tone.label ("Good" / "Steady" / "Low"),
+r.confidence (.building until 14 nights, then .solid), r.drivers ([ChargeDriver]), r.driversSentence
+// "Lifted by heart rate variability (+6), held back by resting heart rate (−3)."  (label + points only, never NOOP's verdict text)
+BaselineReadouts.readinessCalibrationNights(for: day, days: days)   // "N of 4" while there is no score; nil otherwise
+BaselineReadouts.readinessSeedNights                                 // 4
+BaselineReadouts.readinessTone(_ score: Double) -> ReadinessTone
+
+// Steps: the day vs the 7- and 30-day averages of the days BEFORE it (missing days excluded, ≥ 3 observed)
+let s = await BaselineReadouts.steps(repo, for: day)                 // @MainActor; strap counter → phone → strap estimate, then the funnel's `steps` column
+s.steps, s.average7, s.average30, s.observed7, s.observed30, s.recent (7 days ending on `day`, nil = not recorded), s.delta(against:)
+BaselineReadouts.steps(for: day, readings: [(day, value)])            // the pure form (tests)
+BaselineReadouts.stepReadings(repo, from:, to:)                      // the resolution itself; imports-only mode reads the phone's series alone
+BaselineReadouts.stepsText(8_412) == "8,412"; stepsDeltaText(steps:average:windowLabel:) // "+1,240 vs your 7‑day average" / "On your 7‑day average" (±5%)
+
+// Calories: NOOP's whole-day HR-only estimate (active_kcal), vs the 30 days before; rounded to 10, never to the kcal
+let c = BaselineReadouts.calories(for: day, days: repo.baselineDays)  // c.kcal, c.average30, c.observed30, c.delta
+BaselineReadouts.caloriesText(2_143) == "2,140"; caloriesDeltaText(kcal:average:)
+
+// Stress: a day's hourly 0–3 curve (NOOP DaytimeStress, day-relative), nil when the strap banked no daytime HR
+let st = await BaselineReadouts.stressDay(repo, for: day)            // @MainActor; today via StressDayCurve.today, other days read once
+st.points ([StressCurvePoint]: id/date/level?/moving), st.dayMean, st.peak, st.highMinutes, st.movingHours, st.scoredHours, st.sustainedHigh
+BaselineReadouts.stressDay(result: DaytimeStress.Result, day:)       // pure form; nil when nothing was scored
+BaselineReadouts.stressSummary(st); stressLevelText(1.4) == "Medium"; stressDomain == 0...3
+
+// Sleep timing: bed / wake per night, 30-night circular averages, SRI-like regularity, the target window
+let t = BaselineReadouts.sleepTiming(for: day, nights: nights)       // nights = SleepNightBuilder.nights(…) over the funnel; .dailyMetric nights have no times and are skipped
+t.nights ([SleepTiming.Night] day/bed/wake, newest first, ≤ 30), t.averageBedMinutes, t.averageWakeMinutes (minutes after midnight),
+t.regularity (0–100 over the last 14 nights; nil under 5 consecutive-night pairs), t.target (SleepWindow), t.nightsInWindow, t.nightsCounted
+BaselineReadouts.SleepWindow.stored()  // UserDefaults "baseline.sleepWindow.bedMinutes" / "wakeMinutes", defaults 23:00 / 07:00; .save(), .spanMinutes
+BaselineReadouts.clockText(minutes: 1_380) == "11:00 PM"; circularMeanMinutes([1_410, 30]) == 0; noonInterval(bed:wake:)
+```
+
+Regularity formula (documented here and in the source): for every pair of CONSECUTIVE nights in the last
+14, the share of the noon-to-noon day on which the two nights agree minute by minute about asleep vs
+awake, `1 − |A △ B| / 1440`; the mean is rescaled `200·mean − 100` so chance is 0 and identical nights
+are 100, clamped and rounded. An 8-hour night that drifts an hour every day scores 83. Only sleep/wake
+timing goes in, the part a wearable gets right (`MetricAccuracy` "sleepRegularity": High).
+
+```swift
+// Fitness: NOOP's FitnessAgeEngine (Nes 2011) over the 7 days ending on `day`; needs age, sex and 4 nights of resting HR
+let f = BaselineReadouts.fitness(repo, profile: profile, for: day)   // @MainActor over ProfileStore; or the pure fitness(for:days:age:sex:waistCm:hasHeightWeight:)
+f.result (FitnessAgeResult: fitnessAge, chronoAge, deltaYears, bandYears 5), f.vo2max (Nes with a waist, else Uth 15.3·HRmax/RHR),
+f.vo2IsFallback, f.vo2BandText ("38–48"), f.restingHr (week median), f.rhrNights, f.activeDays (Effort ≥ 30), f.inputs (the checklist)
+BaselineReadouts.fitnessInputs(for:days:age:sex:waistCm:hasHeightWeight:) -> FitnessAgeReadiness   // always available: what is missing
+```
+
+### `MetricAccuracy` + `AccuracyBadge` — `MetricAccuracy.swift`
+
+```swift
+MetricAccuracy.all                     // 14 rows: key, name, tier (.high/.medium/.low), caveat — verbatim from METRIC_ACCURACY.md
+MetricAccuracy.lookup("hrv")?.tier     // .high;  MetricAccuracy["calories"]
+AccuracyBadge(metric: "steps")         // a flat pill "Medium accuracy" + info glyph; tap → popover with the caveat (failable: nil for an unrated key)
+AccuracyBadge(tier: .low, caveat: "…", name: "Calories")
+BaselineCard(title: "Steps", accessory: AnyView(AccuracyBadge(metric: "steps"))) { StepsTile(readout: s) }
+```
+
+Flat pill rule: colour @ 0.10 capsule, 6pt dot in the tier colour (High → `good`, Medium → `accent`,
+Low → `watch`), text in ink. Keys and tiers are pinned by `testMetricAccuracy_coversTheLiteratureTable`.
+Change the table in the research doc first, then here.
+
+### `ReadinessBar(score:tone:label:context:)` — `BaselineReadinessBar.swift`
+
+```swift
+BaselineCard(title: "Readiness", accessory: AnyView(AccuracyBadge(metric: "readiness"))) {
+    if let r { ReadinessBar(score: r.score, tone: r.tone, label: r.tone.label, context: r.driversSentence) }
+    else { Text("Readiness after \(BaselineReadouts.readinessSeedNights) nights · \(n) so far") … }
+}
+```
+
+Numeral in `hero(36)` + "/ 100", the tone's `BaselinePill`, an 8pt `ringTrack` capsule filled to the
+score in `good` / `watch` / `low` with two white ticks at 34 and 67 (NOOP's bands; `showsBands: false`
+for a tile), ONE context caption under it (never truncated). One accessibility element: "Readiness 72
+of 100, Good. Lifted by …". `ReadinessTone.baselineColor` gives the same colour for a dot elsewhere.
+This is the number-with-a-bar form of Readiness; the existing `ReadinessCard` (HRV tier pill + week
+sentence) stays as it is until its screen builder swaps it.
+
+### `StepsTile` — `BaselineStepsTile.swift`
+
+```swift
+StepsTile(readout: s, window: .week)                       // "Steps" header, numeral, "avg 6,000", 7 bars, ONE context line
+StepsTile(steps: 8_412, average: 6_000, averageLabel: "7‑day", bars: [StepsTile.Bar(id: day, value: 6_000), …])
+```
+
+Seven 10pt capsules at 4pt spacing scaled to the week's peak (today solid `steps`, earlier days @ 0.45,
+an unrecorded day a 4pt `ringTrack` stub); context = `stepsDeltaText` or "7‑day average after N more
+days" or "No steps recorded"; tone dot good (≥ +5%) / watch (≤ −25%) / `steps`. Sits in a tile beside
+Calories or in its own card with `AccuracyBadge(metric: "steps")`.
+
+### `StressCurveChart(points:height:accessibilitySummary:)` — `BaselineStressChart.swift`
+
+Swift Charts area (`stress` @ `bandOpacity`) + line (`stress`, `lineWidth`) over 06:00–22:00 of the
+day, unscored windows break the line, moving windows are shaded in `fill`, a dashed rule at 2.0 ("High"),
+y labels 0 / Low / High / 3, x labels every four hours. Pass `BaselineReadouts.stressSummary(st)` as the
+summary. Pair with `AccuracyBadge(metric: "stress")` (Low) and the caption "Estimated from heart rate;
+N hours left out while you were moving".
+
+### `TimingStripChart(nights:target:averageBed:averageWake:accessibilitySummary:)` — `BaselineTimingStrip.swift`
+
+```swift
+TimingStripChart(nights: t.nights.prefix(14).reversed(), target: t.target,
+                 averageBed: t.averageBedMinutes, averageWake: t.averageWakeMinutes)
+```
+
+One 6pt row per night (oldest at the top, 9pt pitch) over a noon-to-noon axis ("6 PM · 12 AM · 6 AM ·
+12 PM"): the target window as a `sleep @ 0.12` band, each night's bed → wake capsule in `sleep` (solid
+inside the window ± 30 min at both ends, @ 0.45 outside), dashed ticks at the average bed and wake. Plain
+SwiftUI; one accessibility element with a summary sentence. Put `StatCell`s for "Average bedtime" /
+"Average wake" / "Regularity" (`clockText(minutes:)`, `"\(t.regularity)"`) under it, and
+`AccuracyBadge(metric: "sleepTiming")` on the card.
+
+### `EffortReadinessChart(points:height:accessibilitySummary:)` — `BaselineEffortReadinessChart.swift`
+
+```swift
+let points = repo.baselineDays.suffix(30).compactMap { d in
+    BaselineReadouts.localMidnight(of: d.day).map { EffortReadinessPoint(id: d.day, date: $0, effort: d.strain, readiness: d.recovery) }
+}
+EffortReadinessChart(points: points)
+```
+
+Effort as `effort` bars (`barOpacity`, `barRadius`) under a Readiness line in `accent`, ONE 0…100 y axis
+(both columns are already 0–100, nothing is rescaled), `BaselineChartStyle` axes, a two-dot legend below.
+The default accessibility summary averages both series; pass a better sentence when the card has one.
+
+### Tokens added
+
+| Token | Value | Use |
+|---|---|---|
+| `stress` | `#6D28D9` (6.9 / 6.3) | the Stress curve's line and area |
+| `steps` | `#1D4ED8` (6.3 / 5.8) | Steps bars and the Steps header dot |
+
+Calories reuse `effort` (energy is amber); Readiness uses the judgement colours through `ReadinessTone`.

@@ -64,6 +64,10 @@ enum BaselineTheme {
     static let sleep = Color(baselineHex: 0x4A4FD0)
     /// Amber. 5.0:1 / 4.6:1.
     static let effort = Color(baselineHex: 0xB45309)
+    /// Violet. 6.9:1 / 6.3:1. The Stress curve's line and area (daytime, not a judgement).
+    static let stress = Color(baselineHex: 0x6D28D9)
+    /// Slate blue. 6.3:1 / 5.8:1. Steps bars and the steps numeral's dot.
+    static let steps = Color(baselineHex: 0x1D4ED8)
     static let good = Color(baselineHex: 0x15803D)      // 5.0 / 4.6
     static let watch = Color(baselineHex: 0xC2410C)     // 5.2 / 4.8
     static let low = Color(baselineHex: 0xB91C1C)       // 6.5 / 5.9
