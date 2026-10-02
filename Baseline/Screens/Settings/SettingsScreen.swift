@@ -6,8 +6,9 @@ import UserNotifications
 /// every tab's navigation bar, so it assumes nothing about a tab: the title is "Settings" and the bar's
 /// Back button takes the person to wherever they came from. Strap, Apple Health and Data push Baseline's
 /// own screens over NOOP's engine (`DevicesScreen`, `AppleHealthScreen`, `ImportScreen`, `CompareScreen`,
-/// `ExportScreen`); Profile is Baseline's small form over `ProfileStore`; About carries attribution, the
-/// privacy policy, license and the disclaimer. Each card observes only what it needs, so the root never
+/// `ExportScreen`); Profile is Baseline's small form over `ProfileStore` plus the sleep window
+/// (`SettingsSleepWindowCard`); About carries attribution, the privacy policy, license, the disclaimer
+/// and the accuracy review (`AccuracyScreen`). Each card observes only what it needs, so the root never
 /// re-renders on strap ticks.
 struct SettingsScreen: View {
     var body: some View {
@@ -15,7 +16,11 @@ struct SettingsScreen: View {
             SettingsSection(label: "Strap") { SettingsStrapCard() }
             SettingsSection(label: "Apple Health") { SettingsHealthCard() }
             SettingsSection(label: "Data") { SettingsDataCard() }
-            SettingsSection(label: "Profile") { SettingsProfileCard() }
+            SettingsSection(label: "Profile") {
+                SettingsProfileCard()
+                // The window the Sleep tab's regularity reads against (`BaselineReadouts.SleepWindow`).
+                SettingsSleepWindowCard()
+            }
             SettingsSection(label: "Notifications") { SettingsNotificationsCard() }
             #if DEBUG
             SettingsSection(label: "Developer") { SettingsDeveloperCard() }

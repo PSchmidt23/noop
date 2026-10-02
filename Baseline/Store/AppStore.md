@@ -4,7 +4,9 @@ Copy for the App Store Connect product page. Every field below is sized to Apple
 brackets) and keeps to the fork's rules: the WHOOP mark appears in one nominative sentence in the
 description and nowhere else (not in the name, subtitle, keywords, screenshots or icon; App Review guideline 4.1(c)
 and 5.2.1); no "Strain", "Recovery" or "Sleep Coach"; Baseline's vocabulary is HRV, Resting HR,
-Readiness, Sleep, Effort, Journal. Store copy mirrors what the app says in Welcome and Settings › About.
+Readiness, Sleep, Effort, Steps, Calories, Stress, Journal. Store copy mirrors what the app says in
+Welcome and Settings › About, and claims no more for a number than Settings › About › "How accurate is
+this?" does.
 
 ## Name [30]
 
@@ -44,7 +46,8 @@ It reads your strap over Bluetooth and shows heart rate variability (HRV) and re
 Works with WHOOP 4.0, 5.0 and MG straps. Not affiliated with WHOOP.
 
 TODAY
-Your strap's status, then HRV and resting heart rate as large tiles: today's value, the difference from your baseline, whether it sits inside your normal band, and a readiness tier. Below them, last night's sleep, today's effort and workouts, and a four-chip journal prompt.
+HRV and resting heart rate as large tiles: today's value, the difference from your baseline and whether it sits inside your band. Readiness as a score from 0 to 100 on a track, with the inputs that lifted or held it back written out, never a verdict on what to do. Then last night's sleep, today's effort and workouts, steps against your 7-day and 30-day average, calories against your 30-day average, and an hour-by-hour stress curve estimated from heart rate, labelled as the estimate it is.
+
 
 TRENDS
 Seven, thirty or ninety days of HRV and resting heart rate with your baseline band drawn in, sleep duration and effort as bars. Tap any point for that day's numbers.
@@ -53,7 +56,7 @@ PROGRESS
 Is your baseline itself moving? Months at a glance for HRV, resting heart rate, sleep and sleep timing, in a sentence and a chart.
 
 SLEEP
-Last night stage by stage: a hypnogram, time in each stage, efficiency, duration against your thirty-day average, and a list of every night.
+Last night stage by stage: a hypnogram, time in each stage, efficiency, duration against your thirty-day average, and every night in a list. Timing too: average bedtime, average wake time and a regularity score, drawn night by night against the sleep window you set, built on sleep and wake only, the part a strap gets right.
 
 JOURNAL
 Tap the habits that applied today (alcohol, caffeine, late meal, your own) and Baseline ranks what moves your HRV, with the sample size and confidence behind each effect. Dose cards show how much alcohol or caffeine costs you.
@@ -65,19 +68,22 @@ APPLE HEALTH
 If you allow it, Baseline reads sleep, workouts and heart data from Apple Health and writes back the metrics it computes, on this iPhone only.
 
 IMPORT
-Bring your history: an export from your strap's app or an Apple Health export lands in the same local store, so Trends and Progress reach back as far as the export does. Your strap's own nights stay the record and the import fills the days it did not cover, unless you choose otherwise under Settings › Data. Compare the strap's nights with the import, night by night, and take everything back out as CSV whenever you like.
+Bring your history: an export from your strap's app or from Apple Health lands in the same local store, so Trends and Progress reach back as far as it does. Your strap's own nights stay the record and the import fills the days it did not cover, unless you choose otherwise under Settings › Data. Compare the two night by night, and take everything back out as CSV whenever you like.
+
+HOW ACCURATE IS THIS?
+Settings › About lists every metric with the tier published validation studies give it, its caveat and the studies themselves. Nightly HRV and resting heart rate are the high-tier readings; sleep duration, timing and steps are honest as trends; calories, stress and any composite score are estimates and shown as such.
 
 FREE, PRIVATE, OPEN
 Baseline is free, with no account, no sign-in, no subscription, no ads and no in-app purchases. There is no server: your data lives in the app on your iPhone and, when you allow it, in Apple Health. The app contains no analytics, crash reporting or tracking and makes no network connections. Delete the app and the data is gone.
 
 Baseline is open source under the PolyForm Noncommercial License 1.0.0 and is built on NOOP, the open-source, local-only strap engine by ryanbr and contributors. Baseline keeps NOOP's engine unchanged and adds its own screens. Read, run or fork it on GitHub (the link is in Settings › About).
 
-Two optional local notifications, both off until you turn them on: a morning summary, once per day when the first sync lands, with HRV, resting heart rate and sleep against your baseline; and an evening check-in at a time you pick, a reminder to log tonight's habits in the Journal.
+Two optional local notifications, both off until you turn them on: a morning summary when the first sync of the day lands, and an evening check-in at a time you pick, a reminder to log tonight's habits.
 
 Baseline is not a medical device and nothing it shows is medical advice. Every number is an estimate from published methods; the methods are documented in the open-source project. Talk to a professional about health decisions.
 ```
 
-(about 2,900 characters; keep under 4,000 after edits)
+(about 3,920 characters; keep under 4,000 after edits)
 
 ## Keywords [100]
 

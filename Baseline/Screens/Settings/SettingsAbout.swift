@@ -1,9 +1,9 @@
 #if os(iOS)
 import SwiftUI
 
-/// Version, attribution, privacy policy, license, open-source notices and the disclaimer. LICENSE,
-/// NOTICE and ATTRIBUTION.md are read from the bundle (they ship as resources of the Baseline target);
-/// should one be missing, a short notice with links stands in.
+/// Version, attribution, privacy policy, license, open-source notices, the disclaimer and the accuracy
+/// review (`AccuracyScreen`, pushed). LICENSE, NOTICE and ATTRIBUTION.md are read from the bundle (they
+/// ship as resources of the Baseline target); should one be missing, a short notice with links stands in.
 struct SettingsAboutCard: View {
     @State private var showPrivacy = false
     @State private var showLicense = false
@@ -72,6 +72,12 @@ struct SettingsAboutCard: View {
                                  subtitle: "Not medical advice") { chevron }
             }
             .buttonStyle(.plain)
+            SettingsDivider()
+            // The evidence tier behind every metric (`MetricAccuracy`), with the studies linked.
+            SettingsLinkRow(icon: "checkmark.seal", title: "How accurate is this?",
+                            subtitle: "Every metric's evidence tier, with the studies") {
+                AccuracyScreen()
+            }
             SettingsDivider()
             Text("Not affiliated with WHOOP. Free, no accounts, nothing leaves your iPhone.")
                 .font(BaselineTheme.caption)
