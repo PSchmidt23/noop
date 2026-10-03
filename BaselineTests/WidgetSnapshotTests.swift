@@ -231,4 +231,18 @@ final class WidgetSnapshotTests: BaselineEngineTestCase {
         XCTAssertNil(BaselineDeepLink.destination(for: try XCTUnwrap(URL(string: "noop://import-health"))))
         XCTAssertNil(BaselineDeepLink.destination(for: try XCTUnwrap(URL(string: "baseline://settings"))))
     }
+
+    func testFriendsDeepLinks() throws {
+        func dest(_ s: String) throws -> BaselineDeepLink.Destination? {
+            BaselineDeepLink.destination(for: try XCTUnwrap(URL(string: s)))
+        }
+        XCTAssertEqual(try dest("baseline://friends"), .friends)
+        XCTAssertEqual(try dest("baseline://friends/join/abcd2345"), .join("ABCD2345"))
+        XCTAssertEqual(try dest("baseline://friends/join/ABCD-2345"), .join("ABCD2345"))
+        XCTAssertEqual(try dest("baseline://friends/join/ABCD0O1I"), .friends, "an invalid code opens Friends alone")
+        XCTAssertEqual(try dest("baseline://friends/join/ABC"), .friends)
+        XCTAssertEqual(try dest("baseline://friends/other"), .friends)
+        // Widget links are unchanged.
+        XCTAssertEqual(BaselineDeepLink.destination(for: BaselineDeepLink.home), .home)
+    }
 }

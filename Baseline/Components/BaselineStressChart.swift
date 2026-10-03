@@ -4,10 +4,10 @@ import Charts
 
 /// A day's Stress curve: NOOP's hourly 0–3 proxy as a light area under a line in `BaselineTheme.stress`,
 /// over the waking hours (06:00–22:00) of that day. Unscored windows break the line; windows the strap
-/// masked as walking are shaded in `fill` so "you were moving" never reads as "calm". The y axis names
-/// the bands the card's Average cell uses (`BaselineReadouts.stressLevelText`: Low under 1, Medium under
-/// 2, High from 2), each word at the middle of its band, with gridlines at the band edges and a dashed
-/// rule at the high edge (2.0). Axes from `BaselineChartStyle`; flat;
+/// masked as walking are shaded in `fill` so "you were moving" never reads as "calm". No numbers on the
+/// y axis: three faint shaded bands named with the Stress card's words (Restored / Calm / Elevated,
+/// `StressState`'s thresholds against the person's own floor), each word at the middle of its band, and a
+/// dashed rule at the elevated edge. Axes from `BaselineChartStyle`; flat;
 /// lives inside a card with an `AccuracyBadge(metric: "stress")` (Low: an estimate, not a feeling).
 ///
 /// ```swift
@@ -21,7 +21,7 @@ struct StressCurveChart: View {
     /// The one VoiceOver sentence for the whole chart (`BaselineReadouts.stressSummary`).
     var accessibilitySummary: String? = nil
 
-    private static let highBand = 2.0
+    private static var highBand: Double { StressState.elevatedFloor }
 
     /// A contiguous scored run, so a gap is a break in the line rather than a straight bridge.
     private struct Run: Identifiable {
@@ -58,6 +58,11 @@ struct StressCurveChart: View {
 
     var body: some View {
         Chart {
+            ForEach(Self.bands) { band in
+                RectangleMark(xStart: .value("From", xDomain.lowerBound), xEnd: .value("To", xDomain.upperBound),
+                              yStart: .value("Band low", band.low), yEnd: .value("Band high", band.high))
+                    .foregroundStyle(BaselineTheme.stress.opacity(band.tint))
+            }
             ForEach(movingSpans) { p in
                 RectangleMark(xStart: .value("From", p.date), xEnd: .value("To", p.date.addingTimeInterval(3_600)),
                               yStart: .value("Low", BaselineReadouts.stressDomain.lowerBound),
@@ -86,16 +91,11 @@ struct StressCurveChart: View {
         .chartXScale(domain: xDomain)
         .chartYScale(domain: BaselineReadouts.stressDomain)
         .chartYAxis {
-            // Gridlines at the band edges (0 / 1 / 2 / 3), unlabelled.
-            AxisMarks(position: .trailing, values: Self.bandEdges) { _ in
-                AxisGridLine().foregroundStyle(BaselineTheme.hairline.opacity(0.75))
-            }
-            // One word per band at its midpoint, from the same table as the Average cell's unit, so the
-            // axis and the cell can never name a level differently.
-            AxisMarks(position: .trailing, values: Self.bandMidpoints) { v in
+            // No numbers: the band words at each band's midpoint, the same words the card's hours use.
+            AxisMarks(position: .trailing, values: Self.bands.map(\.mid)) { v in
                 AxisValueLabel {
-                    if let d = v.as(Double.self) {
-                        Text(BaselineReadouts.stressLevelText(d))
+                    if let d = v.as(Double.self), let band = Self.bands.first(where: { $0.mid == d }) {
+                        Text(band.name)
                             .foregroundStyle(BaselineTheme.textTertiary)
                             .font(BaselineTheme.caption)
                     }
@@ -114,9 +114,21 @@ struct StressCurveChart: View {
         .modifier(BaselineChartSummary(summary: accessibilitySummary))
     }
 
-    /// The band edges on the 0–3 scale (the gridlines) and the midpoints the band words sit on, so the
-    /// y axis reads Low / Medium / High, one word per band, like the Average cell beside it.
-    static let bandEdges: [Double] = [0, 1, 2, 3]
-    static let bandMidpoints: [Double] = [0.5, 1.5, 2.5]
+    /// The three shaded bands on NOOP's 0–3 proxy, cut at `StressState`'s thresholds (restored under
+    /// `restoredCeiling`, calm under `elevatedFloor`, elevated above), named as the Stress card names its hours.
+    struct Band: Identifiable {
+        let name: String
+        let low: Double
+        let high: Double
+        let tint: Double
+        var id: String { name }
+        var mid: Double { (low + high) / 2 }
+    }
+
+    static let bands: [Band] = [
+        Band(name: "Restored", low: BaselineReadouts.stressDomain.lowerBound, high: StressState.restoredCeiling, tint: 0.04),
+        Band(name: "Calm", low: StressState.restoredCeiling, high: StressState.elevatedFloor, tint: 0.08),
+        Band(name: "Elevated", low: StressState.elevatedFloor, high: BaselineReadouts.stressDomain.upperBound, tint: 0.13)
+    ]
 }
 #endif

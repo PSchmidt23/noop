@@ -20,8 +20,9 @@ enum TrendsSection: String, CaseIterable, Identifiable {
 }
 
 /// Trends: HRV and resting HR against the personal baseline band, effort bars under the readiness
-/// line, sleep and steps bars and Intensity minutes by week over a 7 / 30 / 90 day window (the
-/// "Trends" section; order HRV, Resting HR, Effort & Readiness, Sleep, Steps, Intensity minutes), the
+/// line, sleep and steps bars (steps against the daily goal), Intensity minutes by week and daily
+/// calories over a 7 / 30 / 90 day window (the "Trends" section; order HRV, Resting HR, Effort &
+/// Readiness, Sleep, Steps, Intensity minutes, Calories), the
 /// baseline over months ("Progress", `ProgressSection`) and the journal patterns ("Habits",
 /// `JournalPatternsView`). Every card's title opens its `MetricDetailScreen` (`TrendsCardTitle`). One
 /// pinned glass control picks the section; the range picker sits flat at the top of the Trends
@@ -39,12 +40,19 @@ struct TrendsScreen: View {
     /// heart rate) is entered, the gate Home and the detail use (`IntensityMinutes.mayScore`); until
     /// then the card asks for the age. Part of the reload key.
     @AppStorage(BaselineReadouts.ProfileSet.key) private var profileSet = false
+    /// Settings › Activity goals: the daily step goal the Steps card counts "Goal met" days against, and
+    /// whether height and weight were entered (the calorie estimate's resting part). Both reload.
+    @AppStorage(ActivityGoals.stepKey) private var stepGoal = ActivityGoals.stepDefault
+    @AppStorage(ActivityGoals.bodySetKey) private var bodySet = false
     /// Always opens on the charts (a `@State`, not persisted, so a launch is deterministic).
     @State private var section: TrendsSection = .trends
     @State private var series: TrendsSeries?
     /// The Intensity-minutes weeks over the range; nil until read, and the card is left out while
     /// `hasAny` is false.
     @State private var intensity: TrendsIntensity?
+    /// Daily calories over the range (the readings the Calories detail draws); nil until read, and the
+    /// card is left out while it has no bar.
+    @State private var calories: TrendsSeries.BarMetric?
     /// Held in state and rolled on `.NSCalendarDayChanged`, so the window's "today" end moves at midnight
     /// instead of waiting for the next store refresh.
     @State private var todayKey = Repository.localDayKey(Date())
@@ -57,9 +65,16 @@ struct TrendsScreen: View {
         let dataSource: String
         let hrMax: Int
         let entered: Bool
+        let stepGoal: Int
+        let profile: String
     }
 
     private var range: TrendsRange { TrendsRange.resolve(rangeRaw) }
+
+    /// What the calorie estimate reads from Settings › Profile; an edit there re-reads the calories.
+    private var profileStamp: String {
+        "\(bodySet)|\(profile.sex)|\(profile.age)|\(Int(profile.weightKg.rounded()))|\(Int(profile.heightCm.rounded()))"
+    }
 
     var body: some View {
         BaselineScreen(title: "Trends", titleMode: .inline, pinned: {
@@ -77,8 +92,9 @@ struct TrendsScreen: View {
             }
         }
         .task(id: LoadKey(seq: repo.refreshSeq, range: rangeRaw, loaded: repo.loaded, day: todayKey,
-                          dataSource: dataSourceRaw, hrMax: profile.hrMax, entered: profileSet)) {
-            guard repo.loaded else { series = nil; intensity = nil; return }
+                          dataSource: dataSourceRaw, hrMax: profile.hrMax, entered: profileSet,
+                          stepGoal: stepGoal, profile: profileStamp)) {
+            guard repo.loaded else { series = nil; intensity = nil; calories = nil; return }
             // Steps resolve outside the funnel table (strap counter → phone → strap estimate), over the
             // longest range so the Steps card's "any steps at all" gate does not flip with the picker.
             let now = Date()
@@ -86,7 +102,8 @@ struct TrendsScreen: View {
             let from = Baselines.cutoffKey(todayKey: today, carryDays: TrendsSeries.stepsLookbackDays - 1)
             let steps = await BaselineReadouts.stepReadings(repo, from: from, to: today)
             guard !Task.isCancelled else { return }
-            series = TrendsSeries.build(days: repo.baselineDays, range: range, stepReadings: steps, now: now)
+            series = TrendsSeries.build(days: repo.baselineDays, range: range, stepReadings: steps,
+                                        stepGoal: ActivityGoals.stepGoal(), now: now)
 
             // Intensity minutes: each day classified once and kept (`IntradayDayStore`), the weeks drawn
             // whole from the Monday the range starts in, behind the same profile gate as Home (the
@@ -98,6 +115,24 @@ struct TrendsScreen: View {
             guard !Task.isCancelled else { return }
             intensity = TrendsIntensity.build(days: records.values.map { TrendsIntensity.Day($0) },
                                               startKey: startKey, todayKey: today, goal: IntensityMinutes.goal())
+
+            // Calories: each day through the pure builder Home's card reads (`caloriesDay`): the strap's
+            // active energy from the same day records (the profile overload estimates it under this
+            // profile), Apple Health's active energy as the fallback, resting from the profile.
+            let mode = BaselineDataSource.resolve(dataSourceRaw)
+            let inputs = await BaselineReadouts.calorieInputs(repo, profile: profile, entered: profileSet,
+                                                              bodySet: bodySet, now: now)
+            var strap: [String: Double] = [:]
+            if mode != .importOnly { for (k, r) in records { if let a = r.activeKcal { strap[k] = a } } }
+            let applePoints = await repo.resolvedSeries(key: "active_kcal", source: Repository.appleHealthSource,
+                                                        from: Baselines.cutoffKey(todayKey: startKey, carryDays: 30),
+                                                        to: today).points
+            var apple: [String: Double] = [:]
+            for p in applePoints where p.source == Repository.appleHealthSource { apple[p.day] = p.value }
+            guard !Task.isCancelled else { return }
+            calories = TrendsSeries.caloriesMetric(startKey: startKey, todayKey: today, inputs: inputs,
+                                                   strapActive: strap, appleActive: apple, mode: mode,
+                                                   todayFraction: BaselineReadouts.dayFraction(now))
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             todayKey = Repository.localDayKey(Date())
@@ -167,9 +202,10 @@ struct TrendsScreen: View {
                 color: BaselineTheme.steps,
                 bars: s.steps.bars,
                 average: s.steps.average,
+                goal: s.stepGoal.map(Double.init),
                 stats: [
                     TrendStat(label: "Average", value: s.steps.average.map { BaselineReadouts.stepsText(Int($0.rounded())) } ?? "—"),
-                    TrendStat(label: "Above average", value: String(s.stepsAboveAverage),
+                    TrendStat(label: "Goal met", value: String(s.stepsAtGoal),
                               unit: "of \(s.stepsDays) day\(s.stepsDays == 1 ? "" : "s")")
                 ],
                 emptyText: "No steps recorded in the last \(s.range.days) days.")
@@ -179,6 +215,27 @@ struct TrendsScreen: View {
         // zones): an import-only history would otherwise show an empty card forever.
         if let intensity, intensity.hasAny {
             TrendIntensityCard(range: s.range, intensity: intensity)
+        }
+
+        // Only once some day in the range has an estimate. The total per day (resting + active) against
+        // its own average over whole days: today's partial total is drawn muted and kept out of it, as
+        // Home keeps today out of its comparisons. The badge says what a calorie figure is worth.
+        if let calories, !calories.bars.isEmpty {
+            TrendBarCard(
+                title: "Calories",
+                key: .calories,
+                range: s.range,
+                accessory: AnyView(CaloriesBadges()),
+                color: BaselineTheme.effort,
+                bars: calories.bars,
+                average: calories.average,
+                inProgressID: calories.inProgressID,
+                stats: [
+                    TrendStat(label: "Average", value: BaselineReadouts.caloriesText(calories.average),
+                              unit: calories.average == nil ? nil : "kcal"),
+                    TrendStat(label: "Days", value: String(calories.bars.count), unit: "of \(s.range.days)")
+                ],
+                emptyText: "No calorie estimate in the last \(s.range.days) days.")
         }
     }
 

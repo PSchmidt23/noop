@@ -102,8 +102,9 @@ enum TodayDetail {
 
     /// The standard spec, with a 1D view where the day has more to show than one number: the night's
     /// stages and heart rate (sleep: the Sleep tab's own `SleepDetail.durationSpec`, so Home and the
-    /// Sleep tab push one screen for a night), the day's workouts (effort), the Stress curve (stress),
-    /// the week's seven bars against the goal (intensity minutes).
+    /// Sleep tab push one screen for a night), the day's workouts (effort), the Stress hours and curve
+    /// (stress), the week's seven bars against the goal (intensity minutes, steps), the resting / active
+    /// split (calories).
     static func spec(_ key: MetricKey) -> MetricDetailSpec {
         var spec = MetricDetailSpec.standard(key)
         switch key {
@@ -115,6 +116,13 @@ enum TodayDetail {
             spec.dayView = { day in AnyView(TodayStressDayView(day: day)) }
         case .intensityMinutes:
             spec.dayView = { day in AnyView(TodayIntensityWeekView(day: day)) }
+        case .steps:
+            spec.dayView = { day in AnyView(TodayStepsWeekView(day: day)) }
+        case .calories:
+            spec.dayView = { day in AnyView(TodayCaloriesDayView(day: day)) }
+            // The split card IS the 1D page: a hero over it read the series, which counts only days with an
+            // active estimate, so a resting-only day showed "No calories recorded" above "70 kcal".
+            spec.dayViewReplacesHero = true
         default:
             break
         }
@@ -207,11 +215,12 @@ struct TodayWorkoutsDayView: View {
     }
 }
 
-// MARK: - 1D: the Stress curve
+// MARK: - 1D: the Stress hours
 
-/// The stress detail's day card: the day's peak, curve and caption, what Home's Stress card draws
-/// (`StressCardBody`) less its Average cell. The badge and the day's average ("This day … of 3") sit on
-/// the detail's hero card, so neither is repeated here.
+/// The stress detail's day card: the hours (calm / elevated / restored, the bar and the sentence Home's
+/// card prints), the curve through the waking day, what the hours were judged against (the person's
+/// daytime heart-rate floor), the most elevated hour, three elevated hours in a row as a plain fact (never
+/// an alert), and what the hours are not. The badge sits on the detail's hero card, so it is not repeated.
 struct TodayStressDayView: View {
     let day: String
     @EnvironmentObject private var repo: Repository
@@ -224,15 +233,156 @@ struct TodayStressDayView: View {
     }
 
     var body: some View {
-        BaselineCard(title: "Through the day") {
+        // The 1D page itself (the spec's `dayViewReplacesHero`), so it carries the badge the hero would.
+        BaselineCard(title: "Through the day", accessory: AccuracyBadge(metric: "stress").map { AnyView($0) }) {
             if !loaded {
                 ProgressView().tint(BaselineTheme.accent).frame(maxWidth: .infinity).padding(.vertical, 12)
+            } else if let s = stress {
+                StressHoursBody(stress: s, isToday: day == Repository.localDayKey(Date()), showsCurveWhenUntotalled: false)
+                StressCurveChart(points: s.points, accessibilitySummary: BaselineReadouts.stressSummary(s))
+                ForEach(Self.facts(s), id: \.self) { line in
+                    Text(line)
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(StressCardText.caveat)
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
-                StressCardBody(stress: stress, isToday: day == Repository.localDayKey(Date()), showsAverage: false)
+                Text("No daytime data for this day. Stress needs the strap on through still waking hours.")
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .task(id: LoadKey(seq: repo.refreshSeq, day: day)) {
             stress = await BaselineReadouts.stressDay(repo, for: day)
+            loaded = true
+        }
+    }
+
+    /// The detail's facts, one line each: the floor the hours were judged against, the most elevated
+    /// hour ("Most elevated 2:00–3:00 PM (+21 bpm over your floor)"), and three elevated hours in a row
+    /// (said once, as a fact; never an alert).
+    static func facts(_ s: BaselineReadouts.StressDayReadout) -> [String] {
+        var out: [String] = []
+        if let floor = s.floorBPM { out.append(StressCardText.floorLine(floor)) }
+        if s.showsTotals, s.elevatedHours > 0, let peak = s.peakHour {
+            out.append(StressCardText.peakLine(start: peak.start, overFloorBPM: peak.overFloorBPM))
+        }
+        if s.showsTotals, let from = s.sustainedFrom {
+            out.append("3 elevated hours in a row from " + from.formatted(date: .omitted, time: .shortened))
+        }
+        return out
+    }
+}
+
+// MARK: - 1D: the Steps week
+
+/// The steps detail's day card: the week ending on the day as seven bars against the daily goal, how
+/// many of those days reached it, both averages and where the day's count came from. The day's own
+/// count is the hero above, so it is not repeated.
+struct TodayStepsWeekView: View {
+    let day: String
+    @EnvironmentObject private var repo: Repository
+    @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
+    @AppStorage(ActivityGoals.stepKey) private var storedGoal = ActivityGoals.stepDefault
+    /// The stored goal clamped into range, so an older value under 3,000 reads as Friends' floor.
+    private var goal: Int { ActivityGoals.stepGoal(stored: storedGoal) }
+    @State private var readout: BaselineReadouts.StepsReadout?
+    @State private var loaded = false
+
+    private struct LoadKey: Equatable {
+        let seq: Int
+        let day: String
+        let dataSource: String
+    }
+
+    var body: some View {
+        BaselineCard(title: "The week to this day") {
+            if !loaded {
+                ProgressView().tint(BaselineTheme.accent).frame(maxWidth: .infinity).padding(.vertical, 12)
+            } else if let r = readout {
+                StepsWeekBars(bars: r.recent.map { StepsWeekBars.Bar(id: $0.day, value: $0.value) }, goal: goal, height: 96, fillsWidth: true)
+                Text(StepsCardText.weekSummary(r.recent.map(\.value), goal: goal)
+                     + " · goal \(BaselineReadouts.stepsText(goal))")
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(Self.averagesLine(r))
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if r.steps != nil, let source = StepsCardBody.sourceCaption(r) {
+                    Text(source)
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textTertiary)
+                }
+            }
+        }
+        .task(id: LoadKey(seq: repo.refreshSeq, day: day, dataSource: dataSourceRaw)) {
+            readout = await BaselineReadouts.steps(repo, for: day, mode: BaselineDataSource.resolve(dataSourceRaw))
+            loaded = true
+        }
+    }
+
+    /// "7‑day average 7,480 · 30‑day average 7,120", each window's "after N more days" while it builds.
+    static func averagesLine(_ r: BaselineReadouts.StepsReadout) -> String {
+        func part(_ label: String, _ avg: Double?, _ observed: Int) -> String {
+            guard let avg else {
+                let n = max(1, BaselineReadouts.averageMinDays - observed)
+                return "\(label) average after \(n) more day\(n == 1 ? "" : "s")"
+            }
+            return "\(label) average " + BaselineReadouts.stepsText(Int(avg.rounded()))
+        }
+        return part("7\u{2011}day", r.average7, r.observed7) + " · " + part("30\u{2011}day", r.average30, r.observed30)
+    }
+}
+
+// MARK: - 1D: the Calories split
+
+/// The calories detail's day card: what Home's card prints (total, the resting / active bar and split,
+/// the active context, what is missing) and the caveat said once. Read through the same readout.
+struct TodayCaloriesDayView: View {
+    let day: String
+    @EnvironmentObject private var repo: Repository
+    @EnvironmentObject private var profile: ProfileStore
+    @AppStorage(BaselineDataSource.key) private var dataSourceRaw = ""
+    @AppStorage(BaselineReadouts.ProfileSet.key) private var profileSet = false
+    @AppStorage(ActivityGoals.bodySetKey) private var bodySet = false
+    @State private var readout: BaselineReadouts.CaloriesReadout?
+    @State private var loaded = false
+
+    private struct LoadKey: Equatable {
+        let seq: Int
+        let day: String
+        let dataSource: String
+        let profile: String
+    }
+
+    var body: some View {
+        // The 1D page itself (the spec's `dayViewReplacesHero`), so it carries the badge the hero would.
+        BaselineCard(title: "Resting and active", accessory: AccuracyBadge(metric: "calories").map { AnyView($0) }) {
+            if !loaded {
+                ProgressView().tint(BaselineTheme.accent).frame(maxWidth: .infinity).padding(.vertical, 12)
+            } else if let r = readout, CaloriesCard.shows(r) {
+                CaloriesCardBody(readout: r, isToday: day == Repository.localDayKey(Date()))
+                Text(CaloriesCardText.caveat)
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("No calorie estimate for this day.")
+                    .font(BaselineTheme.caption)
+                    .foregroundStyle(BaselineTheme.textSecondary)
+            }
+        }
+        .task(id: LoadKey(seq: repo.refreshSeq, day: day, dataSource: dataSourceRaw,
+                          profile: "\(profileSet)|\(bodySet)|\(profile.sex)|\(profile.age)|\(profile.weightKg)|\(profile.heightCm)")) {
+            readout = await BaselineReadouts.calories(repo, profile: profile, for: day,
+                                                      mode: BaselineDataSource.resolve(dataSourceRaw))
             loaded = true
         }
     }

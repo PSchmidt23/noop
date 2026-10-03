@@ -76,20 +76,39 @@ struct TrendsBandChart: View {
     }
 }
 
-/// `BaselineBarChart` (same bars and average rule) with the edge-safe x labels.
+/// `BaselineBarChart` (same bars and average rule) with the edge-safe x labels. `goal` draws a daily
+/// goal instead of (or beside) the average: a dashed rule (Steps; the card's "Goal met" stat names it), the bars at or over
+/// it full, the others muted, so the goal days read at a glance. `inProgressID` names a bar still
+/// accruing (today's calories so far), drawn muted like the Intensity card's week in progress, so a
+/// half-built day never reads as a short one.
 struct TrendsBarChart: View {
     let bars: [BaselineBarChart.Bar]
     let color: Color
     var average: Double? = nil
+    var goal: Double? = nil
+    var inProgressID: String? = nil
     var height: CGFloat = 140
     var accessibilitySummary: String? = nil
+
+    private func opacity(_ b: BaselineBarChart.Bar) -> Double {
+        if b.id == inProgressID { return BaselineChartStyle.mutedBarOpacity }
+        return goal.map { b.value >= $0 ? BaselineChartStyle.barOpacity : BaselineChartStyle.mutedBarOpacity }
+            ?? BaselineChartStyle.barOpacity
+    }
 
     var body: some View {
         Chart {
             ForEach(bars) { b in
                 BarMark(x: .value("Day", b.date, unit: .day), y: .value("Value", b.value))
-                    .foregroundStyle(color.opacity(BaselineChartStyle.barOpacity))
+                    .foregroundStyle(color.opacity(opacity(b)))
                     .cornerRadius(BaselineChartStyle.barRadius)
+            }
+            if let goal {
+                RuleMark(y: .value("Goal", goal))
+                    .foregroundStyle(color.opacity(BaselineChartStyle.baselineOpacity))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                // No in-plot "goal" word: on a 30- or 90-day chart it sat under the first bars. The
+                // card's "Goal met n of m days" stat names the rule, and with a goal no average is drawn.
             }
             if let average {
                 RuleMark(y: .value("Average", average))

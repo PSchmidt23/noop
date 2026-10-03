@@ -2,10 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <!--
-  Baseline's privacy manifest. The app is local-only: no account, no server, no analytics, no
-  tracking, so nothing is collected and no tracking domains exist. The accessed-API section lists
-  the required-reason categories that NOOP's engine, compiled into this binary, actually calls.
-  GRDB.swift ships its own manifest inside the package.
+  Baseline's privacy manifest. The app is local first: Home, Trends and Sleep need no account and
+  send nothing. The opt-in Friends tab (Baseline/Friends, Baseline/Research/FRIENDS_SPEC.md §7) signs
+  in with Apple and uploads only what the person turns on, to Baseline's server (Supabase, Frankfurt),
+  so four types are collected, each linked to the Friends account, none used for tracking, all for
+  App Functionality only:
+    Health    weekly HRV / resting HR / readiness change vs the person's own baseline, and the 0/1
+              "reached own sleep goal" and "on-time bedtime" nights (never hours or clock times)
+    Fitness   daily steps (with strap/iPhone source), intensity minutes, active days
+    Name      the display name the person types (Apple's name is never requested)
+    UserID    the Supabase auth user id
+  Email Address is NOT collected: AppleSignIn.requestedScopes is empty. If the D20 fallback ever
+  requests .email, add NSPrivacyCollectedDataTypeEmailAddress here and on the App Store label
+  (Baseline/Store/PrivacyNutrition.md) in the same commit. No analytics, no tracking, so no tracking
+  domains exist. The accessed-API section lists the required-reason categories that NOOP's engine,
+  compiled into this binary, actually calls. GRDB.swift ships its own manifest inside the package.
 
   Sources in the binary (re-check these when NOOP is merged):
     UserDefaults      UserDefaults/@AppStorage across Strand/, StrandiOS/, StrandiOSShared/ and
@@ -25,7 +36,56 @@
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeHealth</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeFitness</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeName</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeUserID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
 		<dict>

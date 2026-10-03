@@ -1,31 +1,33 @@
 # Baseline — notes for App Review
 
 Paste into App Store Connect › App Review Information › Notes (4,000 characters max; the fenced
-block is just under 4,000, so trim before adding). The sections after it are for whoever submits: why the notes say
+block is about 3,950, so trim before adding). The sections after it are for whoever submits: why the notes say
 what they say, and what to resolve before the build goes in.
 
 ## The notes
 
 ```
-Baseline is a free companion app for a heart-rate strap the user owns (WHOOP 4.0, 5.0 and MG; independent, not affiliated with the hardware maker). It reads the strap over Bluetooth and shows heart rate variability (HRV) and resting heart rate against the person's own baseline, plus sleep, a habits journal and workouts. Open source (PolyForm Noncommercial 1.0.0), built on the NOOP project.
+Baseline is a free companion app for a heart-rate strap the user owns (WHOOP 4.0, 5.0 and MG; independent, not affiliated with the hardware maker). It reads the strap over Bluetooth and shows HRV and resting heart rate against the person's own baseline, plus sleep, a habits journal and workouts. Open source (PolyForm Noncommercial 1.0.0), built on the NOOP project.
 
-NO ACCOUNT, NO SERVER. No sign-in, no demo credentials, no network connections, no analytics, crash reporting or backend. Everything lives in the app's container on the device and, if allowed, in Apple Health.
+LOCAL FIRST. Everything except Friends needs no account and makes no network connection; no analytics, crash reporting or ads. Data stays in the app's container and, if allowed, Apple Health.
 
-WITHOUT A STRAP. Pairing needs the physical strap, which the review device lacks. TO SEE EVERY SCREEN WITH DATA: Settings (the gear top-right on any tab) › About › "Sample data" › turn on "Show sample data". Sixty made-up nights (HRV, resting heart rate, readiness, sleep, steps, calories, workouts, journal) then fill Home, Trends, Sleep, Workouts and the details; only the stress curve and the heart-rate day trace need a strap. Home shows a "Sample data" pill; the same switch removes it. Synthetic, on the device only. With it off, every screen shows an empty state saying what appears after the first synced night:
-- Welcome (first launch): three pages; "Continue", "Skip for now" (pairing), "Not now" (Apple Health). No dialog is forced.
-- Home: the strap pill ("Pair" opens the pairing wizard), a "Pair strap" empty state, and the floating "Journal" button (habit chips work without data, stored locally).
-- Trends (charts, Progress, Habits) and Sleep: empty states.
-- Settings: Devices (pairing wizard), Apple Health, Data (Import of a strap-app or Apple Health export and Export CSV via the Files picker; Compare; Data source), Profile, Sleep window and Intensity goal, Notifications (opt-in morning summary and evening check-in), About (privacy policy, licence, notices, disclaimer, "How accurate is this?", Sample data).
+FRIENDS (OPTIONAL 4TH TAB). Sign in with Apple (no name or email requested), a display name and a 16+ confirmation; every metric is Off until turned on with explicit consent. Only derived values leave the device, to the developer's Supabase server (Frankfurt, EU): daily steps, intensity minutes, 0/1 active days, sleep-goal nights and on-time bedtimes, and HRV / resting HR / readiness only as a weekly change against the person's own baseline, never ranked. Never sent: heart rate, raw HRV, sleep times, calories, stress, journal, location. No chat or free text. TO TRY IT WITHOUT AN ACCOUNT: turn on Sample data (below); Friends then shows made-up friends and competitions on the device and sends nothing (a build without the server offers the same as "Preview with demo friends" on the Friends tab). Or sign in with your own Apple ID. Account deletion: Settings › Friends & sharing › "Delete account and shared data" (deletes every server row, revokes Sign in with Apple). Report and Block are on every friend and request; reports (a fixed reason, no text) are reviewed weekly.
 
-PERMISSIONS. Bluetooth is requested when the user starts pairing a strap; the bluetooth-central background mode keeps a paired strap's sync running. Apple Health read and write are requested only on "Allow" in Welcome or Settings › Apple Health; the app reads sleep, workouts and heart-rate samples and writes back HRV, resting heart rate and sleep. Notifications are requested only when the user turns on the morning summary or evening check-in; local, at most once a day each; no push.
+WITHOUT A STRAP: Settings (gear, top right) › About › Sample data › "Show sample data". Sixty made-up nights fill every tab and detail, Friends included. Home shows a "Sample data" pill; the same switch removes it. With it off, every screen shows an empty state:
+- Welcome (first launch): three skippable pages; no dialog is forced.
+- Home: strap pill ("Pair" opens pairing), a "Pair strap" empty state, the floating "Journal" button.
+- Trends and Sleep: empty states. Friends: what can be shared, then Sign in with Apple.
+- Settings: Devices, Apple Health, Data (Import, Export CSV), Profile, Sleep window, Activity goals, Notifications, Friends & sharing, About (privacy policy, licence, notices, disclaimer, "How accurate is this?", Sample data).
 
-The "fetch" and "processing" modes run three BGTasks: an Apple Health write or re-computation after a background sync, and a warning when the strap has not synced for days. The "location" mode is declared for the engine's outdoor-workout route recorder, which no screen in this build exposes; no location is read or stored.
+PERMISSIONS. Bluetooth when pairing starts; bluetooth-central keeps a paired strap syncing. Apple Health only on "Allow" in Welcome or Settings › Apple Health; reads sleep, workouts, steps and heart rate, writes HRV, resting heart rate and sleep. Notifications only when the morning summary or evening check-in is turned on; local, at most once a day each; no push.
 
-DATA. Nothing is collected or transmitted by the developer or any third party (App Privacy: "Data Not Collected"). No third-party SDKs beyond compiled-in open-source packages (GRDB, ZIPFoundation, swift-markdown-ui). Health data never goes to iCloud.
+"fetch" and "processing" run three BGTasks: an Apple Health write or re-computation after a background sync, and a warning when the strap has not synced for days. "location" is declared for the engine's outdoor-workout route recorder, which no screen exposes; no location is read or stored.
 
-HEALTH CLAIMS. The app computes wellness estimates (HRV, resting heart rate, a 0–100 readiness score, sleep stages and timing, effort, steps, calories, intensity minutes, an hourly stress estimate) from the strap's heart-rate, R-R and motion streams and from Apple Health, using published methods documented in the open-source project. Every number is shown against the person's own baseline, average or goal, never a clinical threshold; no alert or diagnosis is raised. Settings › About › "How accurate is this?" lists each metric's evidence tier from published validation studies, with the studies linked. Welcome, About › Disclaimer and the store description all say it is not a medical device and nothing it shows is medical advice.
+DATA. App Privacy: Data Linked to You (Health, Fitness, Name, User ID), App Functionality only, no tracking, all from Friends. No third-party SDKs; open-source packages only (GRDB, ZIPFoundation, swift-markdown-ui). Health data never goes to iCloud.
 
-TRADEMARK. The hardware maker's name appears only to identify compatible hardware (nominative use), with "Not affiliated" beside it. Name, icon, screenshots and keywords carry no third-party mark.
+HEALTH CLAIMS. Wellness estimates (HRV, resting heart rate, 0–100 readiness, sleep, effort, steps, calories, intensity minutes, hourly stress) by published methods, each shown against the person's own baseline, average or goal, never a clinical threshold; no alert or diagnosis. Settings › About › "How accurate is this?" lists each metric's evidence tier with the studies linked. Welcome, About and the store copy say it is not a medical device or advice.
+
+TRADEMARK. The hardware maker's name appears only to identify compatible hardware (nominative use), with "Not affiliated" beside it.
 
 Contact: Patrick Schmidt, paddyr.schmidt@gmail.com.
 ```
@@ -46,8 +48,11 @@ curve and the day's heart-rate trace are the two the sample cannot fill (they ne
 rate). Home wears a "Sample data" pill while it is on. It never touches a strap's, an import's or Apple Health's rows, and nothing from it is
 written back to Apple Health (the write-back reads the strap's fixed ids). `SampleDataTests` covers the
 generator and the store round-trip; `ScreenshotTests/testSampleData` walks the reviewer's path and
-captures `sample-home-0`. Check the switch on the TestFlight build before submitting: it is the one
-thing the notes promise.
+captures `sample-home-0`. The same switch is the reviewer's way into Friends: while sample data is on,
+`FriendsBackendFactory.choose` picks the in-memory demo backend (`LocalDemoFriendsBackend`, signed in,
+seeded friends and competitions) even when the build carries `Supabase.plist`, so nothing is uploaded and
+no Apple ID is needed. Check the switch on the TestFlight build before submitting: it is the one thing
+the notes promise.
 
 ## Resolve before submitting (things the reviewer will see)
 
@@ -68,12 +73,24 @@ thing the notes promise.
 3. **Privacy policy URL** must open in a browser before the build is submitted (see `AppStore.md`).
 4. **Version and build numbers** in `project.yml`'s Baseline block (`MARKETING_VERSION`,
    `CURRENT_PROJECT_VERSION`) must be higher than any build already uploaded.
-5. **Review device:** no sign-in, so leave the demo-account fields empty and tick "Sign-in not required".
+5. **Review device:** the app needs no sign-in, and Friends uses Sign in with Apple (the reviewer's own
+   Apple ID; no demo credentials exist or are needed). Leave the demo-account fields empty and tick
+   "Sign-in not required".
+6. **Friends and guideline 5.1.1(ix).** Sensitive health data on a server is expected from an
+   organisation account. Check the membership type of team `25RC553RGP` (FRIENDS_SPEC §11 step 1). On an
+   Individual account, either ship Release without `Baseline/Resources/Supabase.plist` (release-check
+   WARNs; the tab then offers "Preview with demo friends" only and nothing is uploaded) or accept the
+   risk knowingly.
+7. **App Privacy and age rating** must be re-answered before this build: `PrivacyNutrition.md` (Data
+   Linked to You) and the age-rating table in `AppStore.md` (display names are user-generated content,
+   with report and block). The privacy policy page must show the Friends version of `PRIVACY.md`.
+8. **Reports:** check the `reports` table in the Supabase dashboard at least weekly (the notes promise
+   it); act by blocking or deleting the profile there.
 
 ## What each screen does (reference for answering a reviewer's question)
 
 - **Welcome:** intro (what the app shows, the compatibility line, "everything stays on your iPhone",
-  "not medical advice"), pair strap (opens NOOP's pairing wizard for a 4.0 or a 5.0/MG; skippable),
+  "not medical advice"; true before Friends is ever opened, and Friends asks again for every metric), pair strap (opens NOOP's pairing wizard for a 4.0 or a 5.0/MG; skippable),
   Apple Health (requests read/write; skippable). Can be re-run from Settings.
 - **Home:** one day at a time (a day switcher under the bar walks back through stored days, never
   forward past today); strap pill in the bar; readiness as a 0–100 score on a horizontal track with a
@@ -101,10 +118,21 @@ thing the notes promise.
   average bedtime, average wake time and a 0–100 regularity score built from sleep/wake timing only; a
   list of nights; a night opens its detail.
 - **Workouts:** sessions with duration, average heart rate and zones; a session opens its detail.
+- **Friends (optional fourth tab):** signed out, one card says what can be shared (steps, intensity
+  minutes, active days, nights at sleep goal, on-time bedtimes; HRV, resting HR and readiness only as a
+  change against the person's own baseline) and what never is, then Sign in with Apple, or "Preview with
+  demo friends" in a build without a server. After sign-in: a display name and "I'm 16 or older", then
+  each metric Off / Only in competitions / Friends with an explicit "I agree". Signed in: a leaderboard
+  of behaviour metrics scored as % of each person's own goal (Competitive view can turn places off),
+  physiology listed alphabetically and never ranked, invite by an 8-character code, friend requests,
+  competitions (steps, intensity minutes, active days, sleep-goal nights, on-time bedtimes; up to 9
+  friends, up to 31 days), a friend's page with Hide, Remove, Block and Report.
 - **Settings (gear on every tab):** Devices, Apple Health, Data (Import, Compare, Export, Data source),
   Profile (date of birth, sex, units, weight, height, max heart rate) and Sleep window (bedtime and wake
   time pickers; defaults 11:00 PM to 7:00 AM; stored on the device only) and Intensity goal (a weekly stepper,
-  60–600 in steps of 10, default 150, with one line on the heart-rate basis), Notifications, About (version,
+  60–600 in steps of 10, default 150, with one line on the heart-rate basis), Notifications, Friends &
+  sharing (name, Competitive view, what you share, "See what's on the server" with a JSON export, Sign
+  out, "Delete account and shared data"), About (version,
   NOOP and Baseline source links, privacy policy, licence, open-source notices, disclaimer, "How accurate
   is this?": every metric's evidence tier with its caveat and the validation studies as links, Intensity minutes
   and Heart rate rated by a second review, plus links to both cited reviews on GitHub; Sample data).

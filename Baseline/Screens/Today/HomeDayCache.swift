@@ -3,7 +3,8 @@ import Foundation
 
 /// Home's per-day memo, so swiping back and forth between days never rebuilds a day's cards twice.
 /// Keyed by the selected day, the effort row's logical day, the store's `refreshSeq`, the data-source
-/// setting, the Progress horizon and the Intensity goal and max heart rate: a new `refreshSeq` (or a
+/// setting, the Progress horizon, the Intensity goal and max heart rate and the profile the calorie
+/// estimate reads: a new `refreshSeq` (or a
 /// Settings → Data change) drops EVERY entry, since every day's baseline is folded from the same table. The night list (`SleepNightBuilder.nights`, one `await` per
 /// load) is memoised once per (seq, source) as well, because it is the same for every day. Main-actor
 /// only (it is read and written from `TodayScreen.load`); pure otherwise, `HomeDayCacheTests`.
@@ -22,6 +23,9 @@ final class HomeDayCache {
         /// The max heart rate the Intensity classifier scored with (0 = the profile is not usable yet),
         /// so a new age or override re-reads the day.
         var intensityHRmax: Int = 0
+        /// What the calorie estimate reads from Settings › Profile (entered flags, sex, age, weight,
+        /// height), so an edit there re-reads the day's resting calories.
+        var profileStamp: String = ""
     }
 
     /// What one day's cards need, built once.
@@ -35,9 +39,12 @@ final class HomeDayCache {
         let progressHeadline: String?
         /// The Readiness score card's state (`TodayReadinessScore.build`); `.missing` until a load sets it.
         var readiness: TodayReadinessScore = .missing
-        /// Steps against the week (nil = not read, the card is hidden), the day's calorie estimate, and
-        /// the day's Stress curve (nil = nothing scored). Today's stress is re-read on every hit through
-        /// NOOP's fingerprint memo (`updateStress`), since intraday heart rate lands without a `refreshSeq`.
+        /// Steps against the week (nil = not read yet), the day's calories (resting + active; re-read on
+        /// every hit on today through `updateCalories`: the active part grows with the day's heart rate
+        /// and the resting part with the clock), and the day's Stress hours (nil = nothing scored).
+        /// Today's stress is re-read on every hit through NOOP's fingerprint memo (`updateStress`), since
+        /// intraday heart rate lands without a `refreshSeq`; a past day's personal-lens readout is paid
+        /// for once here.
         var steps: BaselineReadouts.StepsReadout? = nil
         var calories: BaselineReadouts.CaloriesReadout? = nil
         var stress: BaselineReadouts.StressDayReadout? = nil
@@ -111,6 +118,14 @@ final class HomeDayCache {
         guard var e = entries[key] else { return }
         e.heartRate = heartRate
         e.intensity = intensity
+        entries[key] = e
+    }
+
+    /// Replaces the calories of a stored day (today's active estimate grows with the strap's heart rate
+    /// and the resting part is prorated to the clock; nothing else on the entry changes).
+    func updateCalories(_ calories: BaselineReadouts.CaloriesReadout?, for key: Key) {
+        guard var e = entries[key] else { return }
+        e.calories = calories
         entries[key] = e
     }
 

@@ -34,10 +34,24 @@ import WhoopStore
 // `workoutNamespaces`, the journal through `importedReadIds`. The real "my-whoop" history stays in
 // the union beneath (the sample wins a shared day while it is on). The re-point is in-memory: AppModel
 // re-adopts the registry's active id on every launch, so `SampleDataPill` (on Home while the flag is
-// on) re-applies it and refreshes until the two agree. Steps reach Home through the funnel's `steps`
-// column (`BaselineReadouts.stepReadings` falls back to it for days NOOP's strap → phone → estimate
-// resolver has no metric-series point for; the sample writes none), calories through `activeKcalEst`.
-// The Stress curve is the one card the sample cannot fill: it needs the strap's daytime heart rate.
+// on) re-applies it and refreshes until the two agree. Steps reach Home through NOOP's strap → phone →
+// estimate resolver (its third strap candidate is `<active>-noop`, the sample's daily rows, so they read
+// as the strap's counter), calories' legacy figure through `activeKcalEst`.
+//
+// INTRADAY STREAMS. The daily rows alone left Heart rate, Stress and scored Intensity minutes empty and
+// the Calories card without an active part, because those read the strap's raw seconds. `insert` also
+// writes a heart-rate trace for every day and wrist motion for walks and workouts
+// (`BaselineSampleStreams`, deterministic) through `WhoopStore.insert(_:deviceId:)` under `deviceId`.
+// The sample id is in no registry, so NOOP's engine never re-scores those seconds (the sample's own
+// daily rows stay authoritative), while the read spine's `rawPhysiologyReadIds` puts the ACTIVE id first,
+// so `hrSamples`, `hrBuckets` and `gravitySamplesUnion` all see them while the sample is read.
+// `deleteAllData(deviceId:)` clears `hrSample` and `gravitySample` with everything else.
+//
+// TODAY. The anchor day is written "so far": its steps scaled by the share of the waking day (06–22)
+// that has passed at the anchor, its calorie estimate by the share of the whole day, its streams cut at
+// the anchor. `refreshIfStale` (from `applyReadSpine`, on every activation) tops today up as the day
+// goes on, and re-anchors the whole dataset on a new day, so the sample never shows a whole day's count
+// at 9:41 or a stale week.
 enum BaselineSampleData {
 
     /// Workouts and journal answers live under this id.
@@ -54,6 +68,12 @@ enum BaselineSampleData {
     static let seed: UInt64 = 0xBA5E_11E5
     /// XORed into `seed` for the steps / calories stream, which runs beside the main one.
     static let activitySeedSalt: UInt64 = 0x57E9_5CA1
+    /// `UserDefaults.standard`: the day key the stored dataset is anchored on, and the unix second its
+    /// streams and today's row were last written up to (`refreshIfStale`).
+    static let anchorDayKey = "baseline.sampleData.anchorDay"
+    static let writtenUntilKey = "baseline.sampleData.writtenUntil"
+    /// Today is topped up at most this often (seconds).
+    static let topUpInterval = 15 * 60
 
     /// True while the sample rows are in the store (the flag `setActive` writes).
     static var isActive: Bool { UserDefaults.standard.bool(forKey: activeKey) }
@@ -192,14 +212,58 @@ enum BaselineSampleData {
 
     // MARK: - Store (public WhoopStore APIs only)
 
-    /// Writes the dataset for `anchor` under the two sample ids. Idempotent: every upsert is keyed by
-    /// its natural key, so a second insert for the same anchor rewrites the same rows.
-    static func insert(into store: WhoopStore, anchor: Date = Date()) async throws {
+    /// The share of the waking day (06:00–22:00 local) that has passed at `date`, 0…1: how far today's
+    /// step count has got.
+    static func wakingFraction(_ date: Date, calendar: Calendar = .current) -> Double {
+        let secs = date.timeIntervalSince(calendar.startOfDay(for: date))
+        return min(1, max(0, (secs - 6 * 3_600) / (16 * 3_600)))
+    }
+
+    /// `days` with the row for `anchor`'s day written "so far": steps × `wakingFraction`, the calorie
+    /// estimate × the share of the whole day. Every other row and column unchanged. Pure.
+    static func scaledToAnchor(_ days: [DailyMetric], anchor: Date, calendar: Calendar = .current) -> [DailyMetric] {
+        let key = Repository.localDayKey(anchor)
+        let steps = wakingFraction(anchor, calendar: calendar)
+        let whole = BaselineReadouts.dayFraction(anchor, calendar: calendar)
+        return days.map { d in
+            guard d.day == key else { return d }
+            return DailyMetric(
+                day: d.day, totalSleepMin: d.totalSleepMin, efficiency: d.efficiency,
+                deepMin: d.deepMin, remMin: d.remMin, lightMin: d.lightMin,
+                disturbances: d.disturbances, restingHr: d.restingHr, avgHrv: d.avgHrv,
+                recovery: d.recovery, strain: d.strain, exerciseCount: d.exerciseCount,
+                spo2Pct: d.spo2Pct, skinTempDevC: d.skinTempDevC, respRateBpm: d.respRateBpm,
+                steps: d.steps.map { Int((Double($0) * steps).rounded()) },
+                activeKcalEst: d.activeKcalEst.map { round1($0 * whole) })
+        }
+    }
+
+    /// Writes the dataset for `anchor` under the two sample ids, today "so far" (`scaledToAnchor`), and,
+    /// with `includeStreams`, every day's heart rate and motion up to the anchor (`BaselineSampleStreams`)
+    /// under `deviceId`. Idempotent: every upsert is keyed by its natural key, so a second insert for the
+    /// same anchor rewrites the same rows.
+    static func insert(into store: WhoopStore, anchor: Date = Date(), includeStreams: Bool = true) async throws {
         let data = generate(anchor: anchor)
-        _ = try await store.upsertDailyMetrics(data.days, deviceId: computedDeviceId)
+        _ = try await store.upsertDailyMetrics(scaledToAnchor(data.days, anchor: anchor), deviceId: computedDeviceId)
         _ = try await store.upsertSleepSessions(data.sleeps, deviceId: computedDeviceId)
         if !data.workouts.isEmpty { _ = try await store.upsertWorkouts(data.workouts, deviceId: deviceId) }
         if !data.journal.isEmpty { _ = try await store.upsertJournal(data.journal, deviceId: deviceId) }
+        if includeStreams {
+            try await BaselineSampleStreams.insert(BaselineSampleStreams.plans(for: data, anchor: anchor),
+                                                   into: store, deviceId: deviceId,
+                                                   until: Int(anchor.timeIntervalSince1970))
+        }
+    }
+
+    /// Today's row and today's streams written up to `now` (a top-up of an insert anchored earlier the
+    /// same day). Idempotent.
+    static func topUpToday(into store: WhoopStore, now: Date = Date()) async throws {
+        let data = generate(anchor: now)
+        let key = Repository.localDayKey(now)
+        let today = scaledToAnchor(data.days.filter { $0.day == key }, anchor: now)
+        _ = try await store.upsertDailyMetrics(today, deviceId: computedDeviceId)
+        let plans = BaselineSampleStreams.plans(for: data, anchor: now).filter { $0.day == key }
+        try await BaselineSampleStreams.insert(plans, into: store, deviceId: deviceId, until: Int(now.timeIntervalSince1970))
     }
 
     /// Deletes every row under the two sample ids, across every deviceId-keyed table, and nothing else.
@@ -223,10 +287,57 @@ enum BaselineSampleData {
 
     /// Points the repository's READ id at the sample while the flag is on. Returns true when it moved
     /// (the caller then refreshes). A no-op when the flag is off or the id is already the sample's.
+    /// While the flag is on it also keeps the sample current (`refreshIfStale`, in the background). In a
+    /// DEBUG build launched with `--demo-seed` it starts the demo augmentation (the same streams under the
+    /// same id, `BaselineDemoAugmentation`, and only over a store NOOP's seeder seeded) and, once that has
+    /// written, points the read id the same way.
+    /// `keepCurrent: false` skips the background refresh (tests, whose repository has no store of its own).
     @MainActor
-    static func applyReadSpine(_ repo: Repository) -> Bool {
+    static func applyReadSpine(_ repo: Repository, keepCurrent: Bool = true) -> Bool {
+        #if DEBUG
+        if !isActive, BaselineDemoAugmentation.requested {
+            BaselineDemoAugmentation.startIfNeeded(repo)
+            guard BaselineDemoAugmentation.isReady else { return false }
+            return repo.adoptActiveDeviceId(deviceId)
+        }
+        #endif
         guard isActive else { return false }
+        if keepCurrent { refreshIfStale(repo) }
         return repo.adoptActiveDeviceId(deviceId)
+    }
+
+    @MainActor private static var refreshing = false
+
+    /// Keeps the stored sample current while it is on: a dataset anchored on an earlier day is replaced
+    /// by today's (the whole 60 days move with the calendar), and today's row and streams are topped up
+    /// to now at most every `topUpInterval`. Runs once at a time, in the background; refreshes the
+    /// repository when it wrote anything.
+    @MainActor
+    static func refreshIfStale(_ repo: Repository, now: Date = Date()) {
+        guard isActive, !refreshing else { return }
+        let defaults = UserDefaults.standard
+        let today = Repository.localDayKey(now)
+        let stale = defaults.string(forKey: anchorDayKey) != today
+        let nowTs = Int(now.timeIntervalSince1970)
+        guard stale || nowTs - defaults.integer(forKey: writtenUntilKey) >= topUpInterval else { return }
+        refreshing = true
+        Task { @MainActor in
+            defer { refreshing = false }
+            guard let store = await repo.storeHandle() else { return }
+            do {
+                if stale {
+                    try await remove(from: store)
+                    try await insert(into: store, anchor: now)
+                } else {
+                    try await topUpToday(into: store, now: now)
+                }
+                defaults.set(today, forKey: anchorDayKey)
+                defaults.set(nowTs, forKey: writtenUntilKey)
+                await repo.refresh()
+            } catch {
+                // The next activation tries again; the rows already stored stay readable.
+            }
+        }
     }
 
     /// The About toggle: inserts (or removes) the rows, moves the read id onto the sample (or back to
@@ -238,12 +349,17 @@ enum BaselineSampleData {
         guard let store = await repo.storeHandle() else { return SampleDataError.storeUnavailable }
         do {
             if on {
-                try await insert(into: store)
+                let now = Date()
+                try await insert(into: store, anchor: now)
                 UserDefaults.standard.set(true, forKey: activeKey)
+                UserDefaults.standard.set(Repository.localDayKey(now), forKey: anchorDayKey)
+                UserDefaults.standard.set(Int(now.timeIntervalSince1970), forKey: writtenUntilKey)
                 _ = repo.adoptActiveDeviceId(deviceId)
             } else {
                 try await remove(from: store)
                 UserDefaults.standard.set(false, forKey: activeKey)
+                UserDefaults.standard.removeObject(forKey: anchorDayKey)
+                UserDefaults.standard.removeObject(forKey: writtenUntilKey)
                 _ = repo.adoptActiveDeviceId(restoreId.isEmpty ? Repository.whoopSource : restoreId)
             }
         } catch {

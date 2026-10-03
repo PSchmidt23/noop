@@ -155,13 +155,13 @@ final class SampleDataTests: XCTestCase {
 
         let before = await BaselineSampleData.storedRowCount(in: store)
         XCTAssertEqual(before, 0)
-        try await BaselineSampleData.insert(into: store, anchor: noon)
+        try await BaselineSampleData.insert(into: store, anchor: noon, includeStreams: false)
         let data = BaselineSampleData.generate(anchor: noon)
         let expected = data.days.count + data.sleeps.count + data.workouts.count + data.journal.count
         let afterInsert = await BaselineSampleData.storedRowCount(in: store)
         XCTAssertEqual(afterInsert, expected)
         // Idempotent: a second insert for the same anchor rewrites the same rows.
-        try await BaselineSampleData.insert(into: store, anchor: noon)
+        try await BaselineSampleData.insert(into: store, anchor: noon, includeStreams: false)
         let afterSecondInsert = await BaselineSampleData.storedRowCount(in: store)
         XCTAssertEqual(afterSecondInsert, expected)
         // Nothing landed under the strap's or the journal's ids.
@@ -195,7 +195,7 @@ final class SampleDataTests: XCTestCase {
         let repo = Repository(deviceId: "my-whoop")
         repo.setStoreForTesting(store)
 
-        try await BaselineSampleData.insert(into: store, anchor: noon)
+        try await BaselineSampleData.insert(into: store, anchor: noon, includeStreams: false)
         await repo.refresh()
         XCTAssertTrue(repo.loaded)
         XCTAssertTrue(repo.days.isEmpty, "precondition: a dedicated id is invisible until the read id points at it")
@@ -212,6 +212,8 @@ final class SampleDataTests: XCTestCase {
         let steps = await BaselineReadouts.steps(repo, for: todayKey, mode: .strapFirst)
         XCTAssertTrue(steps.hasRecordedSource)
         XCTAssertEqual(steps.steps, days.last?.steps, "the anchor day's count, as the sample wrote it")
+        XCTAssertEqual(steps.source, .strap, "the sample's daily rows read as the strap's counter")
+        XCTAssertEqual(steps.state, .counted)
         XCTAssertNotNil(steps.average7)
         XCTAssertNotNil(steps.average30)
         let calories = BaselineReadouts.calories(for: todayKey, days: days)
@@ -250,13 +252,178 @@ final class SampleDataTests: XCTestCase {
         let repo = Repository(deviceId: "my-whoop")
         defaults.set(false, forKey: BaselineSampleData.activeKey)
         XCTAssertFalse(BaselineSampleData.isActive)
-        XCTAssertFalse(BaselineSampleData.applyReadSpine(repo))
+        XCTAssertFalse(BaselineSampleData.applyReadSpine(repo, keepCurrent: false))
         XCTAssertEqual(repo.deviceId, "my-whoop")
         defaults.set(true, forKey: BaselineSampleData.activeKey)
-        XCTAssertTrue(BaselineSampleData.applyReadSpine(repo), "moves the read id once")
+        XCTAssertTrue(BaselineSampleData.applyReadSpine(repo, keepCurrent: false), "moves the read id once")
         XCTAssertEqual(repo.deviceId, BaselineSampleData.deviceId)
-        XCTAssertFalse(BaselineSampleData.applyReadSpine(repo), "and is then a no-op, so Home's re-apply loop settles")
+        XCTAssertFalse(BaselineSampleData.applyReadSpine(repo, keepCurrent: false),
+                       "and is then a no-op, so Home's re-apply loop settles")
     }
+
+    // MARK: Today "so far"
+
+    /// The anchor day is written as far as it has got: steps by the share of the waking day (06–22), the
+    /// calorie estimate by the share of the whole day; every other row and column is the generator's.
+    func testScaledToAnchor_writesTodaySoFar_andLeavesEveryOtherRow() throws {
+        let data = BaselineSampleData.generate(anchor: noon)
+        let scaled = BaselineSampleData.scaledToAnchor(data.days, anchor: noon)
+        XCTAssertEqual(Array(scaled.dropLast()), Array(data.days.dropLast()))
+        let raw = try XCTUnwrap(data.days.last), today = try XCTUnwrap(scaled.last)
+        XCTAssertEqual(BaselineSampleData.wakingFraction(noon), 0.375, accuracy: 0.07, "6 of the 16 waking hours")
+        XCTAssertEqual(Double(try XCTUnwrap(today.steps)),
+                       (Double(try XCTUnwrap(raw.steps)) * BaselineSampleData.wakingFraction(noon)).rounded(), accuracy: 0.5)
+        XCTAssertLessThan(try XCTUnwrap(today.steps), try XCTUnwrap(raw.steps), "never a whole day's count at noon")
+        XCTAssertEqual(try XCTUnwrap(today.activeKcalEst), try XCTUnwrap(raw.activeKcalEst) * BaselineReadouts.dayFraction(noon),
+                       accuracy: 0.1)
+        XCTAssertEqual(today.restingHr, raw.restingHr)
+        XCTAssertEqual(today.avgHrv, raw.avgHrv)
+        let early = Calendar.current.date(bySettingHour: 5, minute: 0, second: 0, of: noon)!
+        XCTAssertEqual(BaselineSampleData.scaledToAnchor(data.days, anchor: early).last?.steps, 0, "no steps before 06:00")
+    }
+
+    // MARK: Streams
+
+    /// One plan per day; the last 14 days dense enough for Intensity minutes (20 readings a minute while
+    /// awake), every older waking hour over Stress's 300-sample floor; deterministic; cut at the anchor.
+    func testStreams_densityDeterminismAndTheCut() throws {
+        let data = BaselineSampleData.generate(anchor: noon)
+        let plans = BaselineSampleStreams.plans(for: data, anchor: noon)
+        XCTAssertEqual(plans.count, BaselineSampleData.nights)
+        XCTAssertEqual(plans.filter(\.dense).count, BaselineSampleStreams.denseDays)
+        XCTAssertEqual(plans, BaselineSampleStreams.plans(for: data, anchor: noon))
+
+        let old = try XCTUnwrap(plans.first)
+        let oldStreams = BaselineSampleStreams.streams(for: old)
+        XCTAssertEqual(oldStreams.hr, BaselineSampleStreams.streams(for: old).hr, "deterministic")
+        for hour in 8..<22 {
+            let n = oldStreams.hr.filter { ($0.ts - old.dayStart) / 3_600 == hour }.count
+            XCTAssertGreaterThanOrEqual(n, DaytimeStress.minHourHRSamples, "hour \(hour) of an older day")
+        }
+
+        let recent = plans[plans.count - 2]   // yesterday: a whole dense day
+        let s = BaselineSampleStreams.streams(for: recent)
+        let tenAM = recent.dayStart + 10 * 3_600
+        let minute = s.hr.filter { $0.ts >= tenAM && $0.ts < tenAM + 60 }.count
+        XCTAssertGreaterThanOrEqual(minute, IntensityMinutes.minSamplesPerMinute, "a dense waking minute")
+        XCTAssertTrue(s.hr.allSatisfy { (30...220).contains($0.bpm) })
+        // The night's low sits on the row's resting heart rate.
+        let night = s.hr.filter { $0.ts < recent.dayStart + 5 * 3_600 }.map(\.bpm)
+        XCTAssertEqual(Double(try XCTUnwrap(night.min())), Double(recent.restingHr), accuracy: 3)
+        // Motion only inside walks and workouts.
+        let moving = (recent.workouts.map { $0.start..<$0.end } + [BaselineSampleStreams.walk(recent)].compactMap { $0 })
+        XCTAssertFalse(s.gravity.isEmpty)
+        XCTAssertTrue(s.gravity.allSatisfy { g in moving.contains { $0.contains(g.ts) } })
+
+        let today = try XCTUnwrap(plans.last)
+        let cut = BaselineSampleStreams.streams(for: today, until: Int(noon.timeIntervalSince1970))
+        XCTAssertLessThanOrEqual(try XCTUnwrap(cut.hr.last).ts, Int(noon.timeIntervalSince1970), "nothing after the anchor")
+        XCTAssertTrue(BaselineSampleStreams.tenseHours(today).isSubset(of: Set(BaselineSampleStreams.tenseCandidates)))
+    }
+
+    /// Through the store and NOOP's read spine: once the sample's streams are in, the heart rate reaches
+    /// the union reads, a past day scores Stress on the PERSONAL lens with a typical, the day store
+    /// credits Intensity minutes from the trace (not "from workouts only") with an active-energy figure,
+    /// and removal leaves no sample under the sample id.
+    @MainActor
+    func testStreams_fillHeartRateStressIntensityAndCalories() async throws {
+        let store = try await WhoopStore.inMemory()
+        try await store.upsertDevice(id: "my-whoop", mac: nil, name: "WHOOP")
+        let repo = Repository(deviceId: "my-whoop")
+        repo.setStoreForTesting(store)
+        try await BaselineSampleData.insert(into: store, anchor: noon)
+        XCTAssertTrue(repo.adoptActiveDeviceId(BaselineSampleData.deviceId))
+        await repo.refresh()
+
+        let yesterday = Fixtures.dayKey(noon, minus: 1)
+        let start = try XCTUnwrap(BaselineReadouts.localMidnight(of: yesterday))
+        let from = Int(start.timeIntervalSince1970), to = from + 86_399
+        let hr = await repo.hrSamples(from: from, to: to, limit: 200_000)
+        XCTAssertGreaterThan(hr.count, 15_000, "a dense day of heart rate through the union read")
+        let buckets = await repo.hrBuckets(from: from, to: to, bucketSeconds: 60)
+        XCTAssertGreaterThan(buckets.count, 1_000)
+
+        // Stress, a past day, on the personal lens.
+        let stress = StressDayStore(fileURL: nil)
+        let analyzed = await stress.analyze(repo, day: yesterday, dayStart: start)
+        let scored = try XCTUnwrap(analyzed)
+        XCTAssertTrue(scored.lens.isPersonal, "59 days of daytime heart rate before it")
+        let readout = try XCTUnwrap(BaselineReadouts.stressDay(scored.result, day: yesterday, lens: scored.lens))
+        XCTAssertGreaterThanOrEqual(readout.scoredHours, StressState.minTotalledHours)
+        XCTAssertEqual(readout.restoredHours + readout.calmHours + readout.elevatedHours, readout.scoredHours)
+        XCTAssertEqual(readout.elevatedHours * 60, readout.highMinutes)
+        XCTAssertGreaterThan(readout.movingHours, 0, "the walk or the workout is moving, not stress")
+        XCTAssertGreaterThan(readout.restoredHours + readout.calmHours, 0)
+        let typical = await stress.typicalElevatedHours(repo, before: yesterday)
+        XCTAssertNotNil(typical, "14 personal days before it")
+        XCTAssertEqual(stress.storedRecord(yesterday)?.factsComputed, true)
+
+        // Intensity minutes and active energy from the trace, for the last week.
+        let days = (0..<7).map { Fixtures.dayKey(noon, minus: $0) }
+        let inputs = BaselineReadouts.calorieInputs(weightKg: 75, heightCm: 178, age: 35, sex: "female", hrMax: 185,
+                                                    entered: true, bodySet: true, appleWeightKg: nil)
+        let records = await IntradayDayStore(fileURL: nil).records(repo, effortHRmax: 185, zoneSet: nil, days: days,
+                                                                    mode: .strapFirst, entered: true, energy: inputs,
+                                                                    now: noon)
+        XCTAssertEqual(records.count, 7)
+        XCTAssertTrue(records.values.allSatisfy { $0.bpmAvg != nil }, "every day has a heart-rate trace")
+        XCTAssertTrue(records.values.contains { $0.basisTag == "hrr" && $0.credited > 0 }, "scored, not from workouts only")
+        XCTAssertTrue(records.values.contains { ($0.activeKcal ?? 0) > 50 }, "a training day's active energy")
+        XCTAssertTrue(records.values.allSatisfy { $0.energySignature != nil })
+
+        try await BaselineSampleData.remove(from: store)
+        let left = try await store.hrFingerprint(deviceId: BaselineSampleData.deviceId, from: 0, to: 4_102_444_800)
+        XCTAssertEqual(left.count, 0, "removal clears the streams too")
+        let motion = try await store.gravitySamples(deviceId: BaselineSampleData.deviceId, from: 0, to: 4_102_444_800, limit: 10)
+        XCTAssertTrue(motion.isEmpty)
+    }
+
+    #if DEBUG
+    /// The `--demo-seed` augmentation runs only over a store NOOP's seeder seeded: real "my-whoop" history
+    /// the seeder skipped is never proven; the seeder's device-row name proves a seeded one and is written
+    /// down, so the proof outlives the name the repository re-stamps on every later launch; a history that
+    /// was wiped and refilled since (its first day moved) is not the demo's any more.
+    func testDemoAugmentation_onlyOverAStoreNOOPSeeded() async throws {
+        let store = try await WhoopStore.inMemory()
+        let whoop = AppleDemoSeeder.whoop
+        let firstDay = Fixtures.dayKey(noon, minus: 9)
+        func marker() async throws -> [MetricPoint] {
+            try await store.metricSeries(deviceId: BaselineDemoAugmentation.markerDeviceId,
+                                         key: BaselineDemoAugmentation.markerKey, from: "0000-01-01", to: "9999-12-31")
+        }
+
+        let empty = await BaselineDemoAugmentation.seededByNOOP(store)
+        XCTAssertFalse(empty, "no my-whoop rows yet")
+        try await store.upsertDevice(id: whoop, mac: nil, name: "WHOOP")
+        _ = try await store.upsertDailyMetrics([Fixtures.metric(firstDay, hrv: 60, rhr: 50),
+                                                Fixtures.metric(Fixtures.dayKey(noon, minus: 1), hrv: 62, rhr: 49)],
+                                               deviceId: whoop)
+        let real = await BaselineDemoAugmentation.seededByNOOP(store)
+        XCTAssertFalse(real, "history the seeder skipped is left alone")
+        let noMarker = try await marker()
+        XCTAssertTrue(noMarker.isEmpty)
+
+        // The launch that seeded: the seeder's name proves it, and the marker lands on the first day.
+        try await store.upsertDevice(id: whoop, mac: nil, name: BaselineDemoAugmentation.seededDeviceName)
+        let seeded = await BaselineDemoAugmentation.seededByNOOP(store)
+        XCTAssertTrue(seeded)
+        let written = try await marker()
+        XCTAssertEqual(written.map(\.day), [firstDay])
+
+        // A later launch: the repository re-stamps the name, the marker still proves it.
+        try await store.upsertDevice(id: whoop, mac: nil, name: "WHOOP")
+        let relaunch = await BaselineDemoAugmentation.seededByNOOP(store)
+        XCTAssertTrue(relaunch)
+
+        // Wiped and refilled: the history's first day moved, so the old marker proves nothing.
+        try await store.deleteAllData(deviceId: whoop)
+        try await store.upsertDevice(id: whoop, mac: nil, name: "WHOOP")
+        _ = try await store.upsertDailyMetrics([Fixtures.metric(Fixtures.dayKey(noon, minus: 30), hrv: 55, rhr: 52)],
+                                               deviceId: whoop)
+        let refilled = await BaselineDemoAugmentation.seededByNOOP(store)
+        XCTAssertFalse(refilled)
+    }
+    #endif
 
     // MARK: Helpers
 

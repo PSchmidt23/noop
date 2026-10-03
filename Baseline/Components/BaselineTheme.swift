@@ -142,6 +142,18 @@ enum BaselineTheme {
     static let label = Font.system(.subheadline, design: .rounded).weight(.medium)
     /// 13: every secondary line, axis labels, section labels.
     static let caption = Font.system(.footnote, design: .rounded)
+    /// 34 semibold fixed-width: an invite code shown to be read aloud or typed ("ABCD 2345"), where each
+    /// character must be told apart. SF Rounded has no fixed-width face, so this is the system's monospaced
+    /// design. Scales on the large-title curve, capped at 1.5x so the code stays on one line.
+    static var code: Font {
+        .system(size: scaled(34, textStyle: .largeTitle, maxFactor: 1.5), weight: .semibold, design: .monospaced)
+    }
+    /// 22 semibold fixed-width: the field a code is typed into. Title2 curve, capped at 1.5x.
+    static var codeField: Font {
+        .system(size: scaled(22, textStyle: .title2, maxFactor: 1.5), weight: .semibold, design: .monospaced)
+    }
+    /// 13 fixed-width: raw data printed as stored (Friends' "On the server" JSON). Uncapped, like `caption`.
+    static let codeSmall = Font.system(.footnote, design: .monospaced)
 
     // SF Symbols beside text take a text style, never a fixed point size, so an icon grows with the
     // label it sits next to under Dynamic Type.

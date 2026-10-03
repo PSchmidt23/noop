@@ -1,11 +1,22 @@
 #if os(iOS)
 import Foundation
 import WhoopStore
+import WhoopProtocol
 import StrandAnalytics
 
 // The per-day facts the intraday stream yields (Intensity minutes, the day's heart-rate low / mean /
-// high, and the Stress day mean once a screen asked for it), computed ONCE per day and kept, so a
-// 1-year chart never reclassifies 365 days of samples on a render.
+// high, the strap's ACTIVE energy for the Calories card, and the Stress day mean once a screen asked for
+// it), computed ONCE per day and kept, so a 1-year chart never reclassifies 365 days of samples on a
+// render.
+//
+// Active energy (`activeKcal`): NOOP's own day estimator (`Calories.estimateDayEnergy`, Keytel 2005
+// above 50 % heart-rate reserve), its ACTIVE part only: NOOP's resting part is integrated over the
+// seconds the strap observed, and the Calories card credits a Mifflin–St Jeor resting figure for the
+// whole day instead (`Research/ACTIVITY_METRICS.md` §2). Computed from the day's raw samples when this
+// pass reads them (inside the verify window, once the profile may score), else from the 60-second
+// bucket means; stamped with `energySignature` (the body, age, sex, max heart rate and that day's
+// resting reference it ran on), so a profile change re-estimates the days it touches. A caller that
+// passes no `CalorieInputs` leaves a record's figure as it found it.
 //
 // Two layers, as the brief asks:
 //   • an in-memory memo keyed by (dayKey, refreshSeq): while the store's `refreshSeq` stands, a PAST day
@@ -105,6 +116,11 @@ struct IntradayDayRecord: Codable, Equatable {
     var stressMean: Double?
     var stressComputed: Bool
     let computedAt: Double
+    /// Active energy (kcal) over the day's heart rate (see the header); nil when the strap banked none
+    /// or no caller has asked with `CalorieInputs` yet.
+    var activeKcal: Double? = nil
+    /// `IntradayDayStore.energySignature` the figure was computed under; nil = not computed.
+    var energySignature: String? = nil
 
     var credited: Int { moderateMin + 2 * vigorousMin }
 
@@ -154,7 +170,9 @@ final class IntradayDayStore {
     /// Bump when the classifier or the record's meaning changes; every stored day recomputes.
     /// 2: the witness covers PPG-derived heart rate, the verify window scores raw samples (§5's floor),
     /// workouts credit the day they started on, records carry the store identity.
-    static let version = 2
+    /// 3: records carry the strap's active energy (Calories card), and the Stress day mean is scored on
+    /// the personal lens.
+    static let version = 3
     /// Days back from today that are re-read on every new `refreshSeq`, and classified from raw samples.
     static let verifyWindowDays = 14
     /// Raw samples read for one day (a fully worn day is 86,400 seconds).
@@ -246,6 +264,8 @@ final class IntradayDayStore {
                                     fingerprint: (count: Int, maxTs: Int)? = nil, workouts: [WorkoutRow] = [],
                                     rule: IntensityMinutes.BoutRule = .default,
                                     stress: (mean: Double?, computed: Bool) = (nil, false),
+                                    energy: (inputs: CalorieInputs, restingHr: Int?)? = nil,
+                                    carriedEnergy: (kcal: Double?, signature: String?) = (nil, nil),
                                     storeIdentity: String = "", now: Date = Date()) -> IntradayDayRecord {
         let scored = buckets.filter { $0.bpm > 0 && $0.bpm.isFinite }
         let bpmMin = scored.map(\.minBpm).min()
@@ -272,6 +292,12 @@ final class IntradayDayStore {
         case .workoutsOnly: tag = "workouts"
         case .needsAge: tag = "needsAge"
         }
+        var activeKcal = carriedEnergy.kcal
+        var energySig = carriedEnergy.signature
+        if let energy {
+            energySig = energySignature(energy.inputs, restingHr: energy.restingHr)
+            activeKcal = activeEnergy(buckets: scored, samples: samples, inputs: energy.inputs, restingHr: energy.restingHr)
+        }
         return IntradayDayRecord(day: day, version: version,
                                  fingerprintCount: fingerprint?.count ?? witness.count,
                                  fingerprintMaxTs: fingerprint?.maxTs ?? witness.maxTs,
@@ -282,7 +308,32 @@ final class IntradayDayStore {
                                  moderateMin: result.moderateMin, vigorousMin: result.vigorousMin,
                                  scoredMinutes: result.scoredMinutes, bpmMin: bpmMin, bpmAvg: bpmAvg, bpmMax: bpmMax,
                                  stressMean: stress.mean, stressComputed: stress.computed,
-                                 computedAt: now.timeIntervalSince1970)
+                                 computedAt: now.timeIntervalSince1970,
+                                 activeKcal: activeKcal, energySignature: energySig)
+    }
+
+    /// The day's ACTIVE energy from its heart rate: NOOP's `Calories.estimateDayEnergy(...).activeKcal`
+    /// over the raw samples when given, else over the 60-second bucket means (one reading a minute, which
+    /// the estimator's inferred cadence carries for 60 s). nil when the strap banked nothing. The resting
+    /// part NOOP returns is dropped on purpose (observed seconds only; the card credits Mifflin–St Jeor).
+    nonisolated static func activeEnergy(buckets: [HRBucket], samples: [IntensityMinutes.Sample]?,
+                                         inputs: CalorieInputs, restingHr: Int?) -> Double? {
+        let hr: [HRSample]
+        if let samples, !samples.isEmpty {
+            hr = samples.map { HRSample(ts: $0.ts, bpm: Int($0.bpm.rounded())) }
+        } else {
+            hr = buckets.filter { $0.bpm > 0 && $0.bpm.isFinite }.map { HRSample(ts: $0.ts, bpm: Int($0.bpm.rounded())) }
+        }
+        guard !hr.isEmpty else { return nil }
+        let estimate = Calories.estimateDayEnergy(hr, profile: inputs.energyProfile, hrmax: inputs.hrMax,
+                                                  restingHR: restingHr.map(Double.init))
+        return max(0, estimate.activeKcal)
+    }
+
+    /// What an active-energy figure was computed with: the profile's signature and that day's resting
+    /// reference (the Karvonen reserve the 50 % gate sits on).
+    nonisolated static func energySignature(_ inputs: CalorieInputs, restingHr: Int?) -> String {
+        inputs.energySignature + "|r=" + (restingHr.map { "\($0)" } ?? "-")
     }
 
     nonisolated static func signature(_ thresholds: IntensityMinutes.Thresholds?, rule: IntensityMinutes.BoutRule) -> String {
@@ -318,27 +369,38 @@ final class IntradayDayStore {
     /// `entered` is `BaselineReadouts.ProfileSet`, or a max-HR override): the seeded 30-year-old scores
     /// nothing, whichever screen asks, so every reader writes one signature per day and no tab re-scores
     /// another's days. Flushes the file at the end.
+    ///
+    /// With a `profile`, the pass also estimates each day's active energy under that profile's
+    /// `CalorieInputs` (`BaselineReadouts.calorieInputs`, the one resolver the Calories card reads); with
+    /// none, it leaves the records' figures as they are.
     func records(_ repo: Repository, profile: ProfileStore?, days: [String], mode: BaselineDataSource = .current(),
                  entered: Bool = BaselineReadouts.ProfileSet.current(), computeStress: Bool = false,
                  calendar: Calendar = .current, now: Date = Date()) async -> [String: IntradayDayRecord] {
-        await records(repo, effortHRmax: profile?.effortHRmax, zoneSet: profile?.hrZoneSet,
-                      hrMaxOverride: profile?.hrMaxOverride ?? 0, days: days, mode: mode, entered: entered,
-                      computeStress: computeStress, calendar: calendar, now: now)
+        var energy: CalorieInputs? = nil
+        if let profile {
+            energy = await BaselineReadouts.calorieInputs(repo, profile: profile, entered: entered, now: now)
+        }
+        return await records(repo, effortHRmax: profile?.effortHRmax, zoneSet: profile?.hrZoneSet,
+                             hrMaxOverride: profile?.hrMaxOverride ?? 0, days: days, mode: mode, entered: entered,
+                             computeStress: computeStress, energy: energy, calendar: calendar, now: now)
     }
 
     /// `records(_:profile:days:…)` over the profile's numbers (tests pass them without a `ProfileStore`).
     func records(_ repo: Repository, effortHRmax: Double?, zoneSet: HRZoneSet?, hrMaxOverride: Int = 0,
                  days: [String], mode: BaselineDataSource = .current(),
                  entered: Bool = BaselineReadouts.ProfileSet.current(), computeStress: Bool = false,
+                 energy: CalorieInputs? = nil,
                  calendar: Calendar = .current, now: Date = Date()) async -> [String: IntradayDayRecord] {
         loadIfNeeded()
         let todayKey = Repository.localDayKey(now)
         let wanted = days.filter { $0 <= todayKey }
         guard !wanted.isEmpty else { return [:] }
         // The funnel walked once for every day's resting-HR reference, and only when scoring is allowed.
-        let references = IntensityMinutes.mayScore(entered: entered, hrMaxOverride: hrMaxOverride) && (effortHRmax ?? 0) > 0
-            ? IntensityMinutes.RestingReferences(BaselineReadouts.days(repo, mode: mode))
-            : IntensityMinutes.RestingReferences([])
+        let scoring = IntensityMinutes.mayScore(entered: entered, hrMaxOverride: hrMaxOverride) && (effortHRmax ?? 0) > 0
+        let funnelReferences = scoring || energy != nil
+            ? IntensityMinutes.RestingReferences(BaselineReadouts.days(repo, mode: mode)) : nil
+        let references = scoring ? (funnelReferences ?? IntensityMinutes.RestingReferences([]))
+                                 : IntensityMinutes.RestingReferences([])
         let verifyFrom = Baselines.cutoffKey(todayKey: todayKey, carryDays: Self.verifyWindowDays)
         let seq = repo.refreshSeq
         let identity = Self.storeIdentity(repo)
@@ -353,9 +415,16 @@ final class IntradayDayStore {
             let thresholds = IntensityMinutes.thresholds(for: day, references: references, effortHRmax: effortHRmax,
                                                          zoneSet: zoneSet, entered: entered, hrMaxOverride: hrMaxOverride)
             let signature = Self.signature(thresholds, rule: rule)
+            // The day's energy inputs (nil: this caller does not estimate; records keep their figures).
+            let dayEnergy: (inputs: CalorieInputs, restingHr: Int?)? = energy.map {
+                (inputs: $0, restingHr: funnelReferences?.reference(for: day))
+            }
+            let energySig = dayEnergy.map { Self.energySignature($0.inputs, restingHr: $0.restingHr) }
+            func energyFresh(_ r: IntradayDayRecord?) -> Bool { energySig == nil || r?.energySignature == energySig }
 
             if day != todayKey, let m = memo[day], m.seq == seq, m.identity == identity,
-               m.record.thresholdSignature == signature, !computeStress || m.record.stressComputed {
+               m.record.thresholdSignature == signature, !computeStress || m.record.stressComputed,
+               energyFresh(m.record) {
                 out[day] = m.record
                 continue
             }
@@ -364,7 +433,8 @@ final class IntradayDayStore {
             let scoredUnder = record.map { $0.thresholdSignature == signature && $0.version == Self.version } ?? false
             let sameStore = identity == nil || record?.storeIdentity == identity
             let inWindow = day >= verifyFrom
-            if !(scoredUnder && sameStore) || inWindow {
+            let energyOK = energyFresh(record)
+            if !(scoredUnder && sameStore && energyOK) || inWindow {
                 if storeOpen == nil { storeOpen = await repo.storeHandle() != nil }
                 guard storeOpen == true else {
                     // No store (a failed open): cannot tell, so nothing is computed or persisted; a record
@@ -375,7 +445,7 @@ final class IntradayDayStore {
                 let buckets = await repo.hrBuckets(from: from, to: to, bucketSeconds: 60)
                 let witness = IntradayWitness(buckets: buckets)
                 let same = record.map { $0.witness == witness } ?? false
-                if scoredUnder && same {
+                if scoredUnder && same && energyOK {
                     if let identity, record?.storeIdentity != identity {
                         record?.storeIdentity = identity
                         dirty = true
@@ -398,15 +468,27 @@ final class IntradayDayStore {
                     }
                     // A Stress mean survives a thresholds-only change (same seconds, same calm hours).
                     let carried: (Double?, Bool) = same ? (record?.stressMean, record?.stressComputed ?? false) : (nil, false)
-                    record = Self.compute(day: day, buckets: buckets, samples: samples, thresholds: thresholds,
-                                          workouts: rows, rule: rule, stress: carried,
-                                          storeIdentity: identity ?? record?.storeIdentity ?? "", now: now)
+                    // Without inputs this caller cannot estimate energy: the figure survives a thresholds-only
+                    // change (same seconds), and is dropped when the seconds moved.
+                    let carriedEnergy: (Double?, String?) = same ? (record?.activeKcal, record?.energySignature) : (nil, nil)
+                    // The minute scan and the energy estimate are pure: run off the main actor, so a
+                    // first open after a version bump (every stored day recomputed) never stalls the UI.
+                    let dayRule = rule
+                    let storeId = identity ?? record?.storeIdentity ?? ""
+                    let workoutsForDay = rows
+                    let rawSamples = samples
+                    record = await Task.detached(priority: .userInitiated) {
+                        Self.compute(day: day, buckets: buckets, samples: rawSamples, thresholds: thresholds,
+                                     workouts: workoutsForDay, rule: dayRule, stress: carried, energy: dayEnergy,
+                                     carriedEnergy: carriedEnergy, storeIdentity: storeId, now: now)
+                    }.value
                     dirty = true
                 }
             }
             guard var r = record else { continue }
             if computeStress, !r.stressComputed || day == todayKey {
-                let mean = await BaselineReadouts.stressDay(repo, for: day, now: now, calendar: calendar)?.dayMean
+                let mean = await BaselineReadouts.stressDay(repo, for: day, now: now, calendar: calendar,
+                                                            includeTypical: false)?.dayMean
                 if !r.stressComputed || mean != r.stressMean {
                     r.stressMean = mean
                     r.stressComputed = true

@@ -46,8 +46,10 @@ stays the template.
       `baseline-ios`.
 - [ ] Category Health & Fitness, no secondary.
 - [ ] Price: Free, all territories. No in-app purchases.
-- [ ] App Privacy: **Data Not Collected**, no tracking (`PrivacyNutrition.md`). Publish the answers.
-- [ ] Age rating questionnaire answered as in `AppStore.md` (expected 4+).
+- [ ] App Privacy: **Data Linked to You** (Health, Fitness, Name, User ID; App Functionality only), no
+      tracking (`PrivacyNutrition.md`). Publish the answers.
+- [ ] Age rating questionnaire answered as in `AppStore.md` (social features: Yes, for Friends; accept
+      the rating App Store Connect computes).
 - [ ] Content rights: "does not contain, show or access third-party content".
 - [ ] Export compliance: already answered in the binary, `ITSAppUsesNonExemptEncryption = false` in
       `Info.plist`, so App Store Connect will not park the build on Missing Compliance. If it asks

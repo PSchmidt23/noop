@@ -189,10 +189,11 @@ final class MetricSeriesTests: BaselineEngineTestCase {
 
         // Intraday facts come in as maps.
         var facts = BaselineReadouts.IntradayDayValues()
-        facts.stressMean[today] = 1.4
+        facts.stressElevatedHours[today] = 2
         facts.intensityMinutes[today] = 23
         facts.heartRate[today] = (48, 71, 162)
-        XCTAssertEqual(BaselineReadouts.metricReadings(key: .stressAvg, days: days, intraday: facts).map(\.value), [1.4])
+        XCTAssertEqual(BaselineReadouts.metricReadings(key: .stressAvg, days: days, intraday: facts).map(\.value), [2],
+                       "Stress reads elevated hours, never the 0–3 level")
         XCTAssertEqual(BaselineReadouts.metricReadings(key: .intensityMinutes, days: days, intraday: facts).map(\.value), [23])
         let hr = BaselineReadouts.metricReadings(key: .heartRate, days: days, intraday: facts)
         XCTAssertEqual(hr[0].value, 71)
@@ -426,7 +427,12 @@ final class MetricSeriesTests: BaselineEngineTestCase {
         XCTAssertEqual(MetricDetailSpec.standard(.sleepDuration).format(444), "7h 24m")
         XCTAssertEqual(MetricDetailSpec.standard(.steps).format(8_412), "8,412")
         XCTAssertEqual(MetricDetailSpec.standard(.calories).format(2_143), "2,140")
-        XCTAssertEqual(MetricDetailSpec.standard(.stressAvg).format(1.44), "1.4")
+        let stress = MetricDetailSpec.standard(.stressAvg)
+        XCTAssertEqual(stress.unit, "h", "hours, never \"of 3\"")
+        XCTAssertNil(stress.higherIsBetter, "elevated time is not judged")
+        XCTAssertEqual(stress.format(2), "2")
+        XCTAssertEqual(stress.format(1.44), "1.5", "the Home card's half-hour grain")
+        XCTAssertTrue(stress.dayViewReplacesHero, "1D is the hours card, never a 'This day' score")
         XCTAssertNotNil(MetricDetailSpec.standard(.hrv).bandProvider)
         XCTAssertNil(MetricDetailSpec.standard(.steps).bandProvider)
         XCTAssertEqual(MetricDetailSpec.standard(.intensityMinutes).aboutText, BaselineReadouts.IntensityReadout.caveat)

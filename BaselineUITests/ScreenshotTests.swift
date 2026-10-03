@@ -3,8 +3,8 @@ import XCTest
 
 /// Screenshot harness: one test per Baseline screen — the three tabs (`home`, `trends`, `sleep`), the
 /// journal sheet over Home (`journal`, via Home's "Journal" button), Settings (`settings`, via the gear) and
-/// its Devices / Apple Health / Import / Compare / Export / Accuracy pushes (and the Intensity goal card on
-/// its own frame), Trends' embedded Progress and Habits sections (via the pinned segments), Workouts and its
+/// its Devices / Apple Health / Import / Compare / Export / Accuracy pushes (and the Activity goals card on
+/// its own frame, then its Intensity goal page), Trends' embedded Progress and Habits sections (via the pinned segments), Workouts and its
 /// detail, the metric details (HRV and heart rate at 1D / 7D / 4W / 1Y, Intensity minutes, bedtime and wake over time) —
 /// plus the three welcome steps and the launch
 /// frame. Each test launches the app with its DEBUG launch arguments (`--tab home|trends|sleep`, always with
@@ -26,8 +26,12 @@ final class ScreenshotTests: XCTestCase {
 
     // MARK: - Tabs (seeded, onboarding skipped)
 
+    /// Home after the demo augmentation has landed (Steps, Intensity, Heart rate, Calories and Stress all
+    /// read its streams), so the scrolled frames are not taken while the read id is re-pointed under them.
     func testHome() throws {
-        try captureTab("home", firstCard: "HRV")
+        let app = launchTab("home")
+        waitForActivityData(app)
+        try captureScrolled(app, screen: "home")
     }
 
     func testTrends() throws {
@@ -63,13 +67,24 @@ final class ScreenshotTests: XCTestCase {
         try capturePushed(app, screen: "settings", title: nil,
                           firstCard: NSPredicate(format: "label CONTAINS[c] %@", "connected"))
 
-        // Profile's Intensity goal card (the weekly goal stepper and the heart-rate basis line) on its own
-        // frames: back to Home and in again, so Settings starts at its top, then scrolled until the card's
-        // title sits in the upper half. At accessibility sizes the twelve-step pass above can stop short
-        // of the Profile section.
+        // Profile's "Activity goals" card (the daily step stepper, `settings-step-goal`, and the row into
+        // the weekly Intensity goal) on its own frames: back to Home and in again, so Settings starts at its
+        // top, then scrolled until the card's title sits in the upper half. At accessibility sizes the
+        // twelve-step pass above can stop short of the Profile section.
         XCTAssertTrue(goBack(app, to: "Today"), "settings: Back did not return to Home")
         XCTAssertTrue(openSettings(app), "home: Settings gear did not push Settings again")
-        try captureCard(app, screen: "settings-intensity-goal", title: "Intensity goal")
+        try captureCard(app, screen: "settings-activity-goals", title: "Activity goals")
+        let stepGoal = app.descendants(matching: .any).matching(identifier: "settings-step-goal").firstMatch
+        XCTAssertTrue(stepGoal.waitForExistence(timeout: 5),
+                      "settings: the daily step goal (settings-step-goal) is not reachable from Settings")
+
+        // Its "Intensity goal" row pushes the weekly goal page (the stepper and the heart-rate basis line).
+        // captureCard's second frame scrolls one step past the card, which can lift the row above the
+        // bar; the row lookup only scrolls down, so start again from the top.
+        scrollToTop(app)
+        try openSettingsRow(app, "Intensity goal")
+        try capturePushed(app, screen: "settings-intensity-goal", title: "Intensity goal",
+                          firstCard: NSPredicate(format: "label BEGINSWITH %@", "Weekly minutes of moderate activity"))
     }
 
     // MARK: - Metric details (seeded, onboarding skipped)
@@ -143,6 +158,89 @@ final class ScreenshotTests: XCTestCase {
             XCTAssertTrue(chart.waitForExistence(timeout: 30), "intensity-detail-\(suffix): the range's chart did not appear")
             try captureDetail(app, screen: "intensity-detail-\(suffix)", title: "Intensity minutes", firstLabel: label)
         }
+    }
+
+    // MARK: - Activity cards (Steps, Calories, Stress) → their details
+
+    /// Home's Steps card (always present: the goal track, seven bars against the dashed goal) on its own
+    /// frame, then its detail: 7D (the range the card opens on) and 1D ("The week to this day": bars vs the
+    /// goal, "Goal met on n of the last 7 days").
+    func testSteps() throws {
+        let app = launchTab("home")
+        waitForActivityData(app)
+        let card = try openActivityCard(app, titles: ["Steps so far", "Steps"], screen: "steps-card",
+                                        detail: "Steps", stepBackDays: 0)
+        guard card else { return }
+        try captureDetail(app, screen: "steps-detail-7d", title: "Steps", firstLabel: "Latest")
+        XCTAssertTrue(selectSegment(app, "One day", screen: "steps-detail"), "steps-detail: 1D was not selected")
+        scrollToTop(app)
+        try captureDetail(app, screen: "steps-detail-1d", title: "Steps", firstLabel: "The week to this day")
+    }
+
+    /// Home's Calories card (total, resting / active split bar, the accuracy pill) on its own frame, then
+    /// its detail on 7D and 1D (the card body and its caveat).
+    func testCalories() throws {
+        let app = launchTab("home")
+        waitForActivityData(app)
+        let card = try openActivityCard(app, titles: ["Calories so far", "Calories", "Active calories so far", "Active calories"],
+                                        screen: "calories-card", detail: "Calories", stepBackDays: 3)
+        guard card else { return }
+        try captureDetail(app, screen: "calories-detail-7d", title: "Calories", firstLabel: "Latest")
+        XCTAssertTrue(selectSegment(app, "One day", screen: "calories-detail"), "calories-detail: 1D was not selected")
+        scrollToTop(app)
+        try captureDetail(app, screen: "calories-detail-1d", title: "Calories", firstLabel: "Resting and active")
+    }
+
+    /// Home's Stress card (hours: elevated / calm / restored against the person's own floor, never a
+    /// score) on its own frame, then its detail: 1D (the day's hours card, curve and caveat replace the
+    /// hero) and 7D ("Elevated hours a day" bars). Stress is hidden on a day without daytime data, so the
+    /// test steps back from today (at most 8 days) until the card appears.
+    func testStress() throws {
+        let app = launchTab("home")
+        waitForActivityData(app)
+        let card = try openActivityCard(app, titles: ["Stress"], screen: "stress-card", detail: "Stress", stepBackDays: 8)
+        guard card else { return }
+        try captureDetail(app, screen: "stress-detail-1d", title: "Stress", firstLabel: "Through the day")
+        let words = app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", ".*\\bof 3\\b.*")).count
+        XCTAssertEqual(words, 0, "stress-detail: a 0–3 score is still printed")
+        XCTAssertTrue(selectSegment(app, "Last 7 days", screen: "stress-detail"), "stress-detail: 7D was not selected")
+        scrollToTop(app)
+        try captureDetail(app, screen: "stress-detail-7d", title: "Stress", firstLabel: "Elevated hours a day")
+    }
+
+    /// The demo augmentation (DEBUG, `BaselineDemoAugmentation`) writes heart-rate and motion streams after
+    /// NOOP's seeder lands, then re-points the read id; until it has, Home has no Stress, Heart rate or
+    /// scored Intensity. Waits (at most 45 s, never failing) for the Heart rate card, which needs the
+    /// streams. A day without streams never shows that card, so the wait is a ceiling, not a check.
+    private func waitForActivityData(_ app: XCUIApplication) {
+        XCTAssertTrue(app.staticTexts["HRV"].firstMatch.waitForExistence(timeout: 20), "home: first card (HRV) did not appear")
+        _ = Self.labelled(app, "Heart rate").waitForExistence(timeout: 45)
+        Thread.sleep(forTimeInterval: 1)
+    }
+
+    /// Finds the first card titled one of `titles` on today or, stepping back, one of the previous
+    /// `stepBackDays` days; captures it on its own frame (`<screen>-0`) and taps it into the detail whose
+    /// bar title is `detail`. False (with a failure recorded) when no day showed the card.
+    private func openActivityCard(_ app: XCUIApplication, titles: [String], screen: String, detail: String,
+                                  stepBackDays: Int) throws -> Bool {
+        let predicate = NSPredicate(format: "label IN %@", titles)
+        let card = app.descendants(matching: .any).matching(predicate).firstMatch
+        var found = false
+        for step in 0...stepBackDays {
+            if step > 0 {
+                guard stepBack(app) else { break }
+            }
+            if scrollUntilHittable(app, card, maxScrolls: 12) { found = true; break }
+            scrollToTop(app)
+        }
+        XCTAssertTrue(found, "home: no day showed the \(titles[0]) card")
+        guard found else { return false }
+        XCTAssertTrue(nudgeBelowPinnedBar(app, card), "home: \(titles[0]) title stayed under the day switcher")
+        Thread.sleep(forTimeInterval: 0.6)
+        try save(XCUIScreen.main.screenshot(), as: "\(screen)-0")
+        let pushed = tapUntilPushed(app, card, title: detail)
+        XCTAssertTrue(pushed, "home: the \(titles[0]) card did not open its detail")
+        return pushed
     }
 
     /// Sleep › the timing card's "Bedtime and wake over time" row › `SleepTimingDetailScreen` on 7D: the
@@ -362,7 +460,7 @@ final class ScreenshotTests: XCTestCase {
         app.launchArguments = ["--skip-onboarding", "--ui-testing"]
         app.launch()
         let home = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Today")).firstMatch
-        XCTAssertTrue(home.waitForExistence(timeout: 10), "sample: Today title did not appear")
+        XCTAssertTrue(home.waitForExistence(timeout: Self.launchTimeout()), "sample: Today title did not appear")
         XCTAssertTrue(openSettings(app), "sample: Settings gear did not push Settings")
 
         let toggle = app.switches["sample-data-toggle"].firstMatch
@@ -373,7 +471,9 @@ final class ScreenshotTests: XCTestCase {
             XCTAssertTrue(Self.wait(toggle, labelContains: "Off"), "sample: leftover sample data did not clear")
         }
         Self.flip(toggle)
-        XCTAssertTrue(Self.wait(toggle, labelContains: "60 made-up nights"), "sample: insert did not finish")
+        // The sample now writes 60 days of heart-rate and motion streams too (~560k rows), so the insert
+        // gets 90 s on a loaded host.
+        XCTAssertTrue(Self.wait(toggle, labelContains: "60 made-up nights", timeout: 90), "sample: insert did not finish")
 
         app.navigationBars.buttons.firstMatch.tap()   // back to Home
         let pill = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Sample data is shown")).firstMatch
@@ -388,7 +488,7 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(openSettings(app), "sample: Settings gear did not push Settings again")
         XCTAssertTrue(scrollUntilHittable(app, toggle), "sample: toggle did not reappear")
         Self.flip(toggle)
-        XCTAssertTrue(Self.wait(toggle, labelContains: "Off"), "sample: removal did not finish")
+        XCTAssertTrue(Self.wait(toggle, labelContains: "Off", timeout: 90), "sample: removal did not finish")
     }
 
     private static func isOn(_ toggle: XCUIElement) -> Bool {
@@ -431,7 +531,7 @@ final class ScreenshotTests: XCTestCase {
         app.launch()
         try save(XCUIScreen.main.screenshot(), as: "launch-0")
         let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Today")).firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 10), "launch: Today title did not appear")
+        XCTAssertTrue(title.waitForExistence(timeout: Self.launchTimeout()), "launch: Today title did not appear")
         try save(XCUIScreen.main.screenshot(), as: "launch-1")
     }
 
@@ -481,8 +581,18 @@ final class ScreenshotTests: XCTestCase {
         app.launch()
         let expected = Self.launchTitle(for: tab)
         let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", expected)).firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 10), "\(tab): \"\(expected)\" navigation title did not appear")
+        XCTAssertTrue(title.waitForExistence(timeout: Self.launchTimeout()), "\(tab): \"\(expected)\" navigation title did not appear")
         return app
+    }
+
+    /// The first launch after `xcodebuild test` installs the app is a cold start of a large DEBUG build
+    /// (the Swift runtime's first protocol-conformance scans, page-ins): measured at ~30 s on a loaded
+    /// host, against ~3 s for every later launch. The first launch in the runner process gets a minute;
+    /// the rest keep the usual 10 s.
+    private static var launchedOnce = false
+    static func launchTimeout() -> TimeInterval {
+        defer { launchedOnce = true }
+        return launchedOnce ? 10 : 60
     }
 
     /// The navigation-bar title `--tab <tab>` lands on. Home's title is the selected day, "Today" on a cold
@@ -626,18 +736,37 @@ final class ScreenshotTests: XCTestCase {
         _ = element.waitForExistence(timeout: 10)
         let height = app.frame.height
         var lastTop: CGFloat?
+        // On screen by its frame, not `isHittable`: a card title passing under a pinned glass section
+        // header reads as not hittable, and the old loop then scrolled straight past it to the end.
+        func onScreen() -> Bool {
+            element.exists && element.frame.minY >= 0 && element.frame.maxY <= height && !element.frame.isEmpty
+        }
         for _ in 0..<16 {
-            if element.exists && element.isHittable {
+            if onScreen() {
                 let top = element.frame.minY
-                if top <= height * 0.5 || top == lastTop { return true }
+                if top <= height * 0.5 || top == lastTop {
+                    // Too high (under the bar and the pinned header): one short drag down.
+                    if top < height * 0.2 {
+                        let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.40))
+                        let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.40 + (height * 0.3 - top) / height))
+                        from.press(forDuration: 0.05, thenDragTo: to, withVelocity: XCUIGestureVelocity.slow, thenHoldForDuration: 0.15)
+                        Thread.sleep(forTimeInterval: 0.6)
+                    }
+                    return true
+                }
                 lastTop = top
                 scrollUp(app, fraction: min(0.46, (top - height * 0.3) / height))
+            } else if element.exists && element.frame.maxY < 0 {
+                // Overshot: back down a step.
+                let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.30))
+                let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.70))
+                from.press(forDuration: 0.05, thenDragTo: to, withVelocity: XCUIGestureVelocity.slow, thenHoldForDuration: 0.15)
             } else {
                 scrollUp(app)
             }
             Thread.sleep(forTimeInterval: 0.6)
         }
-        return element.exists && element.isHittable
+        return onScreen()
     }
 
     /// A screen pushed by a tap: waits for `title` (when given) and `firstCard`, then captures top and
@@ -669,6 +798,10 @@ final class ScreenshotTests: XCTestCase {
 
     /// True unless the floating "Journal" bar is on screen and `element` overlaps its band.
     private static func clearOfBottomBar(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
+        // The floating tab bar too: at accessibility sizes a row's trailing edge (a Toggle's switch) can
+        // sit under it while XCUITest still calls the row hittable, and the tap then lands on a tab.
+        let tabs = app.tabBars.firstMatch
+        if tabs.exists, element.frame.maxY > tabs.frame.minY - 8 { return false }
         let bar = app.buttons["Journal"].firstMatch
         guard bar.exists else { return true }
         return element.frame.maxY <= bar.frame.minY - 8
@@ -721,7 +854,7 @@ final class ScreenshotTests: XCTestCase {
         app.launchArguments = ["--reset-onboarding", "--welcome-step", String(step), "--ui-testing"]
         app.launch()
 
-        let shown = app.staticTexts[marker].firstMatch.waitForExistence(timeout: 10)
+        let shown = app.staticTexts[marker].firstMatch.waitForExistence(timeout: Self.launchTimeout())
         let name = "welcome-\(step)"
         try save(XCUIScreen.main.screenshot(), as: "\(name)-0")
         XCTAssertTrue(shown, "\(name): \"\(marker)\" did not appear (screenshot still written)")

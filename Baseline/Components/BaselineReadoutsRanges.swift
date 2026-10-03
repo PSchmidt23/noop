@@ -7,8 +7,9 @@ import StrandAnalytics
 // detail screen reads its points and its four hero numbers from `BaselineReadouts.metricSeries`, so a
 // weekly average, a window's low and the "vs the period before" sentence are computed in ONE place over
 // ONE table (`repo.baselineDays`, strap first). Daily-column metrics are a few linear passes over rows
-// already in memory; the intraday-derived ones (Stress, Intensity minutes, heart rate) arrive as
-// per-day facts from `IntradayDayStore`, never from raw samples over weeks.
+// already in memory; the intraday-derived ones arrive as per-day facts, never from raw samples over
+// weeks: Intensity minutes and heart rate from `IntradayDayStore`, Stress elevated hours from
+// `StressDayStore`.
 
 // MARK: - Range
 
@@ -135,10 +136,11 @@ enum MetricKey: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Drawn as bars (a count or a load that adds up) rather than a line (a level).
+    /// Drawn as bars (a count or a load that adds up) rather than a line (a level). Stress is elevated
+    /// HOURS a day, so bars too, never a line that reads like a score.
     var isCountLike: Bool {
         switch self {
-        case .steps, .effort, .calories, .intensityMinutes, .sleepDuration: return true
+        case .steps, .effort, .calories, .intensityMinutes, .sleepDuration, .stressAvg: return true
         default: return false
         }
     }
@@ -159,8 +161,9 @@ enum MetricKey: String, CaseIterable, Identifiable {
     var higherIsBetter: Bool? {
         switch self {
         case .hrv, .readiness, .sleepDuration, .sleepEfficiency, .steps, .intensityMinutes: return true
-        case .rhr, .stressAvg: return false
-        case .bedtime, .wake, .effort, .calories, .heartRate: return nil
+        case .rhr: return false
+        // Stress is elevated time against the person's own floor, never judged as good or bad.
+        case .bedtime, .wake, .effort, .calories, .stressAvg, .heartRate: return nil
         }
     }
 
@@ -467,10 +470,11 @@ enum BaselineRangeSeries {
 
 extension BaselineReadouts {
 
-    /// Per-day facts the intraday stream yields (`IntradayDayStore`), keyed by day: Stress day mean (0–3),
-    /// credited Intensity minutes, and the day's heart-rate low / mean / high. Any map may be empty.
+    /// Per-day facts the intraday stream yields, keyed by day: Stress elevated HOURS on the personal lens
+    /// (`StressDayStore.elevatedHours`; never the 0–3 level), credited Intensity minutes, and the day's
+    /// heart-rate low / mean / high (`IntradayDayStore`). Any map may be empty.
     struct IntradayDayValues {
-        var stressMean: [String: Double] = [:]
+        var stressElevatedHours: [String: Double] = [:]
         var intensityMinutes: [String: Double] = [:]
         /// The same Intensity days' raw moderate and vigorous minutes and the basis they were scored on
         /// (the detail's split and basis lines).
@@ -484,13 +488,20 @@ extension BaselineReadouts {
     /// The `(day, value)` readings behind a key, oldest → newest, from the funnel's `days`, the Sleep
     /// tab's `nights` (bedtime / wake; `.dailyMetric` nights carry no times) and the intraday facts.
     /// `stepReadings` (`BaselineReadouts.stepReadings`, the strap → phone → estimate resolution) replaces
-    /// the funnel's `steps` column when given. Efficiency is a percent (0–100); bedtime and wake are
-    /// clock minutes (`MetricKey.isClockTime`).
+    /// the funnel's `steps` column when given; `calorieReadings` (`BaselineReadouts.calorieReadings`, the
+    /// resting + active figure Home's and Trends' Calories cards print) replaces the funnel's
+    /// `active_kcal` column the same way, and the repository accessor always passes them. Efficiency is a
+    /// percent (0–100); bedtime and wake are clock minutes (`MetricKey.isClockTime`).
     static func metricReadings(key: MetricKey, days: [DailyMetric], nights: [SleepNight] = [],
                                stepReadings: [(day: String, value: Double)]? = nil,
+                               calorieReadings: [(day: String, value: Double)]? = nil,
                                intraday: IntradayDayValues = .none, calendar: Calendar = .current) -> [MetricDayValue] {
         switch key {
-        case .hrv, .rhr, .readiness, .sleepDuration, .effort, .calories:
+        case .calories:
+            let readings = calorieReadings ?? BaselineDays.series(key: key.seriesKey ?? "", days: days)
+            return readings.filter { $0.value.isFinite && $0.value >= 0 }.sorted { $0.day < $1.day }
+                .map { MetricDayValue(day: $0.day, value: $0.value) }
+        case .hrv, .rhr, .readiness, .sleepDuration, .effort:
             return BaselineDays.series(key: key.seriesKey ?? "", days: days).map { MetricDayValue(day: $0.day, value: $0.value) }
         case .sleepEfficiency:
             return days.compactMap { d in
@@ -509,7 +520,7 @@ extension BaselineReadouts {
                 return MetricDayValue(day: n.dayKey, value: m)
             }.sorted { $0.day < $1.day }
         case .stressAvg:
-            return intraday.stressMean.map { MetricDayValue(day: $0.key, value: $0.value) }.sorted { $0.day < $1.day }
+            return intraday.stressElevatedHours.map { MetricDayValue(day: $0.key, value: $0.value) }.sorted { $0.day < $1.day }
         case .intensityMinutes:
             return intraday.intensityMinutes.map { MetricDayValue(day: $0.key, value: $0.value) }.sorted { $0.day < $1.day }
         case .heartRate:
@@ -719,7 +730,9 @@ extension BaselineReadouts {
     static let metricSteadyFraction = 0.02
 
     /// A change smaller than one printed unit is never called a change.
-    private static func metricSteadyFloor(unit: String) -> Double { unit == "%" || unit == "ms" || unit == "bpm" ? 0.5 : 0 }
+    private static func metricSteadyFloor(unit: String) -> Double {
+        unit == "%" || unit == "ms" || unit == "bpm" || unit == "h" ? 0.5 : 0
+    }
 
     /// "+4 ms" / "−3 bpm" for a change; "–" when there is none.
     static func metricChangeText(_ change: Double?, format: (Double) -> String, unit: String) -> String {
@@ -871,10 +884,11 @@ extension BaselineReadouts {
 extension BaselineReadouts {
 
     /// The series for `key` over `range` ending on `endDay`, read through the funnel: daily columns from
-    /// `repo.baselineDays`, steps through `stepReadings` (strap → phone → estimate), bedtime / wake from
-    /// the Sleep tab's nights (`nights`, built here when not passed), the intraday-derived keys from
-    /// `IntradayDayStore` (per-day facts, computed once per day and persisted; the year never re-reads
-    /// 365 days of samples). `profile` supplies the max heart rate the Intensity classifier needs
+    /// `repo.baselineDays`, steps through `stepReadings` (strap → phone → estimate), Calories through
+    /// `calorieReadings` (the resting + active figure Home's and Trends' cards print), bedtime / wake from
+    /// the Sleep tab's nights (`nights`, built here when not passed), Intensity minutes and heart rate
+    /// from `IntradayDayStore` and Stress elevated hours from `StressDayStore` (per-day facts, computed
+    /// once per day and persisted; the year never re-reads 365 days of samples). `profile` supplies the max heart rate the Intensity classifier needs
     /// (`ProfileStore.effortHRmax`) behind the profile gate (`entered`, `ProfileSet`, or a max-HR
     /// override; `IntensityMinutes.mayScore`); without one the Intensity series is empty, as Home's card
     /// and the 1D week view say. `bandProvider` replaces `metricBands` (day key → band over the funnel's
@@ -903,11 +917,17 @@ extension BaselineReadouts {
         }
 
         var stepReadings: [(day: String, value: Double)]? = nil
+        var calorieReadings: [(day: String, value: Double)]? = nil
         var nightList: [SleepNight] = []
         var intraday = IntradayDayValues.none
         switch key {
         case .steps:
             stepReadings = await self.stepReadings(repo, from: readFrom, to: endDay, mode: mode)
+        case .calories:
+            // The figure Home's card and Trends' card print (`caloriesDay`: resting + active, or active
+            // alone while no age and sex exist), never the funnel's `active_kcal` column.
+            calorieReadings = await self.calorieReadings(repo, profile: profile, from: readFrom, to: endDay,
+                                                         mode: mode, entered: entered, calendar: calendar, now: now)
         case .bedtime, .wake:
             if let nights {
                 nightList = nights
@@ -916,32 +936,43 @@ extension BaselineReadouts {
                 let sessions = await self.nights(repo, mode: mode, now: now)
                 nightList = SleepNightBuilder.nights(sessions: sessions, days: days, habitualMidsleepSec: habitual)
             }
-        case .stressAvg, .intensityMinutes, .heartRate:
+        case .stressAvg:
+            // Elevated HOURS per day, never the 0–3 level: each past day's facts on its own lens from
+            // `StressDayStore` (scored once and kept, the records the card's 14-day typical reads; 1Y
+            // reads only days already scored, never a year of raw streams), today's through NOOP's
+            // `StressDayCurve.today` as on Home. Only days that may be totalled are readings.
             let keys = dayKeys(from: readFrom, to: endDay)
-            let wantStress = key == .stressAvg && range != .year
+            var facts = await StressDayStore.shared.facts(repo, days: keys, scoreMissing: range != .year,
+                                                          calendar: calendar, now: now)
+            let todayKey = Repository.localDayKey(now)
+            if keys.contains(todayKey),
+               let today = await stressDay(repo, for: todayKey, now: now, calendar: calendar, includeTypical: false) {
+                facts[todayKey] = StressDayFacts(today)
+            }
+            intraday.stressElevatedHours = StressDayStore.elevatedHours(facts)
+        case .intensityMinutes, .heartRate:
+            let keys = dayKeys(from: readFrom, to: endDay)
             let records = await IntradayDayStore.shared.records(repo, profile: profile, days: keys, mode: mode,
-                                                                entered: entered, computeStress: wantStress,
-                                                                calendar: calendar, now: now)
+                                                                entered: entered, calendar: calendar, now: now)
             intraday = intradayValues(records)
         default:
             break
         }
         let readings = metricReadings(key: key, days: days, nights: nightList, stepReadings: stepReadings,
-                                      intraday: intraday, calendar: calendar)
+                                      calorieReadings: calorieReadings, intraday: intraday, calendar: calendar)
         let bands = bandProvider?(days, endDay) ?? metricBands(key: key, days: days, endKey: endDay)
         return metricSeries(key: key, range: range, endKey: endDay, readings: readings, bands: bands,
                             dayFacts: intraday, calendar: calendar)
     }
 
-    /// The intraday facts the range readings take from per-day records (pure): the Stress mean, the
-    /// credited Intensity minutes of a day that is a reading (`IntradayDayRecord.recordedIntensity`:
-    /// scored on a basis, never a `.needsAge` day's zeros, and recorded, never a day the strap was off
-    /// or not yet paired; the predicate Trends' weeks count with) and the day's heart-rate low / mean /
-    /// high.
+    /// The intraday facts the range readings take from per-day records (pure): the credited Intensity
+    /// minutes of a day that is a reading (`IntradayDayRecord.recordedIntensity`: scored on a basis,
+    /// never a `.needsAge` day's zeros, and recorded, never a day the strap was off or not yet paired;
+    /// the predicate Trends' weeks count with) and the day's heart-rate low / mean / high. Stress hours
+    /// come from `StressDayStore`, not from these records.
     static func intradayValues(_ records: [String: IntradayDayRecord]) -> IntradayDayValues {
         var out = IntradayDayValues.none
         for (day, r) in records {
-            if let s = r.stressMean { out.stressMean[day] = s }
             if r.recordedIntensity {
                 out.intensityMinutes[day] = Double(r.credited)
                 out.intensityParts[day] = (r.moderateMin, r.vigorousMin)

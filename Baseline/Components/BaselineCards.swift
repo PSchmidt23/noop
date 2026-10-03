@@ -94,8 +94,14 @@ struct StatCell: View {
                 Text(label).font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textTertiary)
             }
             HStack(alignment: .firstTextBaseline, spacing: 3) {
+                // One line, never "1,25 / 0": a four-digit value with its unit in a quarter-width cell
+                // (Calories' Latest / Average / Low / High) shrinks a little instead of breaking.
                 Text(value).font(BaselineTheme.stat).monospacedDigit().foregroundStyle(color)
-                if let unit { Text(unit).font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textSecondary) }
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                if let unit {
+                    Text(unit).font(BaselineTheme.caption).foregroundStyle(BaselineTheme.textSecondary)
+                        .lineLimit(1).fixedSize()
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

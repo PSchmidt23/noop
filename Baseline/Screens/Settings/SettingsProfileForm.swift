@@ -13,6 +13,9 @@ struct SettingsProfileForm: View {
     @EnvironmentObject private var profile: ProfileStore
     @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
     @AppStorage(BaselineReadouts.ProfileSet.key) private var profileSet = false
+    /// `baseline.bodySet` (`BodySet`): height and weight entered or confirmed. Until then the Calories card
+    /// says which seeded values it used ("Using 178 cm · 75 kg") and links here.
+    @AppStorage(BodySet.key) private var bodySet = false
 
     private var unitSystem: UnitSystem { UnitSystem(rawValue: unitSystemRaw) ?? .metric }
 
@@ -80,7 +83,19 @@ struct SettingsProfileForm: View {
                     SettingsFieldLabel(title: "Height",
                                        value: UnitFormatter.heightFromCentimeters(profile.heightCm, system: unitSystem))
                 }
+                if !bodySet {
+                    SettingsDivider()
+                    Text("Not entered yet. Set your weight and height, or keep the ones shown; resting calories use them.")
+                        .font(BaselineTheme.caption)
+                        .foregroundStyle(BaselineTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    BaselineCTA(title: "Use these", prominent: false) { bodySet = true }
+                        .accessibilityIdentifier("settings-body-use-these")
+                }
             }
+            // Same rule as "About you": a change to either stepper is the entry.
+            .onChange(of: profile.weightKg) { _, _ in bodySet = true }
+            .onChange(of: profile.heightCm) { _, _ in bodySet = true }
 
             BaselineCard(title: "Max heart rate") {
                 Text("Sets the top of your effort scale, your zones and the intensity-minute lines.")

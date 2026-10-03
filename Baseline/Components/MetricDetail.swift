@@ -44,6 +44,13 @@ struct MetricDetailSpec {
     /// a detail sits in another tab's stack. The 7D chart draws it as a daily pace (`perDay`), 4W / 1Y as
     /// the weekly line, and the hero counts the weeks that reached it.
     var goal: (() -> MetricGoal)? = nil
+    /// The hero card's title when the cells need naming beyond the screen's title (Stress: "Elevated
+    /// hours a day" over "Latest 2 h"); nil uses `title`.
+    var heroTitle: String? = nil
+    /// On 1D the `dayView` is the page and no hero card is drawn above it: the day view already prints
+    /// the day's numbers with their context (Stress: the hours against the person's typical), so a
+    /// "This day" cell would say them twice.
+    var dayViewReplacesHero: Bool = false
 
     /// The spec every key ships with: Baseline's colours, units, formatters and accuracy rows.
     static func standard(_ key: MetricKey) -> MetricDetailSpec {
@@ -89,9 +96,17 @@ struct MetricDetailSpec {
                                     higherIsBetter: nil, accuracyKey: "calories",
                                     format: { BaselineReadouts.caloriesText($0) })
         case .stressAvg:
-            return MetricDetailSpec(key: key, title: "Stress", noun: "stress", unit: "of 3", color: BaselineTheme.stress,
-                                    higherIsBetter: false, accuracyKey: "stress",
-                                    format: { String(format: "%.1f", $0) })
+            // Hours, never the 0–3 level: elevated hours a day on the personal lens (the Home card's
+            // "2 h elevated", half-hour grain as there), judged neither good nor bad. On 1D the day's hours
+            // card, curve and caveat are the page (`dayViewReplacesHero`).
+            return MetricDetailSpec(key: key, title: "Stress", noun: "a Stress total", unit: "h", color: BaselineTheme.stress,
+                                    higherIsBetter: nil, accuracyKey: "stress",
+                                    format: { v in
+                                        let r = (v * 2).rounded() / 2
+                                        return r == r.rounded() ? "\(Int(r))" : String(format: "%.1f", r)
+                                    },
+                                    about: "Elevated hours are still, waking hours whose heart rate ran 15 bpm or more over your own daytime floor. A day counts once at least 3 still hours were scored against that floor. Excitement, caffeine, a big meal or heat look the same; not a measure of how you feel.",
+                                    heroTitle: "Elevated hours a day", dayViewReplacesHero: true)
         case .intensityMinutes:
             return MetricDetailSpec(key: key, title: "Intensity minutes", noun: "intensity minutes", unit: "min",
                                     color: BaselineTheme.effort, higherIsBetter: true, accuracyKey: nil,
@@ -165,7 +180,7 @@ struct MetricDetailScreen: View {
             BaselineRangePicker(selection: $range, style: .glass)
         }) {
             if let series {
-                heroCard(series)
+                if !dayViewIsThePage { heroCard(series) }
                 chartCard(series)
                 if let about = spec.aboutText {
                     BaselineCard(title: "About this metric") {
@@ -200,10 +215,17 @@ struct MetricDetailScreen: View {
         if g != goal { goal = g }
     }
 
+    /// 1D on a spec whose day view carries the day's numbers (`dayViewReplacesHero`): no hero card.
+    private var dayViewIsThePage: Bool { range == .day && spec.dayViewReplacesHero && spec.dayView != nil }
+
     @MainActor
     private func load() async {
         resolveGoal()
-        if spec.key == .heartRate, range == .day {
+        if dayViewIsThePage {
+            // The day view reads its own day; nothing here prints a series.
+            dayTrace = nil
+            series = BaselineReadouts.metricSeries(key: spec.key, range: .day, endKey: day, readings: [])
+        } else if spec.key == .heartRate, range == .day {
             // One bucket read: the trace feeds both the chart and the series' stats.
             let trace = await BaselineReadouts.intradayHeartRate(repo, for: day)
             dayTrace = trace
@@ -218,13 +240,13 @@ struct MetricDetailScreen: View {
     // MARK: Cards
 
     private func heroCard(_ s: MetricSeries) -> some View {
-        BaselineCard(title: spec.title, accessory: spec.badge.map { AnyView($0) }) {
+        BaselineCard(title: spec.heroTitle ?? spec.title, accessory: spec.badge.map { AnyView($0) }) {
             let st = s.stats
             if s.sums != nil, !unscored {
                 sumHero(s)
             } else if range == .day, spec.key != .heartRate {
                 BaselineStatRow {
-                    StatCell(label: "This day", value: st.latest.map(spec.format) ?? "–", unit: unitOrNil, color: spec.color)
+                    StatCell(label: runningToday ? "So far" : "This day", value: st.latest.map(spec.format) ?? "–", unit: unitOrNil, color: spec.color)
                     StatCell(label: "Day before", value: st.previousAverage.map(spec.format) ?? "–", unit: unitOrNil)
                 }
             } else if !s.isEmpty {
@@ -346,12 +368,22 @@ struct MetricDetailScreen: View {
 
     private var unitOrNil: String? { spec.unit.isEmpty ? nil : spec.unit }
 
+    /// Today on 1D for a running day total (Calories, Steps): the figure is still building, so the
+    /// cell reads "So far" and the sentence does not set a part day against a whole one.
+    private var runningToday: Bool {
+        range == .day && (spec.key == .calories || spec.key == .steps) && day == Repository.localDayKey(Date())
+    }
+
     /// Under the hero's cells: what they do not say. Heart rate on 1D gets the day's coverage and spans
     /// (`intradayContext`; the low / mean / high sentence, `intradaySummary`, is the chart's VoiceOver
-    /// label only); every other key the comparison sentence (`metricContext`).
+    /// label only); a running day total on today says it is still building; every other key the
+    /// comparison sentence (`metricContext`).
     private func contextSentence(_ s: MetricSeries) -> String {
         if spec.key == .heartRate, range == .day, let t = dayTrace {
             return BaselineReadouts.intradayContext(t)
+        }
+        if runningToday, s.stats.latest != nil {
+            return "Today so far; the day before is a whole day."
         }
         // Nothing scored because no age or max heart rate is set: say what fills it, not "no days".
         if spec.key == .intensityMinutes, s.points.isEmpty,

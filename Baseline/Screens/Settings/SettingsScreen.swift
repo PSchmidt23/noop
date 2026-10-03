@@ -7,7 +7,8 @@ import UserNotifications
 /// Back button takes the person to wherever they came from. Strap, Apple Health and Data push Baseline's
 /// own screens over NOOP's engine (`DevicesScreen`, `AppleHealthScreen`, `ImportScreen`, `CompareScreen`,
 /// `ExportScreen`); Profile is Baseline's small form over `ProfileStore` plus the sleep window
-/// (`SettingsSleepWindowCard`) and the weekly Intensity-minutes goal (`SettingsIntensityGoalCard`); About
+/// (`SettingsSleepWindowCard`) and "Activity goals" (`SettingsActivityGoalsCard`: the daily step goal,
+/// and a row into the weekly Intensity-minutes goal, `SettingsIntensityGoalCard`); About
 /// carries attribution, the privacy policy, license, the disclaimer
 /// and the accuracy review (`AccuracyScreen`). Each card observes only what it needs, so the root never
 /// re-renders on strap ticks.
@@ -22,11 +23,14 @@ struct SettingsScreen: View {
                 // The target window the Sleep tab's strip bands and counts nights against
                 // (`BaselineReadouts.SleepWindow`); the regularity index does not read it.
                 SettingsSleepWindowCard()
-                // The weekly Intensity-minutes goal (`IntensityMinutes.goal()`) and the heart-rate basis
-                // the minutes are judged against.
-                SettingsIntensityGoalCard()
+                // "Activity goals": the daily step goal Home, Trends, the Steps detail and Friends count
+                // against (`ActivityGoals.stepKey`), and a row into the weekly Intensity-minutes goal
+                // (`SettingsIntensityGoalScreen` › `SettingsIntensityGoalCard`) with its heart-rate basis.
+                SettingsActivityGoalsCard()
             }
             SettingsSection(label: "Notifications") { SettingsNotificationsCard() }
+            // Opt-in Friends: signed out it says so; signed in it opens Friends & sharing (SettingsFriends.swift).
+            SettingsSection(label: "Friends") { SettingsFriendsCard() }
             #if DEBUG
             SettingsSection(label: "Developer") { SettingsDeveloperCard() }
             #endif
@@ -176,12 +180,13 @@ private struct SettingsDataCard: View {
             SettingsDivider()
             Button {
                 IntradayDayStore.shared.reset()
+                StressDayStore.shared.reset()
                 recomputed = true
             } label: {
                 SettingsRowLabel(icon: "arrow.clockwise", title: "Recompute heart-rate days",
                                  subtitle: recomputed
                                     ? "Done. Each day is read again the next time it is shown."
-                                    : "Intensity minutes and each day's heart-rate range, read again") {
+                                    : "Intensity minutes, Stress and each day's heart-rate range, read again") {
                     EmptyView()
                 }
             }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Copy to Baseline/Resources/Supabase.plist (git-ignored by Baseline/Resources/.gitignore) and paste your values.
+  SUPABASE_URL:      Project URL from Settings › API, https://<ref>.supabase.co
+  SUPABASE_ANON_KEY: the anon (legacy JWT) or publishable (sb_publishable_…) key.
+  NEVER the service_role key or an sb_secret_… key: the app refuses them and release-check.sh fails the build.
+  While either value still holds a placeholder, the app treats the file as missing and offers the demo preview only.
+-->
+<dict>
+	<key>SUPABASE_URL</key>
+	<string>https://YOUR-PROJECT.supabase.co</string>
+	<key>SUPABASE_ANON_KEY</key>
+	<string>PASTE_ANON_OR_PUBLISHABLE_KEY</string>
+</dict>
+</plist>

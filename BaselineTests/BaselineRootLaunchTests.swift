@@ -21,6 +21,7 @@ final class BaselineRootLaunchTests: XCTestCase {
         XCTAssertEqual(parse("--tab", "home"), .init(tab: .home))
         XCTAssertEqual(parse("--tab", "trends"), .init(tab: .trends))
         XCTAssertEqual(parse("--tab", "sleep"), .init(tab: .sleep))
+        XCTAssertEqual(parse("--tab", "friends"), .init(tab: .friends))
     }
 
     func testAliases() {

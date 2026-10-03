@@ -4,43 +4,59 @@ The single reference for every screen builder. Everything a screen renders comes
 components in `Baseline/Components/`; screens never spell a colour, a font size or a corner radius, and
 never compute a baseline, band or average (those come from `BaselineReadouts` / `BaselineReadiness` /
 the snapshot models). Vocabulary: **HRV / Resting HR / Readiness / Sleep / Effort / Steps / Calories /
-Stress / Intensity minutes / Journal**; WHOOP only nominatively; no Garmin or Apple feature names
-("Intensity minutes" is the generic term). Trademark guardrail: at most two `MetricRing`s on one screen (Home: HRV and Resting
-HR, each in its own tile); the Sleep ring lives on the Sleep tab; Readiness is a number on a horizontal
-track bar (`ReadinessBar`), never a ring. Platform: iOS 26.0 (`project.yml` deployment target for Baseline, BaselineTests,
+Stress / Intensity minutes / Friends / Journal**; never "Strain", "Recovery" or "Coach"; WHOOP only
+nominatively; no competitor's feature names in copy ("Active Zone Minutes", "Body Battery", "Stress Monitor",
+"Circles", "Activity rings"; "Intensity minutes" is the generic term). Trademark guardrail: at most two
+`MetricRing`s on one screen and never three rings anywhere (Home: HRV and Resting HR, each in its own tile);
+the Sleep ring lives on the Sleep tab; Readiness is a number on a horizontal track bar (`ReadinessBar`),
+Steps, Intensity minutes and Calories are flat horizontal tracks or bars, Friends draws no ring at all. Platform: iOS 26.0 (`project.yml` deployment target for Baseline, BaselineTests,
 BaselineUITests). No availability checks anywhere.
 
 ## Information architecture (owner decision; overrides the spec's screen list where they conflict)
 
-THREE tabs: **Home** (`house`), **Trends** (`chart.xyaxis.line`), **Sleep** (`moon.zzz`). Settings is
-a gear in the top-right of the navigation bar on all three (`BaselineToolbarLink` → `SettingsScreen()`).
-Journal is NOT a tab.
+FOUR tabs: **Home** (`house`), **Trends** (`chart.xyaxis.line`), **Sleep** (`moon.zzz`), **Friends**
+(`person.2`, badged with incoming requests + competition invitations, `FriendsStore.badgeCount`). Settings is
+a gear in the top-right of the navigation bar on all four (`BaselineToolbarLink` → `SettingsScreen()`).
+Journal is NOT a tab. Friends is opt-in: the tab is always there, Home, Trends and Sleep never need an account
+(`Baseline/Research/FRIENDS_SPEC.md`).
 
 | Tab | Root | Structure |
 |---|---|---|
-| Home | `Screens/Today/TodayScreen.swift` (struct name may stay `TodayScreen`; tab label "Home") | Day-by-day like WHOOP: nav title = the selected day (`BaselineDaySwitcher.title(for:)`), `BaselineDaySwitcher(style: .glass)` pinned under the bar, `.baselineDaySwipe` on the content; every card shows THAT day, in this order: the Readiness score on its track (`ReadinessCard`, with the Progress chevron), Signals on today only, HRV + Resting HR rings, that day's heart-rate trace (`HeartRateCard`, only once the strap banked heart rate for the day), that day's steps (`StepsCard`: "Steps so far" on today), that day's Intensity minutes against the week's goal (`IntensityCard`, only once there are minutes to show, or on today as the one ask for an age), that night's sleep (`LastNightCard`), that day's Stress curve (`StressCard`; on today with a paired strap it is the ONE "No daytime data yet" card), that day's effort + calories + workouts (`EffortCard`: Calories is a cell beside Effort, its caption a chevron row into the Calories detail; there is no separate Calories card). At most nine rows on a full day; a card with nothing to read yet is left out, never drawn as a placeholder. Every card is a `TodayDetailCard` (title, trailing chevron, the whole card the tap target; the two ring tiles carry the chevron in their corner) that opens its metric's `MetricDetailScreen` on the selected day through Home's ONE `navigationDestination(item:)` (`TodayDetail.screen(_:day:)`: the spec with Home's 1D views, the key's `initialRange`); a floating `GlassCTA(title: "Journal", systemImage: "checklist", fullWidth: false)` opens `JournalSheet(day:)` for the selected day; `StrapStatusPill` stays in the toolbar beside the gear |
-| Trends | `Screens/Trends/TrendsScreen.swift` | `BaselineSegmentedPicker(style: .glass)` pinned under the bar over THREE sections: "Trends" (the metric charts; the 7D/30D/90D `BaselineRangePicker(style: .flat)` at the top of the section content), "Progress" (`ProgressScreen`'s body embedded as a section, its horizon picker `.flat`), "Habits" (`JournalPatternsView()`). The Trends section's cards, in this order: HRV and Resting HR over their bands (`TrendBandCard`), Effort bars under the Readiness line (`TrendEffortReadinessCard`, which keeps the "All workouts" `BaselineChevronRow` → `WorkoutsScreen()`), Sleep and Steps bars (`TrendBarCard`; Steps only once some day counted steps), Intensity minutes by ISO week against the weekly goal (`TrendIntensityCard`, only once some day in the weeks drawn recorded heart rate or workout credit). Every card's title is a `TrendsCardTitle`: a `NavigationLink` with a chevron into the same `MetricDetailScreen` Home opens (`TodayDetail.spec`), on the detail range nearest the picker (`TrendsRange.detailRange`) |
+| Home | `Screens/Today/TodayScreen.swift` (struct name may stay `TodayScreen`; tab label "Home") | Day-by-day: nav title = the selected day (`BaselineDaySwitcher.title(for:)`), `BaselineDaySwitcher(style: .glass)` pinned under the bar, `.baselineDaySwipe` on the content; every card shows THAT day, in this order: the Readiness score on its track (`ReadinessCard`, with the Progress chevron), Signals on today only, HRV + Resting HR rings, that day's steps against the daily goal (`StepsCard`: the count with "of 8,000", ONE flat `GoalTrack`, one line joining the goal status and the 7-day context, the week's bars against the goal; "Steps so far" on today; ALWAYS present: a day nothing counted reads "–" and a history no source ever counted says why and links to Apple Health), that day's Intensity minutes against the week's goal (`IntensityCard`, one track, only once there are minutes to show, or on today as the one ask for an age), that day's heart-rate trace (`HeartRateCard`, only once the strap banked heart rate for the day), that night's sleep (`LastNightCard`), that day's Calories as its own card (`CaloriesCard`: total = resting + active as the hero, ONE flat `CaloriesSplitBar`, resting in `ringTrack` and active in `effort`, the "1,620 resting · 520 active" split line, one context line on the active part; left out with neither part), that day's Stress as time (`StressCard`: "2 h elevated · 7 h calm · 2 h restored", one flat stacked `StressHoursBar`, one sentence against the person's own 14-day typical; never a 0–3 number; only on a day with a scored still hour, no placeholder card), that day's effort + workouts (`EffortCard`; no energy figure, Calories has its own card). A card with nothing to read yet is left out, never drawn as a placeholder (Steps is the one card that always shows). Every card is a `TodayDetailCard` (title, trailing chevron, the whole card the tap target; the two ring tiles carry the chevron in their corner) that opens its metric's `MetricDetailScreen` on the selected day through Home's ONE `navigationDestination(item:)` (`TodayDetail.screen(_:day:)`: the spec with Home's 1D views, the key's `initialRange`); a floating `GlassCTA(title: "Journal", systemImage: "checklist", fullWidth: false)` opens `JournalSheet(day:)` for the selected day; `StrapStatusPill` stays in the toolbar beside the gear |
+| Trends | `Screens/Trends/TrendsScreen.swift` | `BaselineSegmentedPicker(style: .glass)` pinned under the bar over THREE sections: "Trends" (the metric charts; the 7D/30D/90D `BaselineRangePicker(style: .flat)` at the top of the section content), "Progress" (`ProgressScreen`'s body embedded as a section, its horizon picker `.flat`), "Habits" (`JournalPatternsView()`). The Trends section's cards, in this order: HRV and Resting HR over their bands (`TrendBandCard`), Effort bars under the Readiness line (`TrendEffortReadinessCard`, which keeps the "All workouts" `BaselineChevronRow` → `WorkoutsScreen()`), Sleep and Steps bars (`TrendBarCard`; Steps only once some day counted steps, against the daily goal), Intensity minutes by ISO week against the weekly goal (`TrendIntensityCard`, only once some day in the weeks drawn recorded heart rate or workout credit), daily Calories bars (`TrendBarCard`, the same per-day figure Home's card and the Calories detail print, `BaselineReadouts.calorieReadings`; today's bar muted and outside the average). Every card's title is a `TrendsCardTitle`: a `NavigationLink` with a chevron into the same `MetricDetailScreen` Home opens (`TodayDetail.spec`), on the detail range nearest the picker (`TrendsRange.detailRange`) |
 | Sleep | `Screens/Sleep/SleepScreen.swift` | hero ring (its last row "Sleep over time" → `MetricDetailScreen(spec: SleepDetail.durationSpec())`, whose 1D page is `SleepNightDayView`: Stages + `SleepHeartRateCard`), the Sleep timing card ("Bedtime and wake over time" → `SleepTimingDetailScreen`, then "Set window"), stages, nights → `NightDetailScreen` (hero, Stages, Heart rate while asleep, Night vitals). Detail links are chevron rows, never tappable titles, so the card titles stay plain static texts. |
+| Friends | `Screens/Friends/FriendsScreen.swift` | Signed out: the intro (`FriendsIntroView`), nav title "Friends", nothing pinned. Right after sign-in the setup sheet (`FriendsSetupSheet`: name, the 16+ confirmation, per-metric consent, `FriendsConsentView`). Ready: `BaselineSegmentedPicker(style: .glass)` pinned under the bar over TWO segments, "Friends" (requests, the `LeaderboardCard`: behaviour only, head to head as % of each person's OWN goal; then one `FriendWeekCard` per friend, ALPHABETICAL, never by value; muted friends folded into "Muted (n)") and "Compete" (`CompeteSection`: invitations, active and finished competitions on steps, Intensity minutes, active days, nights at the sleep goal or on-time bedtimes; `CompetitionDetailScreen`). Physiology (HRV, resting HR, Readiness) appears only as each person's weekly change against their OWN baseline ("HRV +8 % vs own baseline", neutral ink, never ranked, never a raw value): one person's heart rate is never compared with another's. "Add a friend" (invite / enter a code) is a toolbar menu beside the gear on the Friends segment; `FriendDetailScreen` (This week, Trends, Together, Manage) is pushed from a week card. No rings |
 
 Journal (`Screens/Journal/`) exposes exactly two entry points: `JournalSheet(day: String)` (a sheet:
 day label, that day's habit chips, "Add habit", Done) and `JournalPatternsView()` (the effects card(s)
 + dose rows + empty states, built to sit inside Trends' `LazyVStack`). The old `JournalScreen` root is
 gone. Settings and everything under it (Devices, Apple Health, Import, Compare, Export,
-Profile, Notifications, About) is unchanged in structure, with three additions: Profile carries a third
-card, "Intensity goal" (`SettingsIntensityGoalCard`: one stepper on `baseline.intensityGoalMinutes`, one
-caption, the heart-rate basis line with a `SettingsIconTile`); Data carries "Recompute heart-rate days"
-(`IntradayDayStore.reset()`); the Accuracy screen lists Intensity minutes and heart rate from the detail
+Profile, Notifications, About) is unchanged in structure, with these additions: Profile's second card,
+"Sleep window" (`SettingsSleepWindowCard`), carries the "Sleep goal" stepper under the two times
+(`baseline.sleepGoalMinutes`, `BaselineReadouts.SleepGoal`: 5h–10h in 15-minute steps, default 7h 30m,
+`settings-sleep-goal`, one caption: the asleep time a night needs to count as a night at the sleep goal in
+Friends); Profile carries a third card, "Activity goals" (`SettingsActivityGoalsCard`: the daily step stepper
+on `baseline.stepGoal`, 3,000–30,000 in steps of 500 (Friends' floor, so Home's "Goal met" is Friends' goal
+day), `settings-step-goal`, one caption, and a chevron row into the "Intensity goal" page,
+`SettingsIntensityGoalScreen` › `SettingsIntensityGoalCard`: one stepper on `baseline.intensityGoalMinutes`,
+one caption, the heart-rate basis line with a `SettingsIconTile`); a "Friends" section between Notifications
+and About (`SettingsFriendsCard`: signed out, one line that Friends is optional; signed in, a row into
+`FriendsSharingScreen`, what leaves the phone per metric, sign out and delete account); Data carries
+"Recompute heart-rate days" (`IntradayDayStore.reset()`); the Accuracy screen lists Intensity minutes and heart rate from the detail
 specs (`AccuracyExtras`; a future row for either key in `MetricAccuracy.all` drops its extra row) and links
 both reviews.
 
 Name contracts between builders: `JournalSheet(day:)`, `JournalPatternsView()`, `SettingsScreen()`,
-`ProgressScreen()` (may be reused as the embedded Progress section body), `WorkoutsScreen()`.
-`BaselineRoot` (three tabs, `--tab home|trends|sleep` with `today` / `journal` / `settings` aliases,
-`pendingTab "journal"` → home + sheet) belongs to the Home builder.
+`ProgressScreen()` (may be reused as the embedded Progress section body), `WorkoutsScreen()`, `FriendsScreen()`.
+`BaselineRoot` (four tabs, `--tab home|trends|sleep|friends` with `today` / `journal` / `settings` aliases,
+`--friends-segment compete` for the Compete segment, `pendingTab "journal"` → home + sheet, a
+`baseline://friends/join/CODE` link → the Friends tab with the code) belongs to the Home builder.
 
 Glass budget per tab under this IA: Home = pinned day switcher (1) + floating Journal button (1) +
-system bars; Trends = pinned section control (1) + bars; Sleep = bars only; Settings = ≤ 7 pinned
-headers; a pushed `MetricDetailScreen` (from Home, Trends or Sleep) = its pinned range picker
+system bars; Trends = pinned section control (1) + bars; Sleep = bars only; Friends = the pinned
+"Friends | Compete" control (1, only once signed in and ready; the intro has nothing pinned) + bars;
+Settings = ≤ 8 pinned headers (Strap, Apple Health, Data, Profile, Notifications, Friends, About, plus
+Developer in DEBUG builds); a pushed `MetricDetailScreen` (from Home, Trends or Sleep) = its pinned range picker
 (`BaselineRangePicker(style: .glass)`, 1D / 7D / 4W / 1Y) (1) + bars, and so does
 `SleepTimingDetailScreen` (7D / 4W / 1Y). Only ONE pinned row per screen: Trends' range picker is
 therefore `.flat` in the content, not a second bar.
@@ -50,7 +66,7 @@ therefore `.flat` in the content, not a second bar.
 Flat light paper (`background`) with opaque white cards carrying the data. Glass ONLY on the layer that
 floats above content and refracts what scrolls beneath it: the tab bar, the navigation bar and its
 toolbar items (automatic), the one pinned control under the bar (`BaselineScreen.pinned`: Home's day
-switcher, Trends' section control), the strap status pill and the gear (toolbar items, so no extra
+switcher, Trends' section control, Friends' "Friends | Compete" control), the strap status pill and the gear (toolbar items, so no extra
 glass), floating actions over the background (`GlassCTA`: Welcome's column, Home's Journal button) and
 pinned Settings section headers (`BaselineSectionLabel(style: .glass)`). Cards, chips, charts, rows,
 pills inside cards, in-card CTAs and in-card pickers are flat. Never glass on glass. Text on glass is
@@ -132,6 +148,7 @@ this for you; stage `StatCell` values are ink with `dot: stageColor`.
 | `label` | `.subheadline` rounded medium (15) | card titles, chips, row titles |
 | `caption` | `.footnote` rounded (13) | every secondary line, axis labels, section labels |
 | `symbolSmall` / `symbol` / `symbolAccessory` | `.caption2` semibold / `.footnote` medium / `.subheadline` light | glyphs beside text (scale with Dynamic Type) |
+| `code` / `codeField` / `codeSmall` | fixed-width (system monospaced; SF Rounded has no fixed-width face): 34 semibold (large-title curve, capped 1.5×) / 22 semibold (title2 curve, capped 1.5×) / `.footnote` | where each character must be read on its own: the invite code (`InviteSheet`), the code field (`EnterCodeSheet`), the "On the server" JSON. Never for numbers in cards |
 
 Ring numerals carry `.monospacedDigit()`, `.minimumScaleFactor(0.75)`, `.contentTransition(.numericText())`
 (done inside `MetricRing`).
@@ -164,7 +181,11 @@ BaselineScreen(title: "Settings") {
 `.toolbarColorScheme` (do not add one anywhere; the three leftover sites in sheets are cuts). `subtitle`
 becomes `.navigationSubtitle` when non-nil. `pinned` content must stay ONE row (≤ ~56pt) and there is one
 pinned row per screen. A card that relies on `GeometryReader` width (stage bars) keeps its explicit
-`.frame(height:)` — the stack is lazy now. Toolbar items go on the screen as usual:
+`.frame(height:)` — the stack is lazy now. A screen with no pinned `Section` headers and a handful of cards
+may wrap them in ONE `VStack(spacing: cardSpacing)` so the lazy stack sees a single item. Home and Friends &
+sharing do: as separate lazy items their cards were re-placed on every frame (Home during the push into a
+card's detail from a past day, Friends & sharing once scrolled), a layout loop at full CPU that the UI suite
+caught as query timeouts. Toolbar items go on the screen as usual:
 
 ```swift
 .toolbar {
@@ -322,6 +343,8 @@ keep that helper. `BaselineFlowLayout` stays in `JournalSupport.swift` (Home and
 BaselineCTA(title: "Pair strap") { showPair = true }                       // flat .borderedProminent capsule, accent, white label
 BaselineCTA(title: "Add a habit", prominent: false) { showAddHabit = true } // flat .bordered capsule
 BaselineCTA(title: "Choose a file…", systemImage: "doc") { … }
+ShareLink(item: text) { BaselineCTALabel(title: "Share code", systemImage: "square.and.arrow.up") }
+    .baselineCTAStyle()                                                   // a ShareLink that looks like BaselineCTA (prominent: false for .bordered)
 
 GlassEffectContainer(spacing: 12) {                                       // Welcome's floating column
     GlassCTA(title: "Pair WHOOP 4.0") { … }                                // .glassProminent, tinted accent
@@ -383,7 +406,8 @@ changes which source's night a day shows.
 ## Shell
 
 - `BaselineApp.swift`: `.preferredColorScheme(.light)` (done).
-- `BaselineRoot.swift` (Home builder): three tabs with `.tabItem` + `.tag`, `.tint(BaselineTheme.accent)`,
+- `BaselineRoot.swift` (Home builder): four tabs with `.tabItem` + `.tag` (Friends adds
+  `.badge(friends.badgeCount)`), `.tint(BaselineTheme.accent)`,
   `.tabBarMinimizeBehavior(isUITesting ? .never : .onScrollDown)` where `isUITesting` = DEBUG
   `CommandLine.arguments.contains("--ui-testing")` (already present; keep it). BaselineUITests must
   append `"--ui-testing"` to every `launchArguments` array (ScreenshotTests, MarketingShots).
@@ -446,13 +470,24 @@ BaselineReadouts.steps(for: day, readings: [(day, value)])            // the pur
 BaselineReadouts.stepReadings(repo, from:, to:)                      // the resolution itself; imports-only keeps the phone's points alone (the strap's computed steps NOOP's resolver appends are filtered out: stepReadings(mode:resolved:funnel:from:to:))
 BaselineReadouts.stepsText(8_412) == "8,412"; stepsDeltaText(steps:average:windowLabel:) // "+1,240 vs your 7‑day average" / "On your 7‑day average" (±5%)
 
-// Calories: NOOP's whole-day HR-only estimate (active_kcal), vs the 30 days before; rounded to 10, never to the kcal
-let c = BaselineReadouts.calories(for: day, days: repo.baselineDays, logicalKey: logicalKey)  // c.kcal, c.average30, c.observed30, c.delta; today's logicalKey = NOOP's 04:00-rollover day, the Effort cell's row (Repository.resolveToday)
-BaselineReadouts.caloriesText(2_143) == "2,140"; caloriesDeltaText(kcal:average:)
+// Calories (BaselineActivityReadouts.swift): total = resting (Mifflin–St Jeor from the entered profile; today prorated)
+// + active (the strap's heart-rate estimate from IntradayDayStore, else Apple Health's active_kcal, never both);
+// rounded to 10, never to the kcal. ONE per-day figure everywhere: Home's CaloriesCard, its 1D view, Trends' bars
+// and the Calories detail's hero and range chart all go through caloriesDay (total, or active alone without age/sex)
+let c = await BaselineReadouts.calories(repo, profile: profile, for: day)   // c.totalKcal, c.restingKcal, c.activeKcal, c.activeSource, c.activeAverage30
+BaselineReadouts.caloriesDay(for:inputs:strapActive:appleActive:mode:dayFraction:)   // the pure day builder
+BaselineReadouts.calorieReadings(from:to:inputs:strapActive:appleActive:mode:todayKey:todayFraction:)   // its per-day readings (Trends, the detail)
+BaselineReadouts.caloriesText(2_143) == "2,140"
+// (legacy `calories(for:days:logicalKey:)` reads the funnel's active_kcal column, NOOP's whole-day estimate; no screen prints it)
 
-// Stress: a day's hourly 0–3 curve (NOOP DaytimeStress, day-relative), nil when the strap banked no daytime HR
-let st = await BaselineReadouts.stressDay(repo, for: day)            // @MainActor; today via StressDayCurve.today, other days read once
-st.points ([StressCurvePoint]: id/date/level?/moving), st.dayMean, st.peak, st.highMinutes, st.movingHours, st.scoredHours, st.sustainedHigh
+// Stress: TIME, never a score. A day's still waking hours against the person's own daytime heart-rate floor (the
+// personal lens: NOOP's .baselineRelative once 4 days of daytime HR exist, else "learning"), nil when the strap
+// banked no daytime HR. The 0–3 level drives the curve's shape only and is never printed.
+let st = await BaselineReadouts.stressDay(repo, for: day)            // @MainActor; today via StressDayCurve.today, past days via StressDayStore
+st.elevatedHours, st.calmHours, st.restoredHours, st.movingHours, st.scoredHours, st.lens, st.floorBPM, st.typicalElevatedHours (14-day median, ≥ 5 days)
+st.points ([StressCurvePoint]: id/date/level?/moving), st.peakHour, st.sustainedFrom
+StressDayStore.shared.facts(repo, days:scoreMissing:)               // past days' hours on their own lens, kept (the typical and the detail's 7D / 4W / 1Y)
+StressDayStore.elevatedHours(facts)                                 // the detail's readings: elevated hours of days that may be totalled
 BaselineReadouts.stressDay(result: DaytimeStress.Result, day:)       // pure form; nil when nothing was scored
 BaselineReadouts.stressSummary(st); stressLevelText(1.4) == "Medium"; stressDomain == 0...3
 
@@ -537,17 +572,18 @@ the count is still accruing, so the header is "Steps so far", the dot stays `ste
 "Builds through the day" (plus the "average after N more days" wait while there is none): a partial
 count is never judged against whole-day averages, and the average is said once, in the "avg 6,000"
 caption. VoiceOver hears the average too: "8,412 steps, 7‑day average 6,000, +2,412 vs your 7‑day
-average". Sits in a tile beside
+average". On Home the count sits in `StepsCard` (the goal track, `StepsCardBody`) instead; the tile sits beside
 Calories or in its own card with `AccuracyBadge(metric: "steps")` in the card's `accessory:` slot and
 `showsHeader: false`, so the badge sits in the header row and never beside the hero numeral.
 
 ### `StressCurveChart(points:height:accessibilitySummary:)` — `BaselineStressChart.swift`
 
 Swift Charts area (`stress` @ `bandOpacity`) + line (`stress`, `lineWidth`) over 06:00–22:00 of the
-day, unscored windows break the line, moving windows are shaded in `fill`, a dashed rule at 2.0 (the high
-edge), gridlines at the band edges 0 / 1 / 2 / 3 and the band words Low / Medium / High at the band
-midpoints (`BaselineReadouts.stressLevelText`, the same table as the Average cell's unit, so the axis
-and the cell never disagree), x labels every four hours. Pass `BaselineReadouts.stressSummary(st)` as the
+day, unscored windows break the line, moving windows are shaded in `fill`, a dashed rule at the elevated
+edge (`StressState.elevatedFloor`). No numbers on the y axis: three faint `stress` bands
+(`StressCurveChart.bands`, cut at `StressState.restoredCeiling` / `elevatedFloor`, tints 0.04 / 0.08 / 0.13)
+named Restored / Calm / Elevated at their midpoints, the words the Stress card's hours use, so the axis and
+the card never disagree; x labels every four hours. Pass `BaselineReadouts.stressSummary(st)` as the
 summary. Pair with `AccuracyBadge(metric: "stress")` (Low) and the caption "Estimated from heart rate;
 N hours left out while you were moving".
 
@@ -750,9 +786,11 @@ days it touches. A day the strap recorded nothing on is a record but not an Inte
 range series and Trends' weeks both leave it out. Why a file in Application Support
 and not UserDefaults or Documents: UserDefaults is loaded whole and rewritten as one plist on every
 change (wrong for hundreds of growing records); Documents is what file sharing exposes, and a cache is
-not a document; Application Support is private, backed up and recomputable. The Stress day mean is
-stored on the same record when a 7D / 4W detail asks for it (`computeStress`); a 1Y Stress series reads
-only days already scored, never 365 raw days.
+not a document; Application Support is private, backed up and recomputable. The Stress detail does not
+read these records: its 7D / 4W / 1Y series is elevated HOURS per day from `StressDayStore` (each past
+day's hours on its own lens, scored once and kept beside the 14-day typical; a 1Y series reads only days
+already scored, never 365 raw days), so no range ever prints the 0–3 level. The record's `stressMean`
+(`computeStress`) is no longer asked for by any screen.
 
 ### `MetricDetailScreen`, `MetricDetailSpec`, `MetricRangeChart`, `IntradayHRChart` — `MetricDetail.swift`
 
@@ -760,7 +798,7 @@ only days already scored, never 365 raw days.
 NavigationLink { MetricDetailScreen(spec: TodayDetail.spec(.hrv), day: dayKey) } label: { … }   // from any card (Home, Trends): the ONE route table, .standard(key) plus the 1D views (Sleep's night, Effort's workouts, Stress' curve, Intensity's week); day defaults to today
 MetricDetailScreen(spec: .standard(.heartRate), day: dayKey, initialRange: .day)
 var spec = MetricDetailSpec.standard(.steps); spec.dayView = { day in AnyView(MyStepsDayCard(day: day)) }   // a custom 1D view (any view the caller owns)
-MetricDetailSpec(key:, title:, noun:, unit:, color:, higherIsBetter:, accuracyKey:, accuracy: (tier, caveat)?, format:, formatDelta:, bandProvider:, dayView:, about:, goal:)
+MetricDetailSpec(key:, title:, noun:, unit:, color:, higherIsBetter:, accuracyKey:, accuracy: (tier, caveat)?, format:, formatDelta:, bandProvider:, dayView:, about:, goal:, heroTitle:, dayViewReplacesHero:)
 spec.goal?()   // a sum metric's live target: MetricGoal(value: IntensityMinutes.goal(), period: .week); re-read on UserDefaults.didChangeNotification
 MetricRangeChart(series: s, color: color, selected: $selected, yLabel: spec.format, goal: g, accessibilitySummary: …, accessibilityHint: "Higher is better")
 IntradayHRChart(trace: t, color: BaselineTheme.rhr, accessibilitySummary: BaselineReadouts.intradaySummary(t))
@@ -784,7 +822,16 @@ already names the window, as on Trends); scrubbing writes "Sep 28 · 64 ms" / "W
 Baseline's colours (HRV teal, resting HR and heart rate coral, sleep keys indigo, steps slate, effort /
 calories / intensity amber, stress violet), formatters (`durationText`, `clockText`, `stepsText`,
 `caloriesText`, `effortText`) and accuracy rows; Intensity minutes and heart rate, which the literature
-table has no row for, carry an explicit Medium badge with their caveat.
+table has no row for, carry an explicit Medium badge with their caveat. Calories' hero and chart are the
+per-day total Home's card prints (`calorieReadings`, never the funnel's `active_kcal`). Stress is HOURS:
+the hero card is titled "Elevated hours a day" (`heroTitle`) over cells in "h" (half-hour grain, no good /
+bad direction, never "of 3"), the range chart is elevated hours of the days that may be totalled, and on
+1D the day view (`TodayStressDayView`: the hours against the person's typical, the curve, floor, peak and
+caveat, with the badge) IS the page (`dayViewReplacesHero`), so no "This day" cell repeats its numbers.
+Calories' 1D is the same: `TodayCaloriesDayView` (total, resting / active split, active context, caveat,
+badge) is the page, because the series counts only days with an active estimate and a hero over a
+resting-only day would say "No calories recorded" above the card's figure. Steps' and Calories' 1D on
+today label a running total "So far" and never set a part day against a whole day before.
 
 Empty and ended-on rules: a window with no points draws the hero with its one sentence ("No days with
 heart rate in the last 7 days.", or for Intensity minutes before an age or max HR is set "Add your age or

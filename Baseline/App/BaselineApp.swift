@@ -23,6 +23,9 @@ struct BaselineApp: App {
     @StateObject private var journalCatalog = JournalCatalogStore()
     /// Opt-in morning summary notification; observes `model.repo` for the life of the process.
     @StateObject private var morningSummary: MorningSummaryNotifier
+    /// The opt-in Friends tab (Baseline/Friends). Picks the live Supabase backend, the demo backend or none
+    /// (`FriendsBackendFactory`); friends' data lives in memory only.
+    @StateObject private var friends: FriendsStore
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(ChartStyle.storageKey) private var chartStyleRaw = ChartStyle.titanium.rawValue
@@ -64,6 +67,9 @@ struct BaselineApp: App {
         let morningSummary = MorningSummaryNotifier(repo: model.repo)
         morningSummary.attach()
         _morningSummary = StateObject(wrappedValue: morningSummary)
+        let friends = FriendsStore()
+        friends.attach(repo: model.repo, profile: model.profile)
+        _friends = StateObject(wrappedValue: friends)
     }
 
     var body: some Scene {
@@ -82,6 +88,7 @@ struct BaselineApp: App {
                 .environmentObject(UpdateStore.shared)
                 .environmentObject(liftSession)
                 .environmentObject(journalCatalog)
+                .environmentObject(friends)
                 .environment(\.stressNudgeCenter, model.stressNudgeCenter)
                 .environment(\.locale, AppLanguage.activeLocale)
                 .chartStyle(chartStyleRaw)
@@ -107,6 +114,13 @@ struct BaselineApp: App {
                     guard loaded, scenePhase == .active else { return }
                     BaselineWidgetPublisher.publish(repo: model.repo, live: model.live)
                 }
+                // Friends: upload the person's own shared aggregates 30 s after the data last changed, foreground
+                // only (the store also throttles to once every 10 minutes and never uploads in demo, sample-data
+                // or UI-test modes).
+                .onReceive(model.repo.$refreshSeq.dropFirst()) { _ in
+                    guard scenePhase == .active else { return }
+                    friends.noteDataRefreshed()
+                }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
@@ -122,6 +136,9 @@ struct BaselineApp: App {
                 Task { await model.runDeferredRescoreIfOwed() }
                 // Idempotent: keeps the one daily check-in pending while the toggle is on, cancels it when off.
                 Task { await EveningCheckInScheduler.sync() }
+                // Friends: re-picks the backend (a sample-data toggle switches to the demo and resets memory),
+                // restores the session and, when ready, refreshes and uploads (throttled).
+                Task { await friends.start() }
                 Task {
                     health.refreshAuthIfPreviouslyGranted()
                     HealthWritebackBackgroundScheduler.updateSchedule(isAuthorized: health.auth == .authorized)

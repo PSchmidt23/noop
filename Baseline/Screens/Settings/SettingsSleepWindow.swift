@@ -10,12 +10,17 @@ import SwiftUI
 /// minutes since midnight), so the Sleep tab reads the same numbers through `SleepWindow.stored()`
 /// with no model in between. The span the two times enclose is the card's one context fact, in the
 /// accessory pill; the one line under the pickers (`contextText`) says what the window does.
-/// Defaults 23:00 → 07:00 until a time is changed.
+/// Defaults 23:00 → 07:00 until a time is changed. Under them, the "Sleep goal" stepper (FRIENDS_SPEC D16:
+/// `BaselineReadouts.SleepGoal`, `baseline.sleepGoalMinutes`, 5h–10h in steps of 15 min, default 7h 30m):
+/// the asleep time a night must reach to count as a night at the sleep goal in Friends, bound straight to
+/// its key so the upload reads the number shown here, with one line saying what it counts.
 struct SettingsSleepWindowCard: View {
     @AppStorage(BaselineReadouts.SleepWindow.bedKey)
     private var bedMinutes = BaselineReadouts.SleepWindow.default.bedMinutes
     @AppStorage(BaselineReadouts.SleepWindow.wakeKey)
     private var wakeMinutes = BaselineReadouts.SleepWindow.default.wakeMinutes
+    @AppStorage(BaselineReadouts.SleepGoal.key)
+    private var sleepGoal = BaselineReadouts.SleepGoal.defaultMinutes
 
     /// The pickers edit a `Date`; only its hour and minute are kept (the scheduler's two converters
     /// clamp to 0…1439, the range `SleepWindow.stored` accepts).
@@ -36,8 +41,37 @@ struct SettingsSleepWindowCard: View {
                 .font(BaselineTheme.caption)
                 .foregroundStyle(BaselineTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+            SettingsDivider()
+            HStack(spacing: 14) {
+                SettingsIconTile(icon: "moon.zzz")
+                Stepper(value: $sleepGoal, in: BaselineReadouts.SleepGoal.range, step: BaselineReadouts.SleepGoal.step) {
+                    SettingsFieldLabel(title: "Sleep goal", value: BaselineReadouts.SleepGoal.text(sleepGoal))
+                }
+                .accessibilityValue(Self.sleepGoalSpoken(sleepGoal))
+                .accessibilityIdentifier("settings-sleep-goal")
+            }
+            .padding(.vertical, 4)
+            Text(Self.sleepGoalLine)
+                .font(BaselineTheme.caption)
+                .foregroundStyle(BaselineTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .tint(BaselineTheme.accent)
+        // A goal outside the range or off the grid (a hand-edited plist) snaps to what the upload reads.
+        .onAppear {
+            let stored = BaselineReadouts.SleepGoal.minutes()
+            if stored != sleepGoal { sleepGoal = stored }
+        }
+    }
+
+    /// What the goal counts, said once: Friends' "Nights at sleep goal" (asleep time, not time in bed).
+    static let sleepGoalLine = "Friends counts a night at your sleep goal when you were asleep at least this long. Only whether you reached it is shared."
+
+    /// "7 hours 30 minutes" for VoiceOver.
+    static func sleepGoalSpoken(_ minutes: Int) -> String {
+        let h = minutes / 60, m = minutes % 60
+        let hours = "\(h) hour\(h == 1 ? "" : "s")"
+        return m == 0 ? hours : "\(hours) \(m) minutes"
     }
 
     /// Icon tile and title on the left, the compact picker on the right. The picker keeps `title` as

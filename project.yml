@@ -427,6 +427,12 @@ targets:
           # that quote NOOP's identifiers and name WHOOP throughout. Never bundled; release-check.sh fails
           # on any Markdown at the bundle root other than ATTRIBUTION.md.
           - "Research"
+          # The Friends server (Supabase SQL, the delete-account Edge Function, pgTAP tests, the example
+          # plist and SETUP.md): repo files for the owner, never bundled. The real config,
+          # Resources/Supabase.plist, IS bundled when present (git-ignored by Resources/.gitignore, which
+          # itself stays out of the bundle).
+          - "Backend"
+          - "Resources/.gitignore"
       # Legal texts for Settings → About. PolyForm Noncommercial requires passing the terms along;
       # the MIT/BSD notices in NOTICE and the credits in ATTRIBUTION.md must accompany the binary too.
       - path: LICENSE
@@ -466,7 +472,9 @@ targets:
         # only from NOOP's Settings screen, which Baseline does not host, and its catalog is excluded
         # above), NSSupportsLiveActivities (deferred; LiveActivityController gates on
         # areActivitiesEnabled, false without the key), NSAppTransportSecurity's local-networking
-        # exemption (the AI coach is deferred and Baseline makes no network connections),
+        # exemption (the AI coach is deferred; Baseline connects only to Baseline's own Supabase
+        # project, the Friends server, over HTTPS, and only when Friends is used, so no ATS exception is needed;
+        # ITSAppUsesNonExemptEncryption stays false: OS TLS, CryptoKit SHA-256 for the sign-in nonce),
         # UIFileSharingEnabled / LSSupportsOpeningDocumentsInPlace (the Siri Shortcut drop file and
         # folder backups are deferred, so Documents stays private), the OURA_* OAuth keys and the `noop`
         # URL scheme (every Oura reader is under #if OURA_CLOUD_IMPORT, which no tracked build sets, and
@@ -514,12 +522,15 @@ targets:
           # none, so that task would never run in the one case the warning exists for.
           - $(PRODUCT_BUNDLE_IDENTIFIER).stalebattery
         # Permission strings. iOS shows these verbatim, so they use Baseline's vocabulary (HRV, resting
-        # heart rate, readiness, sleep, effort) and describe only what the hosted screens do.
-        NSBluetoothAlwaysUsageDescription: "Baseline connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your device."
+        # heart rate, readiness, sleep, effort) and describe only what the hosted screens do. Bluetooth,
+        # Health and Motion end with the Friends exception (opt-in sharing uploads the chosen daily totals
+        # and weekly trends; Baseline/PRIVACY.md, FRIENDS_SPEC §7); location stays absolute, routes are
+        # never uploaded.
+        NSBluetoothAlwaysUsageDescription: "Baseline connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your iPhone unless you turn on sharing in Friends, which sends only the daily totals and weekly trends you choose."
         NSLocationWhenInUseUsageDescription: "Baseline records your route during an outdoor workout to show distance, pace, and a map, and keeps recording while the screen is off. The route stays on your device. Nothing leaves it."
-        NSHealthShareUsageDescription: "Baseline reads your sleep, workouts and heart data from Apple Health on this iPhone to show HRV, resting heart rate, readiness, sleep and effort against your baseline. Nothing leaves your device."
+        NSHealthShareUsageDescription: "Baseline reads your sleep, workouts, steps and heart data from Apple Health on this iPhone to show HRV, resting heart rate, readiness, sleep, effort and steps against your baseline. Nothing leaves your iPhone unless you turn on sharing in Friends, which sends only the daily totals and weekly trends you choose."
         NSHealthUpdateUsageDescription: "Baseline writes the metrics it computes from your strap back into Apple Health, on-device and only when you allow it."
-        NSMotionUsageDescription: "Baseline reads your iPhone's step count for a walking or running workout to show steps in the activity summary. It stays on your device. Nothing leaves it."
+        NSMotionUsageDescription: "Baseline reads your iPhone's step count for a walking or running workout to show steps in the activity summary. Nothing leaves your iPhone unless you turn on sharing in Friends, which sends only the daily totals and weekly trends you choose."
         # Speech and AVFAudio are linked through compiled-in NOOP code (CoachVoiceInput), so the
         # purpose strings must exist for the ITMS-90683 scan, but no Baseline screen records audio.
         # The wording stays true if a voice feature is exposed later: transcription is on-device only
@@ -535,6 +546,11 @@ targets:
         com.apple.developer.healthkit.access: []
         com.apple.security.application-groups:
           - $(APP_GROUP_ID)
+        # Sign in with Apple for the opt-in Friends tab (Baseline/Friends/AppleSignIn.swift). Needs the
+        # capability enabled on the App ID first (Baseline/Backend/supabase/SETUP.md step 5); until then
+        # device builds fail to sign, simulator builds and UI tests are unaffected.
+        com.apple.developer.applesignin:
+          - Default
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.patrickschmidt.baseline

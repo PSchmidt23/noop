@@ -90,7 +90,9 @@ final class MarketingShots: XCTestCase {
         app.launch()
         let expected = Self.launchTitle(for: tab)
         let title = app.navigationBars.staticTexts.matching(NSPredicate(format: "label ==[c] %@", expected)).firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 10), "marketing: \(tab) \"\(expected)\" navigation title did not appear")
+        // A cold first launch after install can take ~30 s (see ScreenshotTests.launchTimeout).
+        XCTAssertTrue(title.waitForExistence(timeout: ScreenshotTests.launchTimeout()),
+                      "marketing: \(tab) \"\(expected)\" navigation title did not appear")
         // The demo seed runs after launch; the first card can lag the title by a few seconds.
         let card = app.staticTexts.matching(firstCard).firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 20), "marketing: \(tab) first card (\(firstCard.predicateFormat)) did not appear")
@@ -167,8 +169,12 @@ final class MarketingShots: XCTestCase {
         _ = element.waitForExistence(timeout: 10)
         let bar = app.buttons["Journal"].firstMatch
         for _ in 0..<12 {
-            let clear = !bar.exists || element.frame.maxY <= bar.frame.minY - 8
-            if element.exists && element.isHittable && clear { return true }
+            // Read frames only while both exist: a query on a vanished element throws instead of
+            // returning false (Home is a lazy stack, so a card far below the fold may not exist yet).
+            if element.exists && element.isHittable {
+                let clear = !bar.exists || element.frame.maxY <= bar.frame.minY - 8
+                if clear { return true }
+            }
             scroll(app, fraction: 0.46)
             Thread.sleep(forTimeInterval: 0.6)
         }

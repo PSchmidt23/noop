@@ -323,99 +323,6 @@ struct IntensityCard: View {
     }
 }
 
-// MARK: - Steps
-
-/// The day's steps under the rings: `StepsTile` (numeral, "avg 6,000", seven bars, ONE line against the
-/// 7-day average) under the card's own "Steps" title with the literature's badge in the header row,
-/// like every other card; the tile's header is off (`showsHeader: false`) so the badge never shares a
-/// line with the hero numeral. On today the title reads "Steps so far" and the tile withholds its
-/// delta and judgement (`StepsTile.isToday`): the count is still accruing, as the Effort cell says with
-/// "Effort so far". The screen omits the card when no source ever recorded a step
-/// (`StepsReadout.hasRecordedSource`). Opens the Steps detail.
-struct StepsCard: View {
-    let readout: BaselineReadouts.StepsReadout
-    var isToday: Bool = true
-    var onOpen: () -> Void = {}
-
-    var body: some View {
-        TodayDetailCard(title: StepsTile.title(isToday: isToday), accessory: AccuracyBadge(metric: "steps").map { AnyView($0) },
-                        hint: TodayDetail.hint(.steps), onOpen: onOpen) {
-            StepsTile(readout: readout, window: .week, showsHeader: false, isToday: isToday)
-        }
-    }
-}
-
-// MARK: - Stress
-
-/// The selected day's Stress curve (NOOP's hourly 0–3 estimate from daytime heart rate, `StressCurveChart`)
-/// with the day's average and peak as two cells and ONE caption naming what the number is (an estimate
-/// from heart rate) and the hours left out while moving. "No daytime data yet" while today has nothing
-/// scored; a past day without data shows no card (`TodayScreen.content`). Low accuracy, and the badge
-/// says so: the curve tracks heart rate, not how the day felt. Opens the Stress detail on its 1D view,
-/// which draws the same `StressCardBody` without the Average cell (its hero already prints the day's
-/// average, and carries the badge).
-struct StressCard: View {
-    let stress: BaselineReadouts.StressDayReadout?
-    var isToday: Bool = true
-    var onOpen: () -> Void = {}
-
-    var body: some View {
-        TodayDetailCard(title: "Stress", accessory: AccuracyBadge(metric: "stress").map { AnyView($0) },
-                        hint: TodayDetail.hint(.stressAvg), onOpen: onOpen) {
-            StressCardBody(stress: stress, isToday: isToday)
-        }
-    }
-
-    /// One decimal on the 0–3 scale, the chart's own precision.
-    static func level(_ v: Double) -> String { String(format: "%.1f", v) }
-
-    /// "Estimated from heart rate · 2 hours left out while you were moving".
-    static func caption(_ s: BaselineReadouts.StressDayReadout) -> String {
-        var line = "Estimated from heart rate"
-        if s.movingHours > 0 {
-            line += " · \(s.movingHours) hour\(s.movingHours == 1 ? "" : "s") left out while you were moving"
-        }
-        return line
-    }
-}
-
-/// The Stress card's content (cells, curve, caption), shared with the detail's 1D card, which passes
-/// `showsAverage: false` because its hero card prints the same day average ("This day 1.4 of 3").
-struct StressCardBody: View {
-    let stress: BaselineReadouts.StressDayReadout?
-    var isToday: Bool = true
-    /// The Average cell; off in the detail, so one screen prints the day's average once.
-    var showsAverage: Bool = true
-
-    var body: some View {
-        if let s = stress {
-            if showsAverage || s.peak != nil {
-                BaselineStatRow {
-                    if showsAverage {
-                        StatCell(label: "Average", value: StressCard.level(s.dayMean),
-                                 unit: BaselineReadouts.stressLevelText(s.dayMean), color: BaselineTheme.stress)
-                    }
-                    if let p = s.peak {
-                        StatCell(label: "Peak", value: StressCard.level(p.level),
-                                 unit: "at " + p.date.formatted(date: .omitted, time: .shortened), color: BaselineTheme.stress)
-                    }
-                }
-            }
-            StressCurveChart(points: s.points, accessibilitySummary: BaselineReadouts.stressSummary(s))
-            Text(StressCard.caption(s))
-                .font(BaselineTheme.caption)
-                .foregroundStyle(BaselineTheme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-        } else {
-            Text(isToday ? "No daytime data yet. The curve fills in as the strap records the day."
-                         : "No daytime data for this day.")
-                .font(BaselineTheme.caption)
-                .foregroundStyle(BaselineTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
 // MARK: - Signals
 
 /// The early-warning card, directly under Readiness and only on today, when `TodaySignals.build` found
@@ -575,23 +482,15 @@ struct TodayStageBar: View {
 
 // MARK: - Effort
 
-/// The day's effort, its calories and its workouts (at most three rows; the chevron row opens the whole
-/// list). Each workout row pushes `WorkoutDetailScreen` (resolved by the row's start, the only key
-/// `TodayWorkout` carries). The effort number is `BaselineReadouts.effortText`, the same rendering the
-/// Workouts screens use. Calories are the second cell, read through the same 04:00-rollover row as the
-/// Effort cell (`BaselineReadouts.calories(for:days:logicalKey:)`), "~2,140" (rounded to ten and marked
-/// approximate: a Low-accuracy figure) with ONE caption under the cells that names it an estimate and
-/// gives the delta against the 30-day average; that caption is a chevron row into the Calories detail,
-/// whose hero carries the badge. A day without a figure shows neither. "All workouts" is the visible
-/// label of the last chevron row (a UI-test anchor). The card opens the Effort detail (its 1D view is
-/// the day's workouts).
+/// The day's effort and its workouts (at most three rows; the chevron row opens the whole list). Each
+/// workout row pushes `WorkoutDetailScreen` (resolved by the row's start, the only key `TodayWorkout`
+/// carries). The effort number is `BaselineReadouts.effortText`, the same rendering the Workouts screens
+/// use. Calories have their own card (`CaloriesCard`), so no energy figure is printed here. "All
+/// workouts" is the visible label of the last chevron row (a UI-test anchor). The card opens the Effort
+/// detail (its 1D view is the day's workouts).
 struct EffortCard: View {
     let effort: Double?
-    /// The day's calorie estimate; nil, or a readout without a figure, shows no Calories cell or caption.
-    var calories: BaselineReadouts.CaloriesReadout? = nil
     let workouts: [TodayWorkout]
-    /// The selected day's key: the Calories detail's ranges end on it.
-    let dayKey: String
     var isToday: Bool = true
     var onOpen: () -> Void = {}
 
@@ -603,17 +502,9 @@ struct EffortCard: View {
             BaselineStatRow {
                 StatCell(label: isToday ? "Effort so far" : "Effort", value: BaselineReadouts.effortText(effort),
                          unit: BaselineReadouts.effortUnit, color: BaselineTheme.effort)
-                if let kcal = calories?.kcal {
-                    StatCell(label: "Calories", value: "~" + BaselineReadouts.caloriesText(kcal), unit: "kcal")
-                }
                 // The sentence below already says when there are none; a "Workouts 0" cell would say it twice.
                 if !workouts.isEmpty {
                     StatCell(label: "Workouts", value: "\(workouts.count)")
-                }
-            }
-            if let c = calories, c.kcal != nil {
-                BaselineChevronRow(text: Self.caloriesLine(c), accessibilityHint: TodayDetail.hint(.calories)) {
-                    TodayDetail.screen(.calories, day: dayKey)
                 }
             }
             if workouts.isEmpty {
@@ -647,17 +538,6 @@ struct EffortCard: View {
             return isToday ? "Builds through the day as the strap records." : "Nothing recorded on this day."
         }
         return isToday ? "No workouts recorded yet today." : "No workouts recorded."
-    }
-
-    /// ONE line for the Calories cell: names the figure an estimate (the cell shares the card with
-    /// Effort, so the line says whose it is), then the delta against the 30-day average or when that
-    /// average arrives.
-    static func caloriesLine(_ c: BaselineReadouts.CaloriesReadout) -> String {
-        if let delta = BaselineReadouts.caloriesDeltaText(kcal: c.kcal, average: c.average30) {
-            return "Calories estimated from heart rate · \(delta)"
-        }
-        let n = max(1, BaselineReadouts.averageMinDays - c.observed30)
-        return "Calories estimated from heart rate · 30\u{2011}day average after \(n) more day\(n == 1 ? "" : "s")"
     }
 }
 

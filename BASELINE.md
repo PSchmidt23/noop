@@ -1,5 +1,5 @@
 # Baseline — project brief
-*Patrick's fork of NOOP (ryanbr/noop). Free, local-only iPhone app for WHOOP 4.0 / 5.0 / MG straps,
+*Patrick's fork of NOOP (ryanbr/noop). Free, local-first iPhone app for WHOOP 4.0 / 5.0 / MG straps,
 focused on HRV and resting-heart-rate trends against your own baseline.*
 
 ## What this is
@@ -20,11 +20,16 @@ support that story. Nothing clutters it.
   surface them in Settings → About.
 - **No WHOOP look-alikes.** No three-ring home screen, no "Strain / Recovery / Sleep Coach" labels.
   WHOOP is only named nominatively ("works with WHOOP 4.0 and 5.0 straps"). Our vocabulary:
-  **HRV, Resting HR, Readiness, Sleep, Effort, Steps, Calories, Stress, Journal.** "Readiness" is one
+  **HRV, Resting HR, Readiness, Sleep, Effort, Steps, Calories, Stress, Intensity minutes, Friends, Journal.**
+  No competitor's feature names in copy ("Active Zone Minutes", "Body Battery", "Stress Monitor", "Circles",
+  "Activity rings"). "Readiness" is one
   measure everywhere it is printed: the 0–100 score (`TodaySnapshot.readinessScore`) on Home's card, in
   the morning summary's subtitle and on the widgets; the seven-night HRV tier is the HRV tile's week phrase.
-- **Local only.** No accounts, no sign-in, no backend. Data stays in the app's SQLite and, when
-  allowed, Apple Health.
+- **Local first.** Everything works without an account; data stays in the app's SQLite and, when
+  allowed, Apple Health. The opt-in Friends tab is the one exception: after Sign in with Apple it uploads
+  only the derived values the person picks (Baseline/Research/FRIENDS_SPEC.md). Any change to what leaves
+  the phone updates `Baseline/PRIVACY.md` (and its in-app mirror `SettingsLegalText.privacy`),
+  `Resources/PrivacyInfo.xcprivacy`, `Store/PrivacyNutrition.md` and the Info.plist usage strings together.
 - **Not medical advice.** Every score is an estimate from published methods. Say so in onboarding
   and About (text in `DISCLAIMER.md`).
 
@@ -58,8 +63,11 @@ support that story. Nothing clutters it.
   `AnalyticsEngine.decodeStages`.
 - The other readouts live in `Baseline/Components/BaselineReadoutsMetrics.swift` (map in `ENGINE_MAP.md`):
   Steps (`BaselineReadouts.steps` / `stepReadings`, NOOP's `repo.resolvedSteps` strap → phone → estimate,
-  7- and 30-day averages), Calories (`calories(for:days:)`, the `active_kcal` column against the 30-day
-  average), Stress (`stressDay`, NOOP's `DaytimeStress` / `StressDayCurve` hour curve, 0–3), sleep timing
+  7- and 30-day averages), Calories (`calories(repo, profile:for:)` in `BaselineActivityReadouts.swift`:
+  Mifflin–St Jeor resting + the strap's active estimate, else Apple Health's; one per-day figure for Home,
+  Trends and the detail through `caloriesDay` / `calorieReadings`), Stress (`stressDay`, NOOP's
+  `DaytimeStress` / `StressDayCurve` on the personal lens, read as hours elevated / calm / restored against
+  the 14-day typical; past days' hours kept by `StressDayStore`; the 0–3 level is never printed), sleep timing
   (`sleepTiming`: circular-mean bedtime and wake, SRI-like regularity over consecutive nights, nights inside
   the `SleepWindow`), fitness (`fitness`: NOOP's `FitnessAgeEngine`, estimated VO2 max with the Uth fallback
   and fitness age, one estimate per calendar week) and the evidence tier per metric (`MetricAccuracy.all`,
@@ -181,6 +189,11 @@ support that story. Nothing clutters it.
 | `baseline.pendingTab` | `BaselineNotificationDelegate` | `"journal"` → Home with the journal sheet presented on the next root read, cleared once consumed |
 | `baseline.sleepWindow.bedMinutes`, `baseline.sleepWindow.wakeMinutes` | Settings → Sleep window (`SettingsSleepWindow`, through `BaselineReadouts.SleepWindow.save`) | the target bed and wake clock times as minutes after midnight (defaults 23:00 / 07:00, `SleepWindow.default`); read by the Sleep tab's timing card and the sleep-timing readouts |
 | `baseline.intensityGoalMinutes` | Settings → Profile → Intensity goal (`SettingsIntensityGoalCard`, `IntensityMinutes.saveGoal`) | weekly Intensity-minutes goal in minutes, 60–600 step 10, default 150 (`IntensityMinutes.goal()` clamps); read by Home's Intensity card, its detail and Trends' Intensity card |
+| `baseline.stepGoal` | Settings → Profile → Activity goals (`SettingsActivityGoalsCard`, `StepGoal`) | daily step goal, 3,000–30,000 step 500, default 8,000 (`StepGoal.goal()` clamps; the floor is Friends' server floor); read by Home's Steps card, its detail, Trends' Steps card and the Friends upload |
+| `baseline.sleepGoalMinutes` | Settings → Profile → Sleep window → Sleep goal (`SettingsSleepWindowCard`, `BaselineReadouts.SleepGoal`) | asleep minutes a night needs to count as a night at the sleep goal in Friends, 300–600 step 15, default 450; printed in the consent row and the sleep competition's rule |
+| `baseline.bodySet` | Settings → Profile (a height or weight edit or "Use these"), `BodySet` | the person has entered height and weight; until true the Calories card says "Using 178 cm · 75 kg" and offers Profile |
+| `baseline.sampleData.anchorDay`, `baseline.sampleData.writtenUntil` | `BaselineSampleData.setActive` / `refreshIfStale` | the day the sample was anchored to and how far today's "so far" streams were written; re-anchored on a new day, topped up at most every 15 min |
+| `baseline.friends.muted`, `baseline.friends.competitiveView`, `baseline.friends.consentShown`, `baseline.friends.uploadDigest`, `baseline.friends.installMarker` | `FriendsStore`, `FriendsKeychain` | Friends: muted friends, the leaderboard's Competitive view (off = alphabetical, no places), the consent step seen, the digest of day values the server already accepted (incremental upload, retractions), and the marker that tells a fresh install from an update (a fresh install drops a Keychain session left by an earlier install) |
 | `baseline.demoHeartRate` | `-baseline.demoHeartRate YES` (DEBUG launch argument only) | a day with no stored heart rate gets a synthetic trace on screen (`BaselineReadouts.DemoHeartRate`); never written to the store |
 | `baseline.profileSet` | Settings → Profile (a date-of-birth or sex change, or "Use these"); `-baseline.profileSet YES` in the screenshot harness | the person has entered a date of birth and sex; until true the fitness estimate (`BaselineReadouts.fitness`, Progress › Fitness) passes nil age and sex and the card asks for them instead of using `ProfileStore`'s seeded 30 / male, and Intensity minutes are not scored (unless a manual max HR is set) |
 
@@ -189,8 +202,9 @@ Not a key: the per-day intraday cache is a file, `<Application Support>/Baseline
 
 ## v1 scope (build this, nothing more)
 
-Three tabs — **Home**, **Trends**, **Sleep** — with Settings behind a gear in the top-right of every tab's
-bar. The journal is not a tab: it is a sheet from Home, and its patterns are a section of Trends.
+Four tabs — **Home**, **Trends**, **Sleep**, **Friends** — with Settings behind a gear in the top-right of
+every tab's bar. The journal is not a tab: it is a sheet from Home, and its patterns are a section of Trends.
+Friends is opt-in (the tab is always there; Home, Trends and Sleep never need an account).
 
 1. Welcome → pair strap (NOOP's `AddDeviceWizard`) → Apple Health permission → done. Three steps.
 2. **Home** (`Baseline/Screens/Today/`, struct still `TodayScreen`): a day-by-day view. The nav title is the
@@ -198,10 +212,12 @@ bar. The journal is not a tab: it is a sheet from Home, and its patterns are a s
    horizontal swipe on the content) walks back through stored days and forward to today, never a future day.
    Every card shows that day: readiness (the 0–100 score on a horizontal track with its Good / Fair / Low
    pill and one drivers sentence, chevron → Progress), signals on today only, HRV and Resting HR rings against
-   the baseline band, that day's steps against the 7-day average ("Steps so far" on today), that night's
-   sleep, that day's heart rate (the day's trace, only when one exists), Intensity minutes (the day and the
-   week against the goal, one track, never a ring), that day's Stress curve, that day's effort with calories
-   and workouts ("All workouts" → the list); empty cards are left out rather than shown as placeholders.
+   the baseline band, that day's steps against the daily goal (one flat goal track and the 7-day context;
+   "Steps so far" on today; always present), Intensity minutes (the day and the week against the goal, one
+   track, never a ring), that day's heart rate (the day's trace, only when one exists), that night's sleep,
+   that day's Calories (resting + active, one flat split bar), that day's Stress as time ("2 h elevated · 7 h
+   calm · 2 h restored" against the person's own typical, never a score), that day's effort and workouts
+   ("All workouts" → the list); empty cards are left out rather than shown as placeholders.
    Every card opens its metric detail (1D / 7D / 4W / 1Y) with a tap; there is
    a floating glass **Journal** button that opens `JournalSheet(day:)` for the selected day.
    The strap status pill stays small, in the bar beside the gear.
@@ -214,17 +230,25 @@ bar. The journal is not a tab: it is a sheet from Home, and its patterns are a s
    duration / Fitness — estimated VO2 max and fitness age week by week, with its ±5 band — over months,
    horizon picker). *Habits*:
    `JournalPatternsView()` — "What moves your HRV / Resting HR" ranked effects with sample size and confidence,
-   and the alcohol / caffeine dose rows.
+   and the alcohol / caffeine dose rows. The Trends section also draws daily Calories bars.
 4. **Sleep**: last night's ring against the 30-night average, the Sleep timing card (noon-to-noon strip of the
    last 14 nights against the target window, average bedtime and wake, regularity, "Tonight: aim for …",
    "Set window" → Settings, "Bedtime and wake over time" → `SleepTimingDetailScreen`), hypnogram and stages
    (badged Low accuracy), efficiency, "Sleep over time" → the sleep detail; list of nights, each opening its
    detail (hero, stages, heart rate while asleep, night vitals).
-5. **Journal** (`JournalSheet(day:)`): that day's habit chips (catalog plus custom, yes / no / clear, numeric
+5. **Friends** (`Baseline/Screens/Friends/`, opt-in, `Baseline/Research/FRIENDS_SPEC.md`): signed out, the intro;
+   ready, a pinned glass "Friends | Compete" control. Friends: requests, a leaderboard of behaviour only (steps,
+   Intensity minutes, active days, nights at the sleep goal, on-time bedtimes) scored as % of each person's OWN
+   goal, and one week card per friend, alphabetical. Compete: competitions on those behaviours. HRV, resting HR
+   and Readiness are shared only as each person's weekly change against their own baseline and never ranked,
+   because one person's heart rate says nothing against another's.
+6. **Journal** (`JournalSheet(day:)`): that day's habit chips (catalog plus custom, yes / no / clear, numeric
    steps), "Add habit", Done.
-6. **Settings** (gear): Devices, Apple Health, Data (Import WHOOP CSV / Apple Health export, Compare sources,
+7. **Settings** (gear): Devices, Apple Health, Data (Import WHOOP CSV / Apple Health export, Compare sources,
    Export CSV, Data source), Notifications (morning summary, evening check-in), Profile (age, max HR, units;
-   Sleep window: target bedtime and wake time; Intensity goal: the weekly minutes and the heart-rate basis), About + licenses + disclaimer + "How accurate is this?"
+   Sleep window: target bedtime and wake time, and the Sleep goal Friends counts nights against; Activity
+   goals: the daily step goal, 3,000–30,000, and the Intensity goal page with the weekly minutes and the
+   heart-rate basis), Friends (sharing, sign out, delete account), About + licenses + disclaimer + "How accurate is this?"
    (`AccuracyScreen`: every metric by evidence tier with its caveat and cited studies; Intensity minutes and
    daytime heart rate are rated from the detail specs, `AccuracyExtras`, with the second review's citations).
 
@@ -254,6 +278,54 @@ be exposed later.
 - Tokens, type and components live in `Baseline/Components/` (`BaselineTheme`, `BaselineCards`, `BaselineRing`,
   `BaselineChip`, `BaselineButtons`, `BaselineDaySwitcher`, `BaselineRangePicker`, `BaselineBandChart`);
   screens never spell a colour, font size or radius.
+
+## Friends (opt-in backend)
+
+**Decision change.** Baseline started as "no backend, no account". Patrick asked for Friends (connect, compare
+trends, compete on steps and the like), and that needs a server, so the rule is now **local first with one
+opt-in backend**: Home, Trends, Sleep and Settings never need an account and send nothing; only after Sign in
+with Apple in the Friends tab, and only for the metrics the person turns on (nothing is shared by default),
+does the app upload derived daily totals and weekly trends. iCloud / CloudKit is not used for this: App Store
+guideline 5.1.3(ii) forbids storing personal health data in iCloud. Full spec and the research behind it:
+`Baseline/Research/FRIENDS_SPEC.md`, `Baseline/Research/SOCIAL_FEATURES.md`.
+
+**What may be compared.** Head-to-head only for behaviour: steps, Intensity minutes, active days, nights at
+the sleep goal, on-time bedtimes, each scored as % of the person's OWN goal (or as a total). Physiology (HRV,
+resting HR, Readiness) is shared only as each person's change against their own baseline ("HRV +8% vs own
+baseline", clipped at ±30) and is never ranked, never a leaderboard chip and never a raw value, because one
+person's heart rate says nothing against another's.
+
+**Architecture** (`Baseline/Friends/`, screens in `Baseline/Screens/Friends/`):
+- `FriendsBackend` (protocol, `FriendsBackend.swift`) with two implementations: `SupabaseFriendsBackend`
+  (`Live/`: a dependency-free URLSession client, `SupabaseREST`, the Apple id_token exchange, single-flight
+  refresh, session in the Keychain this-device-only) and `LocalDemoFriendsBackend` (`Demo/`: in memory, seeded
+  friends Alex, Jordan, Priya, Sam, a request from Chris, competitions; demo invite codes `CASEY234`, `XPRDCDE2`
+  expired, `USEDCDE2` used, own code `MYCQDE22`).
+- `FriendsBackendFactory.choose`: DEBUG `--ui-testing` / `--friends-demo` / `--demo-seed` / `--friends-state` →
+  demo; sample data on → demo even with a config (synthetic numbers never reach a server); a valid
+  `Resources/Supabase.plist` → live; "Preview with demo friends" → demo; otherwise the intro alone.
+- `FriendsStore` (`@MainActor`, injected by `BaselineApp` as an environment object): the phase machine
+  (signedOut → needsProfile → needsConsent → ready), the upload scheduler (at most every 10 min, 35 days the
+  first time, then incremental with retractions; never on demo, sample data or UI tests), invites, requests,
+  competitions, report / block / hide / mute, `my_data` export and account deletion.
+- `FriendsUploadInputs` / `FriendsUploadBuilder`: what leaves the phone. Behaviour comes from
+  `BaselineReadouts.friendsDailyAggregates` (the same readouts Home draws, under the Data-source picker);
+  physiology is the weekly change against the person's own baseline, gated at 14 of 30 nights. A JSON key
+  whitelist is enforced. `FriendsScoring` / `FriendsBoard` mirror the SQL scoring exactly.
+- Sign in with Apple (`AppleSignIn.swift`, entitlement `com.apple.developer.applesignin` in
+  `Resources/Baseline.entitlements` and the Baseline block of project.yml), no email scope.
+- Server: `Baseline/Backend/supabase/` (never bundled): `schema.sql` (15 tables, all RLS, SELECT-only policies,
+  writes only through RPCs, helpers in a `private` schema, pg_cron retention), the `delete-account` Edge
+  Function (revokes Apple, deletes the user), pgTAP tests, `Supabase.example.plist`.
+- Client config: `Baseline/Resources/Supabase.plist`, git-ignored (`Resources/.gitignore`; the older name
+  `FriendsConfig.plist` is ignored too). Only the anon / `sb_publishable_` key may ship; `FriendsConfig`
+  refuses anything else at runtime and `release-check.sh` fails on it.
+
+**Backend setup:** `Baseline/Backend/supabase/SETUP.md` (Patrick's steps: Supabase project in Frankfurt,
+schema, Apple provider, the Sign in with Apple capability on the App ID, a new Sign in with Apple key, the
+Edge Function, the plist). Until then the tab works on demo friends in the simulator, under sample data and
+behind "Preview with demo friends". Device builds need step 5 (the capability) because the entitlement is
+already on.
 
 ## Build, run, verify
 
@@ -310,7 +382,8 @@ the App Group `group.com.patrickschmidt.baseline` in the developer account.
 
 DEBUG-only launch arguments (Xcode scheme → Arguments, or `xcrun simctl launch <udid> com.patrickschmidt.baseline …`):
 - `--demo-seed` — NOOP's seeder fills 120 days of synthetic, internally consistent data when the store is empty.
-- `--tab home|trends|sleep` — open on that tab (screenshots, quick checks). Aliases: `today` → home;
+- `--tab home|trends|sleep|friends` — open on that tab (screenshots, quick checks; `--friends-segment compete`
+  opens Friends on its Compete segment). Aliases: `today` → home;
   `journal` → Home with the journal sheet presented; `settings` → Home with Settings pushed
   (`BaselineRoot.LaunchRequest.parse`, unit-tested). `--ui-testing` pins the tab bar (no minimize-on-scroll)
   so the screenshot harness' frame comparison is deterministic.
@@ -397,12 +470,20 @@ before the PNG bytes are compared, `contentBelowStatusBar`), so a minute ticking
 captures never masquerades as moving content. With the override the status bar is static anyway; the
 crop keeps the run honest when the suite is started by hand from Xcode without it.
 
+The first launch after `xcodebuild test` installs the app is a cold start of a large DEBUG build (the Swift
+runtime's first protocol-conformance scans): about 30 s on a loaded host, against about 3 s afterwards. So
+the first launch in a runner process waits up to 60 s for its first screen (`ScreenshotTests.launchTimeout()`,
+also used by `MarketingShots` and the Friends tests); every later launch keeps 10 s. A single test run on
+its own (`ONLY=…`) is always that first launch. The first Home load after a store change also scores every
+stored day once (Intensity, active calories, Stress against the personal lens); the folds run off the main
+actor (`IntradayDayStore.records`, `StressDayStore`), so the screen stays responsive while they fill.
+
 The raw `xcodebuild` form, when the script is not wanted:
 
 ```bash
 TEST_RUNNER_BASELINE_SHOTS_DIR=/private/tmp/baseline-shots xcodebuild -project Strand.xcodeproj -scheme Baseline \
   -destination "platform=iOS Simulator,id=149DD9EE-8D7D-4CC2-B5E8-07DBA768C046" \
-  -derivedDataPath /private/tmp/claude-501/-Users-patrickschmidt-Documents-Noop-health/18f90538-fcd5-4d35-b1cc-d936dff23d74/scratchpad/dd \
+  -derivedDataPath .build-baseline \
   -only-testing:BaselineUITests test
 ```
 

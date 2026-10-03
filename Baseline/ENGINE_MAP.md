@@ -75,16 +75,34 @@ and go through the funnel). The NOOP entry point behind each is listed so nobody
   `ChargeBreakdownWiring.breakdown` folded over the nights before the day, only for a strap-scored day
   (`strapScores(repo.vitalRows)`). `readinessCalibrationNights` / `readinessSeedNights` (4, `Baselines.minNightsSeed`).
   `TodayReadinessScore.build` (Today) adds the carry rule for an unsynced morning.
-- Steps: `steps(_ repo:for:mode:) -> StepsReadout { steps, average7, average30, observed7/30, recent }`;
-  `stepReadings(_ repo:from:to:mode:)` = `repo.resolvedSteps(from:to:)` (strap counter → phone → strap
-  estimate; `.importOnly` keeps the apple-health / health-connect points only) with the funnel's `steps`
-  column filling the gaps. `windowAverage(before:window:readings:)` needs `averageMinDays` (3) observed days.
-- Calories: `calories(for:days:logicalKey:) -> CaloriesReadout { kcal, average30 }` from `DailyMetric.activeKcalEst`
-  (`active_kcal`), the day's row resolved like NOOP's `Repository.resolveToday`. Rounded to 10 (`caloriesText`).
-- Stress: `stressDay(_ repo:for:now:calendar:) -> StressDayReadout? { points (hourly 0–3), dayMean, peak,
-  highMinutes, movingHours, scoredHours, sustainedHigh }`: today via NOOP's `StressDayCurve.today`, other days
-  `DaytimeStress.analyze` over `repo.hrSamples` / `rrIntervals` / `gravitySamplesUnion` (nil under 300 HR samples).
-  Level words `stressLevelText` (Low / Medium / High at 1 / 2).
+- Steps: `steps(_ repo:for:mode:) -> StepsReadout { steps, average7, average30, observed7/30, recent, source,
+  sources, state }` (Baseline/Components/BaselineActivityReadouts.swift: `StepSource` .strap / .phone /
+  .estimate / .imported, one source per day, never summed); `stepReadings(_ repo:from:to:mode:)` =
+  `repo.resolvedSteps(from:to:)` (strap counter → phone → strap estimate; `.importOnly` keeps the apple-health /
+  health-connect points only) with the funnel's `steps` column filling the gaps; `stepSourcedReadings` attaches
+  the day's source. `windowAverage(before:window:readings:)` needs `averageMinDays` (3) observed days.
+  `StepGoal` (`baseline.stepGoal`, default 8,000, 3,000–30,000 step 500) drives `goalFraction` / `goalDays`.
+- Calories: `calories(_ repo:profile:for:mode:entered:bodySet:calendar:now:) async -> CaloriesReadout { totalKcal,
+  restingKcal, activeKcal, activeSource, activeAverage30, bodyAssumed, heightCm, weightKg, isPartialDay }`.
+  Resting = Mifflin–St Jeor BMR (`bmrMifflin`, clamped 800–4,000) × `dayFraction` (so noon is BMR / 2); active =
+  NOOP's `Calories.estimateDayEnergy` activeKcal over the day's heart rate (persisted per day by
+  `IntradayDayStore`, version 3), else Apple Health's `active_kcal`, never both. `calorieReadings` is the one
+  per-day series the card, the detail and Trends read. NOOP's own `active_kcal` column (resting + active) is
+  no longer read by any screen.
+- Stress: `stressDay(_ repo:for:now:calendar:includeTypical:) -> StressDayReadout? { points (hourly 0–3, never
+  printed), lens (.personal(floorBPM:) / .learning(daysOfHistory:)), restoredHours, calmHours, elevatedHours,
+  movingHours, typicalElevatedHours, peakHour, sustainedFrom, floorBPM }`: today via NOOP's
+  `StressDayCurve.today(personalBaseline: true)` (cached per day by NOOP's `StressLensCache`), past days via
+  `StressDayStore` (Application Support/Baseline/stress-days.json), which folds the 30 days before a day with
+  NOOP's `dayDaytimeAggregate` / `scoringModeFromAggregates` / `foldAggregates` and follows
+  `DaytimeStressMode.selected`. Hour states `StressState` (elevated ≥ 2.0 = floor + 15 bpm while still, calm
+  1.6–2.0, restored < 1.6); a day is totalled from 3 scored hours; typical = median of 14 prior qualifying days
+  (needs 5). Hours only on screen, never a 0–100 score.
+- Friends aggregate (Baseline/Components/BaselineFriendsAggregate.swift): `friendsDailyAggregates(for repo:
+  days:profile:mode:...) -> [FriendsDailyAggregate { day, steps, stepsSource, intensity, active, sleepGoal,
+  bedtime }]`, the behaviour values the Friends upload sends (steps only from strap or phone, recorded-only
+  Intensity, 0/1 flags); `SleepGoal` = `baseline.sleepGoalMinutes` (default 450). Physiology goes up only as
+  the weekly change against the person's own `Baselines` state (`FriendsUploadBuilder`).
 - Sleep timing: `sleepTiming(for:nights:window:calendar:) -> SleepTiming { nights (session nights only),
   averageBedMinutes / averageWakeMinutes (circular mean, ≥ 3 nights), regularity (SRI-like over consecutive
   nights, ≥ `regularityMinPairs` = 5 pairs of the last 14), target: SleepWindow, nightsInWindow }`.
@@ -204,3 +222,6 @@ and go through the funnel). The NOOP entry point behind each is listed so nobody
 - Store lives in the app sandbox (`<AppSupport>/OpenWhoop/whoop.sqlite`); Baseline starts empty.
 - A strap bonds to ONE central: never run NOOP and Baseline against the same strap.
 - BG task ids derive from `Bundle.main.bundleIdentifier` (listed in project.yml).
+- Friends (Baseline/Friends/) uses no NOOP API beyond the readouts above: it talks to its own Supabase project
+  (or the in-memory demo backend) through `FriendsBackend`, and never touches the WhoopStore schema. The only
+  network code Baseline adds is `SupabaseREST` (URLSession) plus the Sign in with Apple id_token exchange.

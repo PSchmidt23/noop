@@ -14,21 +14,20 @@ struct BaselineCTA: View {
     let action: () -> Void
 
     var body: some View {
-        if prominent {
-            Button(action: action) { label }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
-                .tint(BaselineTheme.accent)
-                .foregroundStyle(BaselineTheme.onAccent)
-        } else {
-            Button(action: action) { label }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .tint(BaselineTheme.accent)
-        }
+        Button(action: action) { BaselineCTALabel(title: title, systemImage: systemImage) }
+            .baselineCTAStyle(prominent: prominent)
     }
+}
 
-    private var label: some View {
+/// `BaselineCTA`'s label (headline, full width, 6pt vertical padding), for a control that is not a plain
+/// `Button` but must look like one, e.g. a `ShareLink`:
+/// `ShareLink(item: text) { BaselineCTALabel(title: "Share code", systemImage: "square.and.arrow.up") }
+/// .baselineCTAStyle()`.
+struct BaselineCTALabel: View {
+    let title: String
+    var systemImage: String? = nil
+
+    var body: some View {
         Group {
             if let systemImage {
                 Label(title, systemImage: systemImage)
@@ -39,6 +38,24 @@ struct BaselineCTA: View {
         .font(BaselineTheme.headline)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
+    }
+}
+
+extension View {
+    /// `BaselineCTA`'s look on any button-like control: prominent = `.borderedProminent` capsule tinted
+    /// accent with a white label; otherwise `.bordered` capsule (accent on accent @ 0.10). The if/else is
+    /// required: the two are different `PrimitiveButtonStyle` types.
+    @ViewBuilder func baselineCTAStyle(prominent: Bool = true) -> some View {
+        if prominent {
+            self.buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .tint(BaselineTheme.accent)
+                .foregroundStyle(BaselineTheme.onAccent)
+        } else {
+            self.buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .tint(BaselineTheme.accent)
+        }
     }
 }
 

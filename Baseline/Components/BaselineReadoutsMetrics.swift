@@ -172,6 +172,18 @@ extension BaselineReadouts {
         /// The 7 calendar days ending on `day`, oldest → newest, nil where nothing was recorded: the
         /// sparkline's bars, one per day whether or not it has a value.
         let recent: [(day: String, value: Double?)]
+        /// Where the day's count came from (`StepSource.of`, one source per day, never summed); nil when
+        /// nothing recorded the day, or the readings carried no source (tests and previews).
+        var source: StepSource? = nil
+        /// The source of every day in the readings window that has a count (the detail's per-day source,
+        /// and Friends, which uploads only the strap's and the phone's own counts).
+        var sources: [String: StepSource] = [:]
+
+        /// What the card shows: a count, a zero the day's source really recorded, or nothing at all.
+        var state: StepsDayState {
+            guard let steps else { return .noSource }
+            return steps == 0 ? .zero : .counted
+        }
 
         /// Signed difference against an average: nil when either side is missing.
         func delta(against average: Double?) -> Double? {
@@ -182,7 +194,10 @@ extension BaselineReadouts {
 
     /// `readings` are `(day, steps)` pairs from any source resolution (`BaselineReadouts.stepReadings`
     /// in the app; the funnel's `steps` column in tests). Days are keys; values are counts.
-    static func steps(for day: String, readings: [(day: String, value: Double)]) -> StepsReadout {
+    /// `sources` is day → `StepSource` for the same readings (`stepSourcedReadings`); empty in tests and
+    /// previews, where the readout then carries no source.
+    static func steps(for day: String, readings: [(day: String, value: Double)],
+                      sources: [String: StepSource] = [:]) -> StepsReadout {
         var byDay: [String: Double] = [:]
         for r in readings where r.value.isFinite && r.value >= 0 { byDay[r.day] = r.value }
         let a7 = windowAverage(before: day, window: 7, readings: readings)
@@ -191,9 +206,11 @@ extension BaselineReadouts {
             let key = Baselines.cutoffKey(todayKey: day, carryDays: back)
             return (day: key, value: byDay[key])
         }
-        return StepsReadout(day: day, steps: byDay[day].map { Int($0.rounded()) },
+        let count = byDay[day].map { Int($0.rounded()) }
+        return StepsReadout(day: day, steps: count,
                             average7: a7.mean, average30: a30.mean, observed7: a7.observed, observed30: a30.observed,
-                            recent: recent)
+                            recent: recent, source: count == nil ? nil : sources[day],
+                            sources: sources.filter { byDay[$0.key] != nil })
     }
 
     /// ONE spelling for a step count ("8,412"; "–" when nothing was recorded).
@@ -217,15 +234,50 @@ extension BaselineReadouts {
 
     // MARK: - Calories
 
-    /// One day's whole-day calorie estimate (NOOP's HR-only `activeKcalEst`, resting + active) against
-    /// the 30-day mean. A Low-accuracy figure (`MetricAccuracy` "calories"): shown rounded to the nearest
-    /// 10 and only relative to the person's own average.
+    /// One day's calories. A Low-accuracy figure (`MetricAccuracy` "calories"): shown rounded to the
+    /// nearest 10 and only relative to the person's own average.
+    ///
+    /// Two generations live here. `kcal` / `average30` / `observed30` are NOOP's persisted HR-only
+    /// whole-day figure (`activeKcalEst`, resting + active over the seconds the strap observed), filled by
+    /// `calories(for:days:logicalKey:)`. The Calories card reads the split the Activity spec asks for
+    /// (`Research/ACTIVITY_METRICS.md` §2), filled by `calories(_:profile:for:…)` / `caloriesDay(…)`:
+    /// resting from Mifflin–St Jeor over the whole day (prorated today), active from the strap's heart
+    /// rate (NOOP's Keytel model above 50 % HRR) or Apple Health's active energy, never both.
     struct CaloriesReadout {
         let day: String
+        /// NOOP's persisted whole-day estimate (legacy; nil from the split builder).
         let kcal: Double?
         let average30: Double?
         let observed30: Int
+        /// Mifflin–St Jeor resting energy for the day (today: so far); nil until age and sex are entered
+        /// (`ProfileSet`), when the card shows "Active calories" alone.
+        var restingKcal: Double? = nil
+        /// Active energy: the strap's heart-rate estimate, else Apple Health's active energy.
+        var activeKcal: Double? = nil
+        /// Where `activeKcal` came from; nil when there is none.
+        var activeSource: CalorieActiveSource? = nil
+        /// Mean active energy over the 30 calendar days before `day` (each day by the same precedence),
+        /// nil under `BaselineReadouts.caloriesActiveMinDays` observed days.
+        var activeAverage30: Double? = nil
+        var activeObserved30: Int = 0
+        /// True while height and weight are NOOP's seeded defaults (`baseline.bodySet` not set and no
+        /// Apple Health weight): the card says "Using 178 cm · 75 kg. Edit in Profile".
+        var bodyAssumed: Bool = false
+        /// The height and weight the resting figure used, and whether the weight came from Apple Health.
+        var heightCm: Double? = nil
+        var weightKg: Double? = nil
+        var weightFromAppleHealth: Bool = false
+        /// Today: the resting part covers midnight → now and the active part is still accruing.
+        var isPartialDay: Bool = false
 
+        /// Resting + active; nil unless both exist (the card then prints whichever part it has).
+        var totalKcal: Double? { restingKcal.flatMap { r in activeKcal.map { r + $0 } } }
+
+        /// The card is drawn when either part exists; with neither (no profile, no active source) it is
+        /// left out.
+        var hasFigure: Bool { restingKcal != nil || activeKcal != nil }
+
+        /// Legacy: `kcal` against `average30`.
         var delta: Double? {
             guard let kcal, let average30 else { return nil }
             return kcal - average30
@@ -279,8 +331,39 @@ extension BaselineReadouts {
         let moving: Bool
     }
 
+    /// The reference a day's Stress hours were judged against.
+    enum StressLens: Equatable {
+        /// NOOP's `.baselineRelative` lens: each still, waking hour against the person's own daytime
+        /// heart-rate floor (the rolling P10 of past waking-hour means over the 30 days before the day).
+        case personal(floorBPM: Double)
+        /// Fewer than `Baselines.minNightsSeed` days of daytime heart rate in the 30 before the day: NOOP
+        /// falls back to `.dayRelative` (the day is its own reference), which cannot say whether a day
+        /// was stressful, so the card draws the curve and no totals.
+        case learning(daysOfHistory: Int)
+
+        var floorBPM: Double? {
+            if case .personal(let floor) = self { return floor }
+            return nil
+        }
+
+        var isPersonal: Bool { floorBPM != nil }
+
+        /// `mode` as NOOP resolved it, with the days of history behind it (`foldAggregates(…).hr.nValid`).
+        static func of(_ mode: DaytimeStress.ScoringMode, daysOfHistory: Int) -> StressLens {
+            switch mode {
+            case .baselineRelative(let hr, _): return .personal(floorBPM: hr.baseline)
+            case .dayRelative: return .learning(daysOfHistory: max(0, min(daysOfHistory, Baselines.minNightsSeed - 1)))
+            }
+        }
+    }
+
     /// A scored day. nil from `stressDay(_:day:)` when no waking hour could be scored, so a card shows
     /// nothing rather than a flat line.
+    ///
+    /// The card reads HOURS (`restoredHours` / `calmHours` / `elevatedHours` / `movingHours`, one per
+    /// non-overlapping `DaytimeStress.Result.hours` entry, `StressState.of`), never the 0–3 level, and so
+    /// does the detail's range chart (elevated hours per day, `StressDayStore.elevatedHours`). The
+    /// level-based fields (`dayMean`, `peak`, `highMinutes`) stay for the curve and the tests.
     struct StressDayReadout {
         let day: String
         /// Half-hour display points, earliest → latest, including unscored gaps.
@@ -288,19 +371,47 @@ extension BaselineReadouts {
         /// Mean over the scored hours.
         let dayMean: Double
         let peak: (date: Date, level: Double)?
-        /// Scored hours at or above the high band (2.0), in minutes.
+        /// Scored hours at or above the high band (2.0), in minutes (NOOP's `highStressMinutes`).
         let highMinutes: Int
         /// Waking hours excluded because the person was moving.
         let movingHours: Int
+        /// Hours that carry a level: `restoredHours + calmHours + elevatedHours`.
         let scoredHours: Int
         /// True when the most recent three scored hours were all high.
         let sustainedHigh: Bool
+        /// The reference the hours were judged against.
+        var lens: StressLens = .learning(daysOfHistory: 0)
+        /// Hours per state (`StressState.of`). Counted under either lens; the card totals them only
+        /// when `lens` is personal and `scoredHours ≥ 3` (`StressCardText.showsTotals`).
+        var restoredHours: Int = 0
+        var calmHours: Int = 0
+        var elevatedHours: Int = 0
+        /// The person's own typical elevated hours: the median over the 14 days before `day` that were
+        /// scored on the personal lens with at least 3 scored hours, nil under 5 such days.
+        var typicalElevatedHours: Double? = nil
+        /// The most elevated still hour: its start, its mean heart rate and how far that sat over the
+        /// floor (nil while learning). The detail prints "Most elevated 14:00–15:00 (+21 bpm over your floor)".
+        var peakHour: StressPeakHour? = nil
+        /// The first hour of the latest run of `DaytimeStress.sustainedHours` elevated hours, stated in the
+        /// detail as a fact only ("3 elevated hours in a row from 13:00"); never an alert.
+        var sustainedFrom: Date? = nil
+
+        /// The personal floor, nil while learning.
+        var floorBPM: Double? { lens.floorBPM }
+    }
+
+    /// The detail's peak line, from the non-overlapping hour with the highest level.
+    struct StressPeakHour: Equatable {
+        let start: Date
+        let meanHR: Double?
+        let overFloorBPM: Double?
     }
 
     /// The display scale every Stress drawing shares.
     static let stressDomain: ClosedRange<Double> = 0...3
 
-    /// NOOP's bands on the 0–3 scale: < 1 "Low", < 2 "Medium", else "High".
+    /// NOOP's bands on the 0–3 scale: < 1 "Low", < 2 "Medium", else "High". Kept for tests; no card
+    /// prints it (Stress is told in hours).
     static func stressLevelText(_ level: Double) -> String {
         if level < 1 { return "Low" }
         if level < 2 { return "Medium" }
@@ -308,8 +419,11 @@ extension BaselineReadouts {
     }
 
     /// `DaytimeStress.Result` → the readout, or nil when nothing was scored (`.empty`, or a day the
-    /// strap spent on the charger). Pure, so a test can hand it a built `Result`.
-    static func stressDay(_ result: DaytimeStress.Result, day: String) -> StressDayReadout? {
+    /// strap spent on the charger). Pure, so a test can hand it a built `Result`. `lens` is the reference
+    /// the result was scored against; `typicalElevatedHours` the person's own typical, when known.
+    static func stressDay(_ result: DaytimeStress.Result, day: String,
+                          lens: StressLens = .learning(daysOfHistory: 0),
+                          typicalElevatedHours: Double? = nil) -> StressDayReadout? {
         let scored = result.scored
         guard let mean = result.dayMean, !scored.isEmpty else { return nil }
         let points = result.timeline.map { h in
@@ -319,22 +433,38 @@ extension BaselineReadouts {
         let peak = result.peak.flatMap { p in
             p.level.map { (date: Date(timeIntervalSince1970: TimeInterval(p.startTs)), level: $0) }
         }
+        let counts = StressState.counts(result.hours)
+        let peakHour = result.peak.map { p in
+            StressPeakHour(start: Date(timeIntervalSince1970: TimeInterval(p.startTs)), meanHR: p.meanHR,
+                           overFloorBPM: lens.floorBPM.flatMap { floor in p.meanHR.map { $0 - floor } })
+        }
+        var sustainedFrom: Date? = nil
+        if result.sustainedHigh, result.sustainedRun > 0 {
+            let run = scored.suffix(result.sustainedRun)
+            sustainedFrom = run.first.map { Date(timeIntervalSince1970: TimeInterval($0.startTs)) }
+        }
         return StressDayReadout(day: day, points: points, dayMean: mean, peak: peak,
                                 highMinutes: result.highStressMinutes, movingHours: result.activityMaskedHours,
-                                scoredHours: scored.count, sustainedHigh: result.sustainedHigh)
+                                scoredHours: scored.count, sustainedHigh: result.sustainedHigh,
+                                lens: lens, restoredHours: counts.restored, calmHours: counts.calm,
+                                elevatedHours: counts.elevated, typicalElevatedHours: typicalElevatedHours,
+                                peakHour: peakHour, sustainedFrom: sustainedFrom)
     }
 
-    /// The one VoiceOver / caption sentence for a day's curve: "Stress averaged 1.4 of 3 (Medium), peak
-    /// 2.3 at 3 PM; 2 hours left out while you were moving."
+    /// The one VoiceOver / caption sentence for a day's Stress, in hours, never the 0–3 level: "2 hours
+    /// elevated, 7 calm, 2 restored, 1 hour moving." While the lens is learning (or under three scored
+    /// hours) it says what is missing instead of totalling.
     static func stressSummary(_ r: StressDayReadout) -> String {
-        var s = "Stress averaged " + String(format: "%.1f", r.dayMean) + " of 3 (\(stressLevelText(r.dayMean)))"
-        if let p = r.peak {
-            s += ", peak " + String(format: "%.1f", p.level) + " at " + p.date.formatted(date: .omitted, time: .shortened)
+        func hours(_ n: Int) -> String { "\(n) hour\(n == 1 ? "" : "s")" }
+        let moving = r.movingHours > 0 ? ", \(hours(r.movingHours)) moving" : ""
+        if case .learning(let n) = r.lens {
+            return "Stress curve from \(hours(r.scoredHours)) of still, daytime heart rate; learning your daytime baseline, "
+                + "\(min(n, Baselines.minNightsSeed)) of \(Baselines.minNightsSeed) days\(moving)."
         }
-        if r.movingHours > 0 {
-            s += "; \(r.movingHours) hour\(r.movingHours == 1 ? "" : "s") left out while you were moving"
+        if r.scoredHours < StressState.minTotalledHours {
+            return "Only \(hours(r.scoredHours)) of still, daytime heart rate, too little to total\(moving)."
         }
-        return s + "."
+        return "\(hours(r.elevatedHours)) elevated, \(r.calmHours) calm, \(r.restoredHours) restored\(moving)."
     }
 
     // MARK: - Sleep timing
@@ -618,12 +748,22 @@ extension BaselineReadouts {
     /// directly have no store behind the resolver).
     static func stepReadings(mode: BaselineDataSource, resolved: [ResolvedMetricPoint],
                              funnel: [(day: String, value: Double)], from: String, to: String) -> [(day: String, value: Double)] {
+        stepSourcedReadings(mode: mode, resolved: resolved, funnel: funnel, from: from, to: to)
+            .map { (day: $0.day, value: $0.value) }
+    }
+
+    /// `stepReadings(mode:resolved:funnel:from:to:)` with each day's `StepSource`: the winning resolver
+    /// point's (`StepSource.of`), `.imported` for a day only the funnel table's `steps` column filled.
+    static func stepSourcedReadings(mode: BaselineDataSource, resolved: [ResolvedMetricPoint],
+                                    funnel: [(day: String, value: Double)], from: String,
+                                    to: String) -> [(day: String, value: Double, source: StepSource)] {
         let kept = mode == .importOnly ? resolved.filter { importedStepSources.contains($0.source) } : resolved
-        var byDay = Dictionary(kept.map { ($0.day, $0.value) }, uniquingKeysWith: { first, _ in first })
+        var byDay: [String: (value: Double, source: StepSource)] = [:]
+        for p in kept where byDay[p.day] == nil { byDay[p.day] = (p.value, StepSource.of(p)) }
         for p in funnel where byDay[p.day] == nil && p.day >= from && p.day <= to {
-            byDay[p.day] = p.value
+            byDay[p.day] = (p.value, .imported)
         }
-        return byDay.map { (day: $0.key, value: $0.value) }.sorted { $0.day < $1.day }
+        return byDay.map { (day: $0.key, value: $0.value.value, source: $0.value.source) }.sorted { $0.day < $1.day }
     }
 
     /// `(day, steps)` readings over `from`…`to` (inclusive day keys) with the funnel's precedence: under
@@ -635,6 +775,14 @@ extension BaselineReadouts {
     @MainActor
     static func stepReadings(_ repo: Repository, from: String, to: String,
                              mode: BaselineDataSource = .current()) async -> [(day: String, value: Double)] {
+        await stepSourcedReadings(repo, from: from, to: to, mode: mode).map { (day: $0.day, value: $0.value) }
+    }
+
+    /// `stepReadings(_:from:to:mode:)` with each day's `StepSource` (the Steps card's caption, the
+    /// detail's per-day source, and Friends, which uploads only `.strap` / `.phone` counts).
+    @MainActor
+    static func stepSourcedReadings(_ repo: Repository, from: String, to: String,
+                                    mode: BaselineDataSource = .current()) async -> [(day: String, value: Double, source: StepSource)] {
         let resolved: [ResolvedMetricPoint]
         switch mode {
         case .importOnly:
@@ -642,42 +790,65 @@ extension BaselineReadouts {
         case .strapFirst, .merged:
             resolved = await repo.resolvedSteps(from: from, to: to).points
         }
-        return stepReadings(mode: mode, resolved: resolved,
-                            funnel: BaselineDays.series(key: "steps", days: days(repo, mode: mode)), from: from, to: to)
+        return stepSourcedReadings(mode: mode, resolved: resolved,
+                                   funnel: BaselineDays.series(key: "steps", days: days(repo, mode: mode)), from: from, to: to)
     }
 
-    /// The steps readout for `day` (31 calendar days of readings ending on it).
+    /// The steps readout for `day` (31 calendar days of readings ending on it), with the day's source.
+    /// Always returns a readout: a day nothing counted is `state == .noSource`, which the card says.
     @MainActor
     static func steps(_ repo: Repository, for day: String, mode: BaselineDataSource = .current()) async -> StepsReadout {
         let from = Baselines.cutoffKey(todayKey: day, carryDays: 30)
-        let readings = await stepReadings(repo, from: from, to: day, mode: mode)
-        return steps(for: day, readings: readings)
+        let sourced = await stepSourcedReadings(repo, from: from, to: day, mode: mode)
+        var sources: [String: StepSource] = [:]
+        for r in sourced { sources[r.day] = r.source }
+        return steps(for: day, readings: sourced.map { (day: $0.day, value: $0.value) }, sources: sources)
     }
 
-    /// The Stress curve for `day`, or nil when the strap banked no daytime heart rate for it (it was off,
-    /// on the charger, or a WHOOP 5 / MG day whose PPG bursts have not been derived yet). Today goes
-    /// through NOOP's fingerprint-gated memo (`StressDayCurve.today`); an earlier day reads its streams
-    /// once (`repo.hrSamples` / `rrIntervals` / `gravitySamplesUnion`, strap-only, so the data-source
-    /// precedence does not apply) and scores them day-relative (`DaytimeStress.analyze`, the mode NOOP
-    /// defaults to: the day's own calm hours are the reference, no history needed).
+    /// The Stress readout for `day`, or nil when the strap banked no daytime heart rate for it (it was
+    /// off, on the charger, or a WHOOP 5 / MG day whose PPG bursts have not been derived yet). Scored on
+    /// the PERSONAL lens everywhere (Oura-style; `Research/ACTIVITY_METRICS.md` §3): each still waking hour
+    /// against the person's own daytime heart-rate floor over the 30 days before the day, NOOP's
+    /// `.baselineRelative` mode, once `Baselines.minNightsSeed` days of daytime heart rate exist (until
+    /// then NOOP's `.dayRelative` fallback, said as "learning").
+    ///
+    /// Today goes through NOOP's fingerprint-gated memo (`StressDayCurve.today(personalBaseline: true)`,
+    /// the lens from `DaytimeStressMode.selected`, a hit on NOOP's `StressLensCache`). An earlier day
+    /// folds its own lens through `StressDayStore` (the same `dayDaytimeAggregate` /
+    /// `scoringModeFromAggregates` calls over the same 30 days, per-day aggregates cached), so a past-day
+    /// read never evicts today's lens from NOOP's one-slot cache, then reads that day's streams once
+    /// (strap-only, so the data-source precedence does not apply). `includeTypical` attaches the 14-day
+    /// typical (`StressDayStore.typicalElevatedHours`); the per-day range pass (`IntradayDayStore`) leaves
+    /// it off.
     @MainActor
     static func stressDay(_ repo: Repository, for day: String, now: Date = Date(),
-                          calendar: Calendar = .current) async -> StressDayReadout? {
+                          calendar: Calendar = .current, includeTypical: Bool = true) async -> StressDayReadout? {
         guard let start = localMidnight(of: day) else { return nil }
+        let store = StressDayStore.shared
+        let result: DaytimeStress.Result
+        let lens: StressLens
         if day == Repository.localDayKey(now) {
-            guard let scored = await StressDayCurve.today(repo: repo, now: now, calendar: calendar) else { return nil }
-            return stressDay(scored.result, day: day)
+            guard let scored = await StressDayCurve.today(repo: repo, now: now, calendar: calendar,
+                                                          personalBaseline: true) else { return nil }
+            result = scored.result
+            let mode = await DaytimeStressMode.selected(repo: repo, startOfToday: calendar.startOfDay(for: now),
+                                                         calendar: calendar, personalBaseline: true)
+            if case .dayRelative = mode {
+                let history = await store.lens(repo, dayStart: calendar.startOfDay(for: now), calendar: calendar)
+                lens = .of(mode, daysOfHistory: history.daysOfHistory)
+            } else {
+                lens = .of(mode, daysOfHistory: Baselines.minNightsSeed)
+            }
+        } else {
+            guard let scored = await store.analyze(repo, day: day, dayStart: start, calendar: calendar) else { return nil }
+            result = scored.result
+            lens = scored.lens
         }
-        let from = Int(start.timeIntervalSince1970)
-        let to = Int((calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)).timeIntervalSince1970) - 1
-        let hr = await repo.hrSamples(from: from, to: to, limit: 200_000)
-        guard hr.count >= DaytimeStress.minHourHRSamples else { return nil }
-        let rr = await repo.rrIntervals(from: from, to: to, limit: 200_000)
-        let gravity = await repo.gravitySamplesUnion(from: from, to: to, limit: 200_000)
-        let tz = TimeZone.current.secondsFromGMT(for: start)
-        let result = DaytimeStress.analyze(hr: hr, rr: rr, gravity: gravity, tzOffsetSeconds: tz,
-                                           mode: .dayRelative, includeTimeline: true)
-        return stressDay(result, day: day)
+        guard var readout = stressDay(result, day: day, lens: lens) else { return nil }
+        if includeTypical, lens.isPersonal {
+            readout.typicalElevatedHours = await store.typicalElevatedHours(repo, before: day, calendar: calendar)
+        }
+        return readout
     }
 
     /// Settings › Profile's "entered" marker: `baseline.profileSet` in `UserDefaults.standard`, true once

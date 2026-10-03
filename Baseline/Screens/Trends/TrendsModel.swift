@@ -99,6 +99,9 @@ struct TrendsSeries {
     struct BarMetric {
         let bars: [BaselineBarChart.Bar]
         let average: Double?
+        /// The bar still accruing (today's calories so far), drawn muted and left out of `average`; nil
+        /// when every bar is a whole day.
+        var inProgressID: String? = nil
     }
 
     /// Effort bars under the Readiness line, one point per day in range that has either. A point holds
@@ -147,10 +150,15 @@ struct TrendsSeries {
     let effort: BarMetric
     let effortPeak: BaselineBarChart.Bar?
     let effortReadiness: EffortReadiness
-    /// Daily steps in range with their mean; `stepsAboveAverage` of `stepsDays` beat that mean.
+    /// Daily steps in range with their mean; `stepsAboveAverage` of `stepsDays` beat that mean and
+    /// `stepsAtGoal` reached the daily step goal (0 when no goal was given).
     let steps: BarMetric
     let stepsDays: Int
     let stepsAboveAverage: Int
+    let stepsAtGoal: Int
+    /// The daily step goal the bars were counted against (`ActivityGoals.stepGoal()`); nil in previews
+    /// and tests that pass none.
+    let stepGoal: Int?
     /// False when no day in the quarter behind `now` recorded steps (a 4.0 without phone steps, a CSV
     /// import): the screen then leaves the Steps card out instead of showing an empty one forever.
     let hasSteps: Bool
@@ -166,9 +174,11 @@ struct TrendsSeries {
 
     /// `stepReadings` are `(day, steps)` pairs from `BaselineReadouts.stepReadings` (the strap's counter,
     /// then the phone's, then the strap's estimate), covering at least `stepsLookbackDays` before `now`;
-    /// nil falls back to the funnel table's `steps` column (previews, tests).
+    /// nil falls back to the funnel table's `steps` column (previews, tests). `stepGoal` is the daily
+    /// step goal the "Goal met" count reads (`ActivityGoals.stepGoal()` in the app).
     static func build(days: [DailyMetric], range: TrendsRange,
-                      stepReadings: [(day: String, value: Double)]? = nil, now: Date = Date()) -> TrendsSeries {
+                      stepReadings: [(day: String, value: Double)]? = nil, stepGoal: Int? = nil,
+                      now: Date = Date()) -> TrendsSeries {
         let (startKey, todayKey) = window(range: range, now: now)
 
         // `days` is oldest → newest; ISO keys compare chronologically.
@@ -214,7 +224,9 @@ struct TrendsSeries {
                             sleep: sleep, sleepNights: sleepBars.count, sleepNights7h: sleep7h,
                             effort: effort, effortPeak: peak, effortReadiness: effortReadiness,
                             steps: steps.metric, stepsDays: steps.metric.bars.count,
-                            stepsAboveAverage: steps.aboveAverage, hasSteps: steps.hasAny)
+                            stepsAboveAverage: steps.aboveAverage,
+                            stepsAtGoal: stepGoal.map { goal in steps.metric.bars.filter { $0.value >= Double(goal) }.count } ?? 0,
+                            stepGoal: stepGoal, hasSteps: steps.hasAny)
     }
 
     // MARK: - Effort and Readiness
@@ -282,6 +294,46 @@ struct TrendsSeries {
         let average = mean(bars.map(\.value))
         let above = average.map { avg in bars.filter { $0.value > avg }.count } ?? 0
         return (BarMetric(bars: bars, average: average), above, hasAny)
+    }
+
+    // MARK: - Calories
+
+    /// Daily calorie bars over `startKey`…`todayKey` with their mean. Days without an estimate are
+    /// absent, never zero; a non-positive or non-finite value is dropped. While `todayInProgress`,
+    /// today's bar is kept as the in-progress bar (drawn muted, as the Intensity card's week in
+    /// progress) and left out of the mean: a morning's partial total is never averaged with whole days,
+    /// the rule Home's card keeps.
+    static func caloriesMetric(readings: [(day: String, value: Double)], startKey: String, todayKey: String,
+                               todayInProgress: Bool = false) -> BarMetric {
+        var byDay: [String: Double] = [:]
+        for r in readings where r.value.isFinite && r.value > 0 && r.day >= startKey && r.day <= todayKey {
+            byDay[r.day] = r.value
+        }
+        var bars: [BaselineBarChart.Bar] = []
+        for (day, value) in byDay.sorted(by: { $0.key < $1.key }) {
+            guard let date = TrendsDayKey.date(day) else { continue }
+            bars.append(.init(id: day, date: date, value: value))
+        }
+        let partial: String? = (todayInProgress && bars.contains { $0.id == todayKey }) ? todayKey : nil
+        return BarMetric(bars: bars, average: mean(bars.filter { $0.id != partial }.map(\.value)),
+                         inProgressID: partial)
+    }
+
+    /// The Calories card's bars through the same pure day builder Home's card reads
+    /// (`BaselineReadouts.caloriesDay`): each day's total (resting + active), or the active part alone
+    /// while no age and sex exist. A day with no active estimate (no strap heart rate, no Apple Health
+    /// active energy) is absent: a resting-only figure is the formula, not a recorded day. Today's resting
+    /// part is prorated by `todayFraction`, as on Home, and while the day is unfinished its bar is the
+    /// in-progress one, outside the average.
+    static func caloriesMetric(startKey: String, todayKey: String, inputs: CalorieInputs?,
+                               strapActive: [String: Double], appleActive: [String: Double],
+                               mode: BaselineDataSource, todayFraction: Double) -> BarMetric {
+        // The same per-day figure the Calories detail charts (`BaselineReadouts.calorieReadings`).
+        let readings = BaselineReadouts.calorieReadings(from: startKey, to: todayKey, inputs: inputs,
+                                                        strapActive: strapActive, appleActive: appleActive,
+                                                        mode: mode, todayKey: todayKey, todayFraction: todayFraction)
+        return caloriesMetric(readings: readings, startKey: startKey, todayKey: todayKey,
+                              todayInProgress: todayFraction < 1)
     }
 
     // MARK: - Band metrics

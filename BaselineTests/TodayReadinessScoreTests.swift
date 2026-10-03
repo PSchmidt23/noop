@@ -5,8 +5,8 @@ import StrandAnalytics
 
 /// Home's metrics-layer states, pure: the Readiness SCORE card's state (`TodayReadinessScore.build`:
 /// the stored score, the 4-night calibration count, a carried score with its "Woke …" stamp, the HRV
-/// carry cap, and nothing fresh), the week phrase the HRV tile appends, the Steps card's visibility, the
-/// one-line captions the Effort and Stress cards print, and the cache entry's new fields.
+/// carry cap, and nothing fresh), the week phrase the HRV tile appends, the Steps card's "no source"
+/// state, and the cache entry's new fields. The activity cards' lines are pinned in `TodayActivityTests`.
 final class TodayReadinessScoreTests: BaselineEngineTestCase {
 
     private let today = "2026-02-18"
@@ -147,9 +147,9 @@ final class TodayReadinessScoreTests: BaselineEngineTestCase {
         }
     }
 
-    // MARK: Steps card visibility
+    // MARK: Steps card source state
 
-    func testStepsCard_hiddenWithoutAnySource_shownWithOne() {
+    func testStepsCard_noSourceState_onlyWhenNothingEverCounted() {
         let none = BaselineReadouts.steps(for: today, readings: [])
         XCTAssertFalse(none.hasRecordedSource)
         let yesterdayOnly = BaselineReadouts.steps(for: today, readings: [(day: key(1), value: 4_200)])
@@ -161,31 +161,10 @@ final class TodayReadinessScoreTests: BaselineEngineTestCase {
         XCTAssertTrue(todayOnly.hasRecordedSource)
     }
 
-    // MARK: Captions
-
-    func testCaloriesLine_onTheEffortCard_namesCaloriesAndTheEstimateOnce_thenTheDeltaOrTheWait() {
-        let early = BaselineReadouts.CaloriesReadout(day: today, kcal: 2_143, average30: nil, observed30: 1)
-        XCTAssertEqual(EffortCard.caloriesLine(early), "Calories estimated from heart rate · 30\u{2011}day average after 2 more days")
-        let compared = BaselineReadouts.CaloriesReadout(day: today, kcal: 2_343, average30: 2_160, observed30: 12)
-        XCTAssertEqual(EffortCard.caloriesLine(compared), "Calories estimated from heart rate · +180 vs your 30\u{2011}day average")
-        XCTAssertEqual(BaselineReadouts.caloriesText(2_143), "2,140")
-    }
-
-    func testStressCaption_namesTheEstimateAndTheMovingHours() {
-        func readout(moving: Int) -> BaselineReadouts.StressDayReadout {
-            BaselineReadouts.StressDayReadout(day: today, points: [], dayMean: 1.4, peak: nil, highMinutes: 0,
-                                              movingHours: moving, scoredHours: 6, sustainedHigh: false)
-        }
-        XCTAssertEqual(StressCard.caption(readout(moving: 0)), "Estimated from heart rate")
-        XCTAssertEqual(StressCard.caption(readout(moving: 1)), "Estimated from heart rate · 1 hour left out while you were moving")
-        XCTAssertEqual(StressCard.caption(readout(moving: 2)), "Estimated from heart rate · 2 hours left out while you were moving")
-        XCTAssertEqual(StressCard.level(1.44), "1.4")
-    }
-
     // MARK: Cache entry
 
     @MainActor
-    func testCacheEntry_keepsTheMetricsAndUpdatesTodaysStress() {
+    func testCacheEntry_keepsTheMetrics_andTodaysUpdatesTouchOnlyTheirField() {
         let days = priorNights() + [Fixtures.metric(today, hrv: 72, rhr: 55, recovery: 71)]
         let snap = TodaySnapshot.build(days: days, nights: [], todayKey: today)
         let cache = HomeDayCache()
@@ -193,19 +172,24 @@ final class TodayReadinessScoreTests: BaselineEngineTestCase {
         let steps = BaselineReadouts.steps(for: today, readings: [(day: today, value: 8_412)])
         let entry = HomeDayCache.Entry(snapshot: snap, signals: nil, signalsJournalSeq: 0, workouts: [], progressHeadline: nil,
                                        readiness: TodayReadinessScore.build(for: today, days: days, readiness: snap.readiness),
-                                       steps: steps, calories: BaselineReadouts.calories(for: today, days: days), stress: nil)
+                                       steps: steps, calories: nil, stress: nil)
         cache.store(entry, for: k)
         let hit = cache.entry(for: k)
         XCTAssertEqual(hit?.readiness.score?.score, 71)
         XCTAssertEqual(hit?.steps?.steps, 8_412)
-        XCTAssertNil(hit?.calories?.kcal, "the fixture rows carry no calorie estimate")
+        XCTAssertNil(hit?.calories)
         XCTAssertNil(hit?.stress)
 
-        let stress = BaselineReadouts.StressDayReadout(day: today, points: [], dayMean: 0.8, peak: nil, highMinutes: 0,
-                                                       movingHours: 0, scoredHours: 3, sustainedHigh: false)
-        cache.updateStress(stress, for: k)
-        XCTAssertEqual(cache.entry(for: k)?.stress?.dayMean, 0.8)
-        XCTAssertEqual(cache.entry(for: k)?.readiness.score?.score, 71, "the rest of the entry is untouched")
+        cache.updateStress(nil, for: k)
+        cache.updateCalories(nil, for: k)
+        XCTAssertEqual(cache.entry(for: k)?.steps?.steps, 8_412, "the rest of the entry is untouched")
+        XCTAssertEqual(cache.entry(for: k)?.readiness.score?.score, 71)
+        cache.updateCalories(nil, for: HomeDayCache.Key(dayKey: "2000-01-01", logicalKey: "2000-01-01", refreshSeq: 1,
+                                                        dataSource: "", horizon: 90))
+        XCTAssertEqual(cache.count, 1, "an unknown key is a no-op")
+        XCTAssertNil(cache.entry(for: HomeDayCache.Key(dayKey: today, logicalKey: today, refreshSeq: 1, dataSource: "",
+                                                       horizon: 90, profileStamp: "true|true|female|40|60|165")),
+                     "a profile edit is a new key: the day's resting calories are read again")
 
         let defaults = HomeDayCache.Entry(snapshot: snap, signals: nil, signalsJournalSeq: 0, workouts: [], progressHeadline: nil)
         guard case .missing = defaults.readiness else { return XCTFail("the entry's default readiness is .missing") }

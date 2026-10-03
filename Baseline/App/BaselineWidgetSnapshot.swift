@@ -170,17 +170,41 @@ enum BaselineDeepLink {
     static let scheme = "baseline"
     static let home = URL(string: "baseline://home")!
 
-    enum Destination: Equatable { case home, trends, sleep }
+    enum Destination: Equatable {
+        case home, trends, sleep
+        /// The Friends tab (`baseline://friends`).
+        case friends
+        /// The Friends tab with the join prompt for a normalised invite code
+        /// (`baseline://friends/join/ABCD2345`).
+        case join(String)
+    }
 
-    /// `baseline://home` → `.home`, `baseline://trends`, `baseline://sleep`; nil for any other scheme or
-    /// host, so a stray URL never moves the tabs.
+    /// `baseline://home` → `.home`, `baseline://trends`, `baseline://sleep`, `baseline://friends`, and
+    /// `baseline://friends/join/<code>` → `.join(normalised)`, where a code that does not normalise opens
+    /// `.friends` alone. nil for any other scheme or host, so a stray URL never moves the tabs. Widget
+    /// links are unchanged (they all open `home`).
     static func destination(for url: URL) -> Destination? {
         guard url.scheme?.lowercased() == scheme else { return nil }
         switch url.host?.lowercased() {
         case "home": return .home
         case "trends": return .trends
         case "sleep": return .sleep
+        case "friends":
+            let parts = url.pathComponents.filter { $0 != "/" }
+            guard parts.count >= 2, parts[0].lowercased() == "join" else { return .friends }
+            return joinCode(parts[1]).map(Destination.join) ?? .friends
         default: return nil
         }
+    }
+
+    /// The invite-code alphabet (no 0 / O / 1 / I / l), duplicated from `FriendInviteCode.charset` because
+    /// this file is compiled into the widget extension too and must stay Foundation only.
+    static let inviteCharset = Set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+
+    /// Trim, uppercase, drop spaces and dashes; exactly 8 characters from `inviteCharset`, else nil.
+    static func joinCode(_ raw: String) -> String? {
+        let cleaned = raw.uppercased().filter { !$0.isWhitespace && $0 != "-" }
+        guard cleaned.count == 8, cleaned.allSatisfy(inviteCharset.contains) else { return nil }
+        return cleaned
     }
 }

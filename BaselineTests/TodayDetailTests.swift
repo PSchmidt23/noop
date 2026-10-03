@@ -64,8 +64,10 @@ final class TodayDetailTests: XCTestCase {
             let standard = MetricDetailSpec.standard(key)
             XCTAssertEqual(spec.title, standard.title)
             XCTAssertEqual(spec.unit, standard.unit)
-            let custom: Bool = [.sleepDuration, .effort, .stressAvg, .intensityMinutes].contains(key)
+            let custom: Bool = [.sleepDuration, .effort, .stressAvg, .intensityMinutes, .steps, .calories].contains(key)
             XCTAssertEqual(spec.dayView != nil, custom, "\(key)")
+            // Stress and Calories: the day view IS the 1D page (no hero repeating, or contradicting, it).
+            XCTAssertEqual(spec.dayViewReplacesHero, [.stressAvg, .calories].contains(key), "\(key)")
         }
     }
 
@@ -141,7 +143,7 @@ final class TodayDetailTests: XCTestCase {
                        "No minutes at moderate intensity or above.")
     }
 
-    func testIntensityCardVisibility_onlyWithAReading_neverAsATodayPlaceholder() {
+    func testIntensityCardVisibility_onlyWithAReading_orTodaysAgeAsk_neverZerosOnAMorning() {
         let scored = readout(moderate: 0, vigorous: 0, scored: 300)
         let empty = readout(moderate: 0, vigorous: 0, scored: 0)
         let needsAge = readout(moderate: 0, vigorous: 0, scored: 300, basis: .needsAge)
@@ -153,8 +155,9 @@ final class TodayDetailTests: XCTestCase {
         let weekSoFar = readout(moderate: 0, vigorous: 0, scored: 420, week: [40, 49, 0])
 
         XCTAssertFalse(TodayScreen.showsIntensity(mondayMorning, isToday: true, isPaired: true),
-                       "no 'builds through the day' card while neither today nor the week has a minute")
-        XCTAssertTrue(TodayScreen.showsIntensity(weekSoFar, isToday: true, isPaired: true))
+                       "a paired morning with nothing credited all week has no '0 min today · 0 / 150' card")
+        XCTAssertTrue(TodayScreen.showsIntensity(weekSoFar, isToday: true, isPaired: true), "the week's track is a reading")
+        XCTAssertTrue(TodayScreen.showsIntensity(weekSoFar, isToday: true, isPaired: false))
         XCTAssertTrue(TodayScreen.showsIntensity(credited, isToday: true, isPaired: true))
         XCTAssertTrue(TodayScreen.showsIntensity(credited, isToday: true, isPaired: false))
         XCTAssertTrue(TodayScreen.showsIntensity(needsAge, isToday: true, isPaired: true), "today asks for the age")

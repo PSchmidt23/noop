@@ -1,0 +1,35 @@
+# Minimal `supabase init` output for the Baseline Friends project. Used by the Supabase CLI for
+# `supabase functions deploy delete-account` and, optionally, `supabase start && supabase test db`.
+project_id = "baseline-friends"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[auth]
+enabled = true
+site_url = "baseline://friends"
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+enable_signup = true
+
+[auth.email]
+enable_signup = false
+
+[auth.sms]
+enable_signup = false
+
+[auth.external.apple]
+enabled = true
+client_id = "com.patrickschmidt.baseline"
+secret = ""
+
+[functions.delete-account]
+verify_jwt = true

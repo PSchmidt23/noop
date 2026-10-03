@@ -38,12 +38,12 @@ final class SettingsIntensityGoalTests: XCTestCase {
 
     /// The line the card draws goes through Home's gate (`TodayDetail.intensityProfile`): a nil max heart
     /// rate (no date of birth, no override) names what the minutes wait for and quotes no number, so this
-    /// card cannot claim an age-based estimate while the Profile card above says the age is not set.
+    /// card cannot claim an age-based estimate while the Profile card says the age is not set.
     /// With a max it is `basisText`, unchanged.
     func testBasisLineWaitsForAProfileBeforeQuotingAMaxHR() {
         let pending = SettingsIntensityGoalCard.basisLine(hrMax: nil, manual: false)
         XCTAssertEqual(pending, SettingsIntensityGoalCard.basisPending)
-        XCTAssertEqual(pending, "Minutes are scored once a date of birth or a max heart rate is set above.")
+        XCTAssertEqual(pending, "Minutes are scored once a date of birth or a max heart rate is set in Settings › Profile.")
         XCTAssertFalse(pending.contains("bpm"))
         XCTAssertFalse(pending.contains("estimated"))
         XCTAssertNil(pending.rangeOfCharacter(from: .decimalDigits), "no number without a profile")

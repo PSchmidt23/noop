@@ -42,9 +42,9 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.healthcare-fitness</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Baseline connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your device.</string>
+	<string>Baseline connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your iPhone unless you turn on sharing in Friends, which sends only the daily totals and weekly trends you choose.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Baseline reads your sleep, workouts and heart data from Apple Health on this iPhone to show HRV, resting heart rate, readiness, sleep and effort against your baseline. Nothing leaves your device.</string>
+	<string>Baseline reads your sleep, workouts, steps and heart data from Apple Health on this iPhone to show HRV, resting heart rate, readiness, sleep, effort and steps against your baseline. Nothing leaves your iPhone unless you turn on sharing in Friends, which sends only the daily totals and weekly trends you choose.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Baseline writes the metrics it computes from your strap back into Apple Health, on-device and only when you allow it.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
@@ -52,7 +52,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Baseline does not currently use the microphone. If a voice feature is added, audio is transcribed on this iPhone and never leaves it.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>Baseline reads your iPhone's step count for a walking or running workout to show steps in the activity summary. It stays on your device. Nothing leaves it.</string>
+	<string>Baseline reads your iPhone's step count for a walking or running workout to show steps in the activity summary. Nothing leaves your iPhone unless you turn on sharing in Friends, which sends only the daily totals and weekly trends you choose.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Baseline does not currently record audio. If a voice feature is added, speech is transcribed on this iPhone and never leaves it.</string>
 	<key>UIBackgroundModes</key>

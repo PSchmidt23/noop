@@ -2,9 +2,11 @@
 import SwiftUI
 import StrandDesign
 
-/// Baseline's shell: three tabs (Home, Trends, Sleep), each with its own navigation stack. Settings is
-/// the gear in every tab's toolbar, the journal is a sheet Home presents, so neither is a tab. A
-/// first-run gate covers the shell until the person has paired a strap (or chosen to skip).
+/// Baseline's shell: four tabs (Home, Trends, Sleep, Friends), each with its own navigation stack.
+/// Settings is the gear in every tab's toolbar, the journal is a sheet Home presents, so neither is a
+/// tab. Friends is opt-in: the tab is always there, but Home, Trends and Sleep never need an account
+/// (Baseline/Research/FRIENDS_SPEC.md). A first-run gate covers the shell until the person has paired a
+/// strap (or chosen to skip).
 struct BaselineRoot: View {
     @AppStorage(BaselineRoot.onboardedKey) private var onboarded = false
     /// Raised by `BaselineNotificationDelegate` when the evening check-in is tapped; consumed below.
@@ -17,6 +19,9 @@ struct BaselineRoot: View {
     /// Bumped when `--tab settings` asks Home to push Settings.
     @State private var settingsRequest: Int
     @Environment(\.scenePhase) private var scenePhase
+    /// The Friends tab's state (created in `BaselineApp`): its badge (incoming requests + competition
+    /// invitations) and the join code a `baseline://friends/join/CODE` link hands over.
+    @EnvironmentObject private var friends: FriendsStore
 
     init() {
         // Touching the static runs the launch-argument override exactly once per process, before the
@@ -70,7 +75,7 @@ struct BaselineRoot: View {
         var journal = false
         var settings = false
 
-        /// `--tab home|trends|sleep`, with the aliases the screenshot harness and older notes use:
+        /// `--tab home|trends|sleep|friends`, with the aliases the screenshot harness and older notes use:
         /// `today` → home; `journal` → home with the journal sheet presented; `settings` → home with
         /// Settings pushed. Anything else, or a missing value, is Home.
         static func parse(_ arguments: [String]) -> LaunchRequest {
@@ -78,6 +83,7 @@ struct BaselineRoot: View {
             switch arguments[i + 1] {
             case "trends": return LaunchRequest(tab: .trends)
             case "sleep": return LaunchRequest(tab: .sleep)
+            case "friends": return LaunchRequest(tab: .friends)
             case "journal": return LaunchRequest(tab: .home, journal: true)
             case "settings": return LaunchRequest(tab: .home, settings: true)
             default: return LaunchRequest(tab: .home)   // "home", "today", unknown
@@ -105,7 +111,7 @@ struct BaselineRoot: View {
         #endif
     }()
 
-    enum Tab: Hashable { case home, trends, sleep }
+    enum Tab: Hashable { case home, trends, sleep, friends }
 
     var body: some View {
         ZStack {
@@ -116,6 +122,9 @@ struct BaselineRoot: View {
                     .tabItem { Label("Trends", systemImage: "chart.xyaxis.line") }.tag(Tab.trends)
                 NavigationStack { SleepScreen() }
                     .tabItem { Label("Sleep", systemImage: "moon.zzz") }.tag(Tab.sleep)
+                NavigationStack { FriendsScreen() }
+                    .tabItem { Label("Friends", systemImage: "person.2") }.tag(Tab.friends)
+                    .badge(friends.badgeCount)
             }
             .tint(BaselineTheme.accent)
             // The native glass tab bar shrinks while reading data; `.never` under `--ui-testing` so the
@@ -136,13 +145,20 @@ struct BaselineRoot: View {
         .onChange(of: pendingTab, initial: true) { _, _ in consumePendingTab() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { consumePendingTab() } }
         // A widget tap (`baseline://home`, the one `widgetURL` the BaselineWidgets extension sets; the
-        // scheme is registered in project.yml's Baseline block). Any other scheme or host is ignored.
+        // scheme is registered in project.yml's Baseline block), or a friend's invite link
+        // (`baseline://friends/join/CODE`): the Friends tab, with the code kept on the store until the
+        // person is signed in, when FriendsScreen asks "Connect with …?". Any other scheme or host is ignored.
         .onOpenURL { url in
             guard let destination = BaselineDeepLink.destination(for: url) else { return }
             switch destination {
             case .home: tab = .home
             case .trends: tab = .trends
             case .sleep: tab = .sleep
+            case .friends: tab = .friends
+            case .join(let code):
+                tab = .friends
+                // Kept by the store until the person is signed in and set up, then peeked ("Connect with …?").
+                Task { await friends.handleJoinLink(code: code) }
             }
         }
     }

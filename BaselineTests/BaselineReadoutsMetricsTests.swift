@@ -323,16 +323,33 @@ final class BaselineReadoutsMetricsTests: BaselineEngineTestCase {
         XCTAssertEqual(r.scoredHours, 3)
         XCTAssertFalse(r.sustainedHigh)
 
-        let summary = BaselineReadouts.stressSummary(r)
-        XCTAssertTrue(summary.hasPrefix("Stress averaged 1.4 of 3 (Medium), peak 2.3 at "), summary)
-        XCTAssertTrue(summary.hasSuffix("; 1 hour left out while you were moving."), summary)
+        // Hours per state, on the non-overlapping hours only (the 12:00 timeline point is not counted).
+        XCTAssertEqual(r.restoredHours, 2)
+        XCTAssertEqual(r.calmHours, 0)
+        XCTAssertEqual(r.elevatedHours, 1)
+        XCTAssertEqual(r.elevatedHours * 60, r.highMinutes, "elevated hours are NOOP's high-stress minutes")
+        XCTAssertEqual(r.lens, .learning(daysOfHistory: 0), "no lens given: learning")
+
+        // VoiceOver hears hours, never the 0–3 level.
+        let learning = BaselineReadouts.stressSummary(r)
+        XCTAssertEqual(learning, "Stress curve from 3 hours of still, daytime heart rate; learning your daytime baseline, 0 of 4 days, 1 hour moving.")
+        XCTAssertFalse(learning.contains("of 3"))
+        let personal = try XCTUnwrap(BaselineReadouts.stressDay(result, day: today, lens: .personal(floorBPM: 64)))
+        XCTAssertEqual(BaselineReadouts.stressSummary(personal), "1 hour elevated, 0 calm, 2 restored, 1 hour moving.")
+        XCTAssertEqual(personal.floorBPM, 64)
+        XCTAssertEqual(try XCTUnwrap(personal.peakHour?.overFloorBPM), 70 - 64, accuracy: 1e-9)
         XCTAssertEqual(BaselineReadouts.stressLevelText(0.9), "Low")
         XCTAssertEqual(BaselineReadouts.stressLevelText(1), "Medium")
         XCTAssertEqual(BaselineReadouts.stressLevelText(2), "High")
         XCTAssertEqual(BaselineReadouts.stressDomain, 0...3)
-        // The chart's y axis names each band at its middle with the Average cell's own words.
-        XCTAssertEqual(StressCurveChart.bandMidpoints.map(BaselineReadouts.stressLevelText), ["Low", "Medium", "High"])
-        XCTAssertEqual(StressCurveChart.bandEdges, [0, 1, 2, 3])
+        // The chart's y axis carries no numbers: three shaded bands cut at StressState's thresholds and named
+        // with the card's own words, contiguous over the whole domain.
+        XCTAssertEqual(StressCurveChart.bands.map(\.name), ["Restored", "Calm", "Elevated"])
+        XCTAssertEqual(StressCurveChart.bands.first?.low, BaselineReadouts.stressDomain.lowerBound)
+        XCTAssertEqual(StressCurveChart.bands.last?.high, BaselineReadouts.stressDomain.upperBound)
+        XCTAssertEqual(StressCurveChart.bands[1].low, StressState.restoredCeiling)
+        XCTAssertEqual(StressCurveChart.bands[2].low, StressState.elevatedFloor)
+        for (a, b) in zip(StressCurveChart.bands, StressCurveChart.bands.dropFirst()) { XCTAssertEqual(a.high, b.low) }
     }
 
     // MARK: Sleep timing

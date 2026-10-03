@@ -218,7 +218,8 @@ struct TrendStat {
     var unit: String? = nil
 }
 
-/// Sleep / Steps: two stats over bars with a dashed average rule. On the Trends tab the window is the
+/// Sleep / Steps / Calories: two stats over bars with a dashed average rule (Steps: the daily goal's
+/// rule instead, the goal days full and the rest muted). On the Trends tab the window is the
 /// 7D / 30D / 90D picker just above the cards, so the header carries no "Last 30 days" of its own (the
 /// "of 28 nights" cell already counts the window). `accessory` takes the header's trailing slot (the
 /// Steps card's `AccuracyBadge`); `caption` is the plain-text form for a host whose range is not on
@@ -236,6 +237,10 @@ struct TrendBarCard: View {
     let color: Color
     let bars: [BaselineBarChart.Bar]
     let average: Double?
+    /// A daily goal drawn as the chart's rule instead of the average (Steps); nil draws the average.
+    var goal: Double? = nil
+    /// The bar still accruing (Calories: today so far), drawn muted; nil when every bar is a whole day.
+    var inProgressID: String? = nil
     let stats: [TrendStat]
     let emptyText: String
     var showsAllWorkouts: Bool = false
@@ -254,7 +259,8 @@ struct TrendBarCard: View {
                         StatCell(label: stat.label, value: stat.value, unit: stat.unit)
                     }
                 }
-                TrendsBarChart(bars: bars, color: color, average: average, accessibilitySummary: chartSummary)
+                TrendsBarChart(bars: bars, color: color, average: goal == nil ? average : nil, goal: goal,
+                               inProgressID: inProgressID, accessibilitySummary: chartSummary)
             }
             if showsAllWorkouts {
                 Divider().overlay(BaselineTheme.hairline)
@@ -274,12 +280,14 @@ struct TrendBarCard: View {
     }
 
     /// The chart's one VoiceOver sentence: the stats the header already prints ("Sleep: Average 7h 12m,
-    /// Nights 28"), so a swipe never lands on one bar after another.
+    /// Nights 28"), so a swipe never lands on one bar after another. A muted in-progress bar is said too,
+    /// since only its shade tells it apart.
     private var chartSummary: String {
         let parts = stats.map { stat in
             stat.unit.map { "\(stat.label) \(stat.value) \($0)" } ?? "\(stat.label) \(stat.value)"
         }
-        return "\(title): " + parts.joined(separator: ", ")
+        let partial = inProgressID.map { id in bars.contains { $0.id == id } } ?? false
+        return "\(title): " + parts.joined(separator: ", ") + (partial ? "; today still building, not in the average" : "")
     }
 }
 
